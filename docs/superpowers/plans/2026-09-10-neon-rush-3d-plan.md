@@ -35,6 +35,7 @@
 - `package.json` — scripts, dependencies, test and build commands.
 - `index.html` — canvas, screens, HUD, touch controls, settings and PWA metadata.
 - `vite.config.ts` — Vite and PWA plugin configuration.
+- `vitest.config.ts` — Vitest environment and test discovery configuration.
 - `tsconfig.json` — strict TypeScript compiler settings.
 - `src/main.ts` — browser bootstrap and animation loop.
 - `src/styles.css` — responsive neon UI and touch-control styling.
@@ -112,6 +113,7 @@ Each sub-plan below ends in a buildable, testable slice. Do not start a later su
 - Create: `package.json`
 - Create: `tsconfig.json`
 - Create: `vite.config.ts`
+- Create: `vitest.config.ts`
 - Create: `index.html`
 - Create: `src/types.ts`
 - Create: `src/main.ts`
@@ -182,7 +184,7 @@ Expected: FAIL because the shared contract module does not exist yet.
 
 Install dependencies with `npm install`; commit the generated `package-lock.json` with this scaffold.
 
-`tsconfig.json` enables `strict`, `noUnusedLocals`, `noUnusedParameters`, `noUncheckedIndexedAccess`, ES2022, DOM libraries and Bundler module resolution. `vite.config.ts` sets the dev server host/port and ES2022 build target.
+`tsconfig.json` enables `strict`, `noUnusedLocals`, `noUnusedParameters`, `noUncheckedIndexedAccess`, ES2022, DOM libraries and Bundler module resolution. `vite.config.ts` sets the dev server host/port and ES2022 build target. `vitest.config.ts` sets `environment: 'happy-dom'`, includes `tests/**/*.test.ts`, and keeps test globals disabled so tests import Vitest APIs explicitly.
 
 - [ ] **Step 4: Define the browser shell and shared contracts**
 
@@ -265,7 +267,7 @@ Expected: PASS with an empty browser shell.
 - [ ] **Step 6: Commit the scaffold**
 
 ```bash
-git add package.json package-lock.json tsconfig.json vite.config.ts index.html src/types.ts src/main.ts tests/contracts.test.ts
+git add package.json package-lock.json tsconfig.json vite.config.ts vitest.config.ts index.html src/types.ts src/main.ts tests/contracts.test.ts
 git commit -m "feat: scaffold Neon Rush project"
 ```
 
@@ -311,7 +313,7 @@ Expected: FAIL because `TrackModel` and track content are absent.
 
 - [ ] **Step 3: Add three fixed track definitions**
 
-`src/config/tracks.ts` exports `tracks`, with control points for the night city, coastal highway and mountain pass. Each definition includes width, three-lap default, at least two environment variants with `nightFactor` and `weather`, start transform, checkpoint distances, minimap bounds and a short obstacle list. Obstacles use `{ position, radius, type: 'cone' | 'barrier' }` and never occupy the full road width.
+`src/config/tracks.ts` exports `tracks`, with IDs `city`, `coast` and `mountain` and control points for the night city, coastal highway and mountain pass. Each definition includes width, three-lap default, at least two environment variants with `nightFactor` and `weather`, start transform, checkpoint distances, minimap bounds and a short obstacle list. Obstacles use `{ position, radius, type: 'cone' | 'barrier' }` and never occupy the full road width.
 
 - [ ] **Step 4: Implement deterministic spline sampling**
 
@@ -639,7 +641,7 @@ Expected: FAIL because progression modules are absent.
 
 - [ ] **Step 3: Define six cars and three cups**
 
-`vehicles.ts` exports six configs with distinct top speed, acceleration, grip, nitro and upgrade slots. `career.ts` exports three cups, five events each, rewards, unlock gates and best-score storage. All values are data, not hardcoded UI branches.
+`vehicles.ts` exports six configs with IDs `starter`, `swift`, `vector`, `tempest`, `phantom` and `apex`, each with distinct top speed, acceleration, grip, nitro and upgrade slots. `career.ts` exports three cups, five events each, rewards, unlock gates and best-score storage. Reward unlock IDs must match vehicle IDs, and every event `trackId` must be one of `city`, `coast` or `mountain`. All values are data, not hardcoded UI branches.
 
 - [ ] **Step 4: Add content contract tests**
 
@@ -653,7 +655,8 @@ import { EVENT_TYPES } from '../src/types';
 
 describe('game content', () => {
   it('ships the exact MVP content counts', () => {
-    expect(tracks).toHaveLength(3);
+    expect(tracks.map((track) => track.id)).toEqual(['city', 'coast', 'mountain']);
+    expect(vehicles.map((vehicle) => vehicle.id)).toEqual(['starter', 'swift', 'vector', 'tempest', 'phantom', 'apex']);
     expect(vehicles).toHaveLength(6);
     expect(aiProfiles).toHaveLength(5);
     expect(careerCups).toHaveLength(3);
