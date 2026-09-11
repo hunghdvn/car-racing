@@ -88,9 +88,19 @@ export interface QualitySettings {
   propDensity: number;
   postProcessing: boolean;
 }
+export interface GameSettings {
+  quality: QualitySettings;
+  controlMode: ControlMode;
+  cameraMode: CameraMode;
+  audioVolume: number;
+  muted: boolean;
+}
+export interface CareerProgress {
+  eventSeeds: Record<string, number>;
+}
 export interface SaveData {
   schemaVersion: number;
-  careerProgress: Record<string, number>;
+  careerProgress: CareerProgress;
   completedEvents: string[];
   currency: number;
   xp: number;
@@ -100,7 +110,7 @@ export interface SaveData {
   cosmetics: Record<string, string>;
   bestTimes: Record<string, number>;
   bestScores: Record<string, number>;
-  settings: QualitySettings;
+  settings: GameSettings;
 }
 
 export const GAME_PHASES = ['menu', 'countdown', 'racing', 'paused', 'results'] as const;
