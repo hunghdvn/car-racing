@@ -24,6 +24,7 @@ export interface TrackConfig {
   startTransform: { position: Vec3; heading: number };
   checkpointDistances: number[];
   obstacleDistances: number[];
+  obstacles: ObstacleConfig[];
   minimapBounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 export interface ObstacleConfig {

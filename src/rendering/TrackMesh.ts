@@ -187,7 +187,7 @@ export class TrackMesh implements TrackMeshes {
     const coneMaterial = new THREE.MeshBasicMaterial({ color: 0xffb347 });
     this.geometries.push(barrierGeometry, coneGeometry);
     this.materials.push(barrierMaterial, coneMaterial);
-    for (const obstacle of model.obstacles) {
+    for (const obstacle of model.config.obstacles) {
       const isBarrier = obstacle.type === 'barrier';
       const mesh = new THREE.Mesh(
         isBarrier ? barrierGeometry : coneGeometry,

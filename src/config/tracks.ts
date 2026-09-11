@@ -1,10 +1,6 @@
 import { TrackModel } from '../track/TrackModel';
 import type { ObstacleConfig, TrackConfig, Vec3 } from '../types';
 
-export interface TrackDefinition extends TrackConfig {
-  obstacles: ObstacleConfig[];
-}
-
 interface ObstacleSpec {
   distanceFraction: number;
   lateral: number;
@@ -13,18 +9,19 @@ interface ObstacleSpec {
 }
 
 interface TrackSeed
-  extends Omit<TrackConfig, 'startTransform' | 'checkpointDistances' | 'obstacleDistances' | 'minimapBounds'> {
+  extends Omit<TrackConfig, 'startTransform' | 'checkpointDistances' | 'obstacleDistances' | 'obstacles' | 'minimapBounds'> {
   checkpointFractions: number[];
   obstacleSpecs: ObstacleSpec[];
 }
 
-function buildTrack(seed: TrackSeed): TrackDefinition {
+function buildTrack(seed: TrackSeed): TrackConfig {
   const { checkpointFractions, obstacleSpecs, ...base } = seed;
   const provisional: TrackConfig = {
     ...base,
     startTransform: { position: { x: 0, y: 0, z: 0 }, heading: 0 },
     checkpointDistances: [],
     obstacleDistances: [],
+    obstacles: [],
     minimapBounds: { minX: 0, minY: 0, maxX: 1, maxY: 1 },
   };
   const model = new TrackModel(provisional);
@@ -69,7 +66,7 @@ function buildTrack(seed: TrackSeed): TrackDefinition {
   };
 }
 
-const city: TrackDefinition = buildTrack({
+const city: TrackConfig = buildTrack({
   id: 'city',
   displayName: 'Neon City Loop',
   environment: 'city',
@@ -102,7 +99,7 @@ const city: TrackDefinition = buildTrack({
   ],
 });
 
-const coast: TrackDefinition = buildTrack({
+const coast: TrackConfig = buildTrack({
   id: 'coast',
   displayName: 'Coastal Highway',
   environment: 'coast',
@@ -133,7 +130,7 @@ const coast: TrackDefinition = buildTrack({
   ],
 });
 
-const mountain: TrackDefinition = buildTrack({
+const mountain: TrackConfig = buildTrack({
   id: 'mountain',
   displayName: 'Alpine Night Pass',
   environment: 'mountain',
@@ -166,4 +163,4 @@ const mountain: TrackDefinition = buildTrack({
   ],
 });
 
-export const tracks: TrackDefinition[] = [city, coast, mountain];
+export const tracks: TrackConfig[] = [city, coast, mountain];

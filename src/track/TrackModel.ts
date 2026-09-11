@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ObstacleConfig, TrackConfig, TrackSample, Vec3 } from '../types';
+import type { TrackConfig, TrackSample, Vec3 } from '../types';
 import { TrackMesh, type TrackMeshes } from '../rendering/TrackMesh';
 
 export const TRACK_SAMPLE_COUNT = 1200;
@@ -91,11 +91,6 @@ export class TrackModel {
       distance: wrapped,
       curvature: lerp(a.curvature, b.curvature, t),
     };
-  }
-
-  get obstacles(): ObstacleConfig[] {
-    const extended = this.config as TrackConfig & { obstacles?: ObstacleConfig[] };
-    return extended.obstacles ?? [];
   }
 
   nearestSample(position: Vec3, hint?: number): TrackSample {
