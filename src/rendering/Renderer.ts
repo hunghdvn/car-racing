@@ -6,6 +6,23 @@ export interface WorldLights {
   readonly sun: THREE.DirectionalLight;
 }
 
+export interface ShadowTargetPosition {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export function attachShadowTarget(scene: THREE.Scene, sun: THREE.DirectionalLight): THREE.Object3D {
+  if (sun.target.parent === null) {
+    scene.add(sun.target);
+  }
+  return sun.target;
+}
+
+export function updateShadowTarget(sun: THREE.DirectionalLight, position: ShadowTargetPosition): void {
+  sun.target.position.set(position.x, position.y, position.z);
+}
+
 export class Renderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
@@ -54,6 +71,7 @@ export class Renderer {
     sun.shadow.camera.far = 700;
     sun.shadow.bias = -0.0005;
     this.scene.add(hemisphere, sun);
+    attachShadowTarget(this.scene, sun);
     this.lights = { hemisphere, sun };
 
     this.resizeObserver = new ResizeObserver(() => {
@@ -78,6 +96,10 @@ export class Renderer {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+  }
+
+  updateShadowTarget(position: ShadowTargetPosition): void {
+    updateShadowTarget(this.lights.sun, position);
   }
 
   setQuality(settings: QualitySettings): void {

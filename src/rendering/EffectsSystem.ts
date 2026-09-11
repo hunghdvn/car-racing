@@ -24,7 +24,7 @@ uniform vec3 uColor;
 varying float vAlpha;
 void main() {
   float d = length(gl_PointCoord - 0.5);
-  float a = smoothstep(0.5, 0.05, d) * vAlpha;
+  float a = (1.0 - smoothstep(0.05, 0.5, d)) * vAlpha;
   if (a < 0.01) discard;
   gl_FragColor = vec4(uColor, a);
 }

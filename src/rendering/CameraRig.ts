@@ -28,6 +28,11 @@ export class CameraRig {
     this.mode = mode;
   }
 
+  resize(width: number, height: number): void {
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+
   addShake(strength: number): void {
     this.shake = Math.min(1, this.shake + strength);
   }
