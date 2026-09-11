@@ -43,6 +43,8 @@ const OBSTACLE_RANGE = 42;
 const OBSTACLE_LINE = 3.2;
 const OBSTACLE_URGENCY_RANGE = 16;
 const OBSTACLE_URGENCY_FACTOR = 0.85;
+const STANDING_GAP = 4;
+const FOLLOW_GAIN = 1.2;
 const BRAKE_MARGIN = 1.06;
 const NITRO_MIN = 15;
 const NITRO_AGGRESSION = 0.65;
@@ -96,10 +98,11 @@ function avoidance(
   rivals: RivalProbe[],
   obstacles: ObstacleConfig[],
   profile: AIProfile,
-): { offset: number; urgent: boolean } {
+): { offset: number; urgent: boolean; headway: number | null } {
   const halfWidth = track.config.width / 2;
   let offset = profile.laneBias * halfWidth * 0.7;
   let urgent = false;
+  let headway: number | null = null;
   for (const rival of rivals) {
     const rivalProjection = track.project(rival.position);
     const delta = aheadBy(track, carDistance, rivalProjection.distance);
@@ -107,6 +110,7 @@ function avoidance(
     if (Math.abs(rivalProjection.lateral - carLateral) >= RIVAL_LATERAL) continue;
     if (rival.speed >= vehicle.speed) continue;
     offset += rivalProjection.lateral > carLateral ? -halfWidth * 0.5 : halfWidth * 0.5;
+    headway = headway === null ? delta : Math.min(headway, delta);
   }
   for (const obstacle of obstacles) {
     const obstacleProjection = track.project(obstacle.position);
@@ -118,7 +122,7 @@ function avoidance(
       offset += obstacleProjection.lateral > carLateral ? -clearance : clearance;
     }
   }
-  return { offset: clamp(offset, -halfWidth * 0.9, halfWidth * 0.9), urgent };
+  return { offset: clamp(offset, -halfWidth * 0.9, halfWidth * 0.9), urgent, headway };
 }
 
 export function createAIControl(
@@ -142,7 +146,7 @@ export function createAIControl(
     const projection = track.project(vehicle.position);
     const lookahead = BASE_LOOKAHEAD + vehicle.speed * (profile.reactionTime + step);
     const ahead = track.sampleAt(projection.distance + lookahead);
-    const { offset, urgent } = avoidance(track, vehicle, projection.distance, projection.lateral, rivals, obstacles, profile);
+    const { offset, urgent, headway } = avoidance(track, vehicle, projection.distance, projection.lateral, rivals, obstacles, profile);
     const targetPoint = {
       x: ahead.point.x + ahead.left.x * offset,
       y: ahead.point.y,
@@ -153,6 +157,7 @@ export function createAIControl(
     steer = clampSign((-error / MAX_STEER_ANGLE) * steerGain);
     speedTarget = target * curveSpeedFactor(ahead.curvature);
     if (urgent) speedTarget *= OBSTACLE_URGENCY_FACTOR;
+    if (headway !== null) speedTarget = Math.min(speedTarget, (headway - STANDING_GAP) * FOLLOW_GAIN);
     nitro =
       profile.aggression >= NITRO_AGGRESSION &&
       ahead.curvature < NITRO_MAX_CURVATURE &&

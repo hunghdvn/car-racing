@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   COOLDOWN_FRAMES,
+  createCollisionState,
   resolveCollisions,
   type CollisionBody,
 } from '../src/simulation/CollisionSystem';
@@ -44,18 +45,28 @@ describe('resolveCollisions', () => {
   });
 
   it('re-impacts the same pair only after the pair cooldown', () => {
+    const state = createCollisionState();
     const overlapping = () => [car('cd-a', 0, 0, 0, 0), car('cd-b', 1, 0, 0, 0)];
-    expect(resolveCollisions(overlapping(), []).impacts).toBe(1);
-    expect(resolveCollisions(overlapping(), []).impacts).toBe(0);
+    expect(resolveCollisions(overlapping(), [], state).impacts).toBe(1);
+    expect(resolveCollisions(overlapping(), [], state).impacts).toBe(0);
     let reimpactedAt = -1;
     for (let i = 0; i < COOLDOWN_FRAMES + 4; i++) {
-      if (resolveCollisions(overlapping(), []).impacts > 0) {
+      if (resolveCollisions(overlapping(), [], state).impacts > 0) {
         reimpactedAt = i;
         break;
       }
     }
     expect(reimpactedAt).toBeGreaterThanOrEqual(0);
     expect(reimpactedAt).toBeLessThanOrEqual(COOLDOWN_FRAMES);
+  });
+
+  it('keeps cooldowns per state so separate two-argument calls do not share them', () => {
+    const overlapping = () => [car('two-a', 0, 0, 0, 0), car('two-b', 1, 0, 0, 0)];
+    expect(resolveCollisions(overlapping(), []).impacts).toBe(1);
+    expect(resolveCollisions(overlapping(), []).impacts).toBe(1);
+    const state = createCollisionState();
+    expect(resolveCollisions(overlapping(), [], state).impacts).toBe(1);
+    expect(resolveCollisions(overlapping(), [], state).impacts).toBe(0);
   });
 
   it('applies a directional speed penalty and lateral push for obstacles', () => {
@@ -67,12 +78,17 @@ describe('resolveCollisions', () => {
     expect(carBody.position.z).toBeGreaterThan(1);
   });
 
-  it('penalizes a head-on hit harder than a graze', () => {
+  it('penalizes a head-on hit harder than a glancing contact', () => {
     const headOn = car('ob-b', 0, 0, 10, 0);
-    const graze = car('ob-c', 0, 1.8, 10, 0);
+    const glancing = car('ob-c', 0, 1.3, 10, 0);
     const obstacle: ObstacleConfig = { position: { x: 1.5, y: 0, z: 0 }, radius: 1, type: 'cone' };
-    resolveCollisions([headOn, graze], [obstacle]);
-    expect(headOn.speed).toBeLessThan(graze.speed);
+    const reach = glancing.radius + obstacle.radius;
+    const contact = Math.hypot(glancing.position.x - obstacle.position.x, glancing.position.z - obstacle.position.z);
+    expect(contact).toBeLessThan(reach);
+    resolveCollisions([headOn, glancing], [obstacle]);
+    expect(headOn.speed).toBeLessThan(10);
+    expect(glancing.speed).toBeLessThan(10);
+    expect(headOn.speed).toBeLessThan(glancing.speed);
   });
 
   it('never overlaps the obstacle after separation', () => {

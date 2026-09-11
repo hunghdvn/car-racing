@@ -143,6 +143,18 @@ describe('createAIControl', () => {
     expect(dodging.steer).toBeLessThan(0);
   });
 
+  it('brakes for a slower rival directly ahead based on headway', () => {
+    const track = straightTrack();
+    const clear = createAIControl(carAt(30), track, [], [], profile, 1 / 60);
+    const rival: RivalProbe = { position: { x: 0, y: 0, z: 25 }, heading: 0, speed: 12 };
+    const following = createAIControl(carAt(30), track, [rival], [], profile, 1 / 60);
+    expect(following.throttle).toBeLessThan(clear.throttle);
+    expect(following.brake).toBeGreaterThan(clear.brake);
+    const tight: RivalProbe = { position: { x: 0, y: 0, z: 8 }, heading: 0, speed: 12 };
+    const braking = createAIControl(carAt(30), track, [tight], [], profile, 1 / 60);
+    expect(braking.brake).toBeGreaterThan(following.brake);
+  });
+
   it('reduces the target speed when an obstacle is close ahead', () => {
     const cone: ObstacleConfig = { position: { x: 0, y: 0, z: 10 }, radius: 1.2, type: 'cone' };
     const open = createAIControl(carAt(40), straightTrack(), [], [], profile, 1 / 60);

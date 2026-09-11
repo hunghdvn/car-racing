@@ -19,14 +19,20 @@ export interface CollisionReport {
   events: CollisionEvent[];
 }
 
+export interface CollisionState {
+  frame: number;
+  cooldownUntil: Map<string, number>;
+}
+
+export function createCollisionState(): CollisionState {
+  return { frame: 0, cooldownUntil: new Map() };
+}
+
 export const COOLDOWN_FRAMES = 30;
 
 const SPEED_LOSS = 0.08;
 const OBSTACLE_PENALTY = 0.4;
 const OBSTACLE_PUSH = 0.5;
-
-let frame = 0;
-const cooldownUntil = new Map<string, number>();
 
 function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
@@ -39,8 +45,9 @@ function obstacleKey(index: number, id: string): string {
 export function resolveCollisions(
   vehicles: CollisionBody[],
   obstacles: ObstacleConfig[],
+  state: CollisionState = createCollisionState(),
 ): CollisionReport {
-  frame += 1;
+  state.frame += 1;
   const events: CollisionEvent[] = [];
 
   for (let i = 0; i < vehicles.length; i++) {
@@ -58,8 +65,8 @@ export function resolveCollisions(
       b.position.x += nx * push;
       b.position.z += nz * push;
       const key = pairKey(a.id, b.id);
-      const until = cooldownUntil.get(key);
-      if (until !== undefined && until >= frame) continue;
+      const until = state.cooldownUntil.get(key);
+      if (until !== undefined && until >= state.frame) continue;
       const avn = a.velocity.x * nx + a.velocity.z * nz;
       const bvn = b.velocity.x * nx + b.velocity.z * nz;
       const exchange = bvn - avn;
@@ -74,7 +81,7 @@ export function resolveCollisions(
       b.velocity.z *= keep;
       a.speed = Math.hypot(a.velocity.x, a.velocity.z);
       b.speed = Math.hypot(b.velocity.x, b.velocity.z);
-      cooldownUntil.set(key, frame + COOLDOWN_FRAMES);
+      state.cooldownUntil.set(key, state.frame + COOLDOWN_FRAMES);
       events.push({ a: a.id, b: b.id, magnitude: Math.abs(exchange) + overlap });
     }
   }
@@ -93,8 +100,8 @@ export function resolveCollisions(
       car.position.x += nx * overlap;
       car.position.z += nz * overlap;
       const key = obstacleKey(o, car.id);
-      const until = cooldownUntil.get(key);
-      if (until !== undefined && until >= frame) continue;
+      const until = state.cooldownUntil.get(key);
+      if (until !== undefined && until >= state.frame) continue;
       const speed = Math.hypot(car.velocity.x, car.velocity.z);
       let magnitude = overlap;
       if (speed > 1e-6) {
@@ -112,7 +119,7 @@ export function resolveCollisions(
         car.speed = Math.hypot(car.velocity.x, car.velocity.z);
         magnitude += speed * facing;
       }
-      cooldownUntil.set(key, frame + COOLDOWN_FRAMES);
+      state.cooldownUntil.set(key, state.frame + COOLDOWN_FRAMES);
       events.push({ a: car.id, b: `obstacle:${o}`, magnitude });
     }
   }
