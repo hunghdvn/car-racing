@@ -50,6 +50,14 @@ describe('integrateVehicle', () => {
     expect(big).toEqual(clamped);
   });
 
+  it('clamps a negative delta to zero and advances nothing', () => {
+    const state = moving(30);
+    const next = integrateVehicle(state, config, { throttle: 1, brake: 0, steer: 0, drift: false, nitro: false }, null, -5);
+    expect(next.position).toEqual(state.position);
+    expect(next.velocity).toEqual(state.velocity);
+    expect(next.speed).toBe(30);
+  });
+
   it('is deterministic and does not mutate the input state', () => {
     const state = moving(30);
     const input = { throttle: 1, brake: 0, steer: 1, drift: true, nitro: true };
@@ -81,13 +89,21 @@ describe('integrateVehicle', () => {
     expect(braked.speed).toBeLessThan(coasting.speed);
   });
 
-  it('steers proportionally to the input sign and not while stopped', () => {
+  it('steers in the direction of the input sign and not while stopped', () => {
     const turning = integrateVehicle(moving(20), config, { throttle: 0, brake: 0, steer: 1, drift: false, nitro: false }, null, 1 / 120);
-    expect(turning.heading).toBeGreaterThan(0);
+    expect(turning.heading).toBeLessThan(0);
     const turningBack = integrateVehicle(moving(20), config, { throttle: 0, brake: 0, steer: -1, drift: false, nitro: false }, null, 1 / 120);
-    expect(turningBack.heading).toBeLessThan(0);
+    expect(turningBack.heading).toBeGreaterThan(0);
     const stopped = integrateVehicle(moving(0), config, { throttle: 0, brake: 0, steer: 1, drift: false, nitro: false }, null, 1 / 120);
     expect(stopped.heading).toBe(0);
+  });
+
+  it('steers a positive input into a right turn in world frame', () => {
+    const state = moving(30);
+    const right = integrateVehicle(state, config, { throttle: 1, brake: 0, steer: 1, drift: false, nitro: false }, null, 1 / 120);
+    expect(right.velocity.x).toBeLessThan(0);
+    const left = integrateVehicle(state, config, { throttle: 1, brake: 0, steer: -1, drift: false, nitro: false }, null, 1 / 120);
+    expect(left.velocity.x).toBeGreaterThan(0);
   });
 
   it('detects offroad from the track projection and slows the car down', () => {
@@ -106,6 +122,12 @@ describe('integrateVehicle', () => {
     expect(offroad.offroad).toBe(true);
     expect(onroad.offroad).toBe(false);
     expect(offroad.speed).toBeLessThan(onroad.speed);
+  });
+
+  it('clamps nitro to zero when drain would cross below empty', () => {
+    const state = { ...moving(30), nitro: 0.01 };
+    const next = integrateVehicle(state, config, { throttle: 1, brake: 0, steer: 0, drift: false, nitro: true }, null, 1 / 120);
+    expect(next.nitro).toBe(0);
   });
 
   it('never lets speed or nitro leave their valid ranges', () => {

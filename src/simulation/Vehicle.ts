@@ -90,7 +90,7 @@ export function integrateVehicle(
     (config.acceleration * input.throttle + (nitroActive ? config.nitroPower : 0)) /
     config.mass;
   const steerFactor = clamp(Math.abs(dot(velocity, forward)) / STEER_MIN_SPEED, 0, 1);
-  const heading = state.heading + input.steer * STEER_RATE * steerFactor * d;
+  const heading = state.heading - input.steer * STEER_RATE * steerFactor * d;
   const nextForward = headingForward(heading);
   const nextLeft = headingLeft(heading);
 
