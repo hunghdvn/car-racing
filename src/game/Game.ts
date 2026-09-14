@@ -185,6 +185,7 @@ class GameImpl {
     window.addEventListener('resize', this.handleResize);
     window.addEventListener('deviceorientation', this.handleOrientation);
     window.addEventListener('pointerdown', this.wakeAudio, { once: true });
+    window.addEventListener('keydown', this.wakeAudio, { once: true });
     this.handleResize();
     this.rafId = requestAnimationFrame(this.frameLoop);
   }
@@ -297,6 +298,7 @@ class GameImpl {
     window.removeEventListener('resize', this.handleResize);
     window.removeEventListener('deviceorientation', this.handleOrientation);
     window.removeEventListener('pointerdown', this.wakeAudio);
+    window.removeEventListener('keydown', this.wakeAudio);
     this.disposeRaceVisuals();
     this.effects?.dispose();
     this.effects = null;
@@ -313,7 +315,7 @@ class GameImpl {
 
   private createActions(): UiActions {
     return {
-      startQuickRace: () => this.startQuickRace(tracks[0]!.id, this.saveData.selectedVehicle),
+      startQuickRace: (trackId) => this.startQuickRace(trackId, this.saveData.selectedVehicle),
       startCareer: () => undefined,
       resume: () => this.resume(),
       restart: () => this.restart(),
@@ -360,7 +362,10 @@ class GameImpl {
   };
 
   private readonly wakeAudio = (): void => {
-    this.audio?.start();
+    const audio = this.audio;
+    if (!audio) return;
+    audio.start();
+    audio.setMusicPhase(this.phaseInternal);
   };
 
   private beginRace(params: BeginRaceParams): void {
@@ -574,6 +579,7 @@ class GameImpl {
       settings.muted = muted;
     });
     this.audio?.setMuted(muted);
+    if (!muted) this.audio?.setMusicPhase(this.phaseInternal);
   }
 
   private selectVehicle(vehicleId: string): void {
@@ -707,6 +713,8 @@ class GameImpl {
     for (const notification of update.notifications) {
       if (notification.type === 'finish' && notification.id === PLAYER_ID) {
         this.audio?.playFinish();
+        this.finishRace(update);
+        return;
       }
       if (notification.type === 'phase' && notification.phase === 'results') {
         this.finishRace(update);
@@ -718,6 +726,7 @@ class GameImpl {
   private finishRace(update: RaceUpdate): void {
     const race = this.race!;
     this.paused = false;
+    race.director.phase = 'results';
     this.phaseInternal = 'results';
     const player = race.vehicles.get(PLAYER_ID)!;
     const config = race.configs.get(PLAYER_ID)!;

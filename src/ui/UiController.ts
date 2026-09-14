@@ -27,7 +27,7 @@ export interface UiState {
 }
 
 export interface UiActions {
-  startQuickRace(): void;
+  startQuickRace(trackId: string): void;
   startCareer(): void;
   resume(): void;
   restart(): void;
@@ -163,6 +163,8 @@ export class UiController {
   private qualityGroup!: HTMLElement;
   private cameraGroup!: HTMLElement;
   private controlGroup!: HTMLElement;
+  private trackGroup!: HTMLElement;
+  private quickTrackId: string = tracks[0]!.id;
   private readonly volumeInput: HTMLInputElement;
   private readonly volumeLabel: HTMLElement;
   private readonly muteInput: HTMLInputElement;
@@ -292,6 +294,12 @@ export class UiController {
     for (const candidate of MENU_VIEWS) {
       this.menuViews[candidate].classList.toggle('ui-hidden', candidate !== view);
     }
+  }
+
+  selectQuickRaceTrack(trackId: string): void {
+    if (!tracks.some((track) => track.id === trackId)) return;
+    this.quickTrackId = trackId;
+    this.selectSegment(this.trackGroup, trackId);
   }
 
   bindActions(actions: UiActions): void {
@@ -435,7 +443,21 @@ export class UiController {
     panel.id = 'menu-panel';
     panel.appendChild(this.create('h1', 'ui-title', 'NEON RUSH 3D'));
 
-    this.addButton(home, 'menu-quick-race', 'Quick Race', () => this.actions?.startQuickRace());
+    this.addButton(home, 'menu-quick-race', 'Quick Race', () => this.actions?.startQuickRace(this.quickTrackId));
+    const trackGroup = this.create('fieldset', 'ui-group');
+    trackGroup.id = 'menu-track-group';
+    trackGroup.appendChild(this.create('legend', null, 'Track'));
+    for (const track of tracks) {
+      const button = this.create('button', 'segment', track.displayName);
+      button.type = 'button';
+      button.id = `menu-track-${track.id}`;
+      button.dataset.value = track.id;
+      button.addEventListener('click', () => this.selectQuickRaceTrack(track.id));
+      trackGroup.appendChild(button);
+    }
+    this.trackGroup = trackGroup;
+    this.selectSegment(trackGroup, this.quickTrackId);
+    home.appendChild(trackGroup);
     this.addButton(home, 'menu-career', 'Career', () => {
       this.setMenuView('career');
       this.actions?.startCareer();
@@ -759,7 +781,7 @@ export class UiController {
         if (this.phase === 'menu' && !this.settingsOpen) {
           const active = this.doc.activeElement;
           if (!(active instanceof HTMLButtonElement)) {
-            actions.startQuickRace();
+            actions.startQuickRace(this.quickTrackId);
             event.preventDefault();
           }
         }
