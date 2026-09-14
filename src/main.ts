@@ -1,3 +1,5 @@
+import { PwaService } from './pwa/PwaService';
+
 const canvas = document.getElementById('game-canvas');
 
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -5,3 +7,5 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 }
 
 export const gameCanvas = canvas;
+
+PwaService.register();
