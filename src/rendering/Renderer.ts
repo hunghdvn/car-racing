@@ -23,6 +23,17 @@ export function updateShadowTarget(sun: THREE.DirectionalLight, position: Shadow
   sun.target.position.set(position.x, position.y, position.z);
 }
 
+export interface ViewportSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+export function canvasViewport(canvas: HTMLCanvasElement): ViewportSize | null {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return { width: rect.width, height: rect.height };
+}
+
 export class Renderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
@@ -75,10 +86,8 @@ export class Renderer {
     this.lights = { hemisphere, sun };
 
     this.resizeObserver = new ResizeObserver(() => {
-      const rect = this.canvas.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        this.resize(rect.width, rect.height);
-      }
+      const viewport = canvasViewport(this.canvas);
+      if (viewport) this.resize(viewport.width, viewport.height);
     });
     this.resizeObserver.observe(this.canvas);
     this.resize(this.width, this.height);

@@ -181,6 +181,7 @@ export class UiController {
   private settingsOpen = false;
   private save: SaveData | null = null;
   private touch: TouchInput = zeroTouch();
+  private readonly touchButtons: HTMLButtonElement[] = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(root: ParentNode = document) {
@@ -265,6 +266,16 @@ export class UiController {
     this.resultsScreen.classList.toggle('ui-active', phase === 'results');
     this.touchControls.classList.toggle('ui-hidden', !state.showTouchControls);
     if (phase !== 'menu' && this.settingsOpen) this.closeSettings();
+    if (phase !== 'countdown' && phase !== 'racing') {
+      this.releaseTouchControls();
+    }
+  }
+
+  private releaseTouchControls(): void {
+    Object.assign(this.touch, zeroTouch());
+    for (const button of this.touchButtons) {
+      button.classList.remove('pressed');
+    }
   }
 
   openSettings(): void {
@@ -616,6 +627,7 @@ export class UiController {
     button.addEventListener('pointerup', release);
     button.addEventListener('pointercancel', release);
     button.addEventListener('lostpointercapture', release);
+    this.touchButtons.push(button);
     return button;
   }
 
