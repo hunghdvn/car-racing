@@ -85,15 +85,15 @@ export class AudioEngine {
     if (this.closed) return;
     if (this.ctx && this.master) {
       this.master.gain.setTargetAtTime(value ? 0 : this.level, this.ctx.currentTime, 0.02);
-      if (!value) {
-        this.ctx.resume().catch(() => undefined);
-        this.restartMusic();
-      }
     } else if (!value) {
       this.ensureContext();
-      this.ctx?.resume().catch(() => undefined);
-      this.restartMusic();
     }
+    if (value) {
+      this.stopScheduler();
+      return;
+    }
+    this.ctx?.resume().catch(() => undefined);
+    this.restartMusic();
   }
 
   setVolume(value: number): void {
@@ -103,8 +103,8 @@ export class AudioEngine {
   }
 
   setEngineState(speed: number, nitro: number, drift: number): void {
-    if (this.isMuted || this.closed || !this.ctx || !this.engineBus || !this.noise) return;
     this.engine = { speed: clamp01(speed), nitro: clamp01(nitro), drift: clamp01(drift) };
+    if (this.isMuted || this.closed || !this.ctx || !this.engineBus || !this.noise) return;
     this.ensureEngineNodes();
     const time = this.ctx.currentTime;
     this.engineOsc?.frequency.setTargetAtTime(55 + this.engine.speed * 165, time, 0.06);
