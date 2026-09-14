@@ -91,6 +91,32 @@ export const vehicles: VehicleConfig[] = [
   },
 ];
 
+export interface CosmeticValue {
+  body?: number;
+  rim?: number;
+}
+
+export const cosmeticValues: Record<string, CosmeticValue> = {
+  'paint-starter-silver': { body: 0xd7e1ec },
+  'paint-starter-red': { body: 0xff4d4d },
+  'wheels-starter-steel': { rim: 0xc7d3e0 },
+  'paint-swift-yellow': { body: 0xffd166 },
+  'paint-swift-cyan': { body: 0x22d3ee },
+  'wheels-swift-sport': { rim: 0xffd166 },
+  'paint-vector-purple': { body: 0x9d4edd },
+  'paint-vector-lime': { body: 0xb6ff2e },
+  'wheels-vector-turbine': { rim: 0xb6ff2e },
+  'paint-tempest-orange': { body: 0xff7847 },
+  'paint-tempest-teal': { body: 0x2dd4bf },
+  'wheels-tempest-carbon': { rim: 0x39404d },
+  'paint-phantom-black': { body: 0x171c26 },
+  'paint-phantom-violet': { body: 0xa855f7 },
+  'wheels-phantom-ghost': { rim: 0x6fe3ff },
+  'paint-apex-gold': { body: 0xffc53d },
+  'paint-apex-magenta': { body: 0xff3df2 },
+  'wheels-apex-maglev': { rim: 0xffc53d },
+};
+
 export function vehicleById(id: string): VehicleConfig | undefined {
   return vehicles.find((vehicle) => vehicle.id === id);
 }

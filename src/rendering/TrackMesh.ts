@@ -208,16 +208,9 @@ export class TrackMesh implements TrackMeshes {
   }
 
   private buildMinimap(model: TrackModel): void {
-    const points: THREE.Vector3[] = [];
     for (let i = 0; i < model.samples.length; i += MINIMAP_STEP) {
       const sample = model.samples[i]!;
       this.minimapPoints.push({ x: sample.point.x, y: sample.point.z });
-      points.push(new THREE.Vector3(sample.point.x, 0, sample.point.z));
     }
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    this.geometries.push(geometry);
-    const material = new THREE.LineBasicMaterial({ color: 0x00e5ff });
-    this.materials.push(material);
-    this.group.add(new THREE.LineLoop(geometry, material));
   }
 }

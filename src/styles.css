@@ -307,6 +307,93 @@ fieldset.ui-group legend {
   white-space: nowrap;
 }
 
+.garage-status {
+  margin-top: 16px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--neon-amber);
+  text-shadow: 0 0 10px rgba(255, 176, 32, 0.45);
+}
+
+.garage-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  border: 1px solid rgba(40, 230, 255, 0.18);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.garage-vehicle-title {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--neon-cyan);
+}
+
+.garage-section-title {
+  margin: 8px 0 0;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.upgrade-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  padding: 4px 0;
+}
+
+.upgrade-level {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.upgrade-buy {
+  min-width: 96px;
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 13px;
+  border: 1px solid rgba(40, 230, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(40, 230, 255, 0.08);
+  font-variant-numeric: tabular-nums;
+}
+
+.upgrade-buy:hover:not(:disabled) {
+  background: rgba(40, 230, 255, 0.18);
+}
+
+.garage-cosmetics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cosmetic-swatch {
+  width: 44px;
+  height: 44px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(232, 244, 255, 0.35);
+}
+
+.cosmetic-swatch.ui-selected {
+  border-color: var(--neon-lime);
+  box-shadow: 0 0 12px rgba(182, 255, 46, 0.6);
+}
+
 .hud-corner {
   position: absolute;
   display: flex;
@@ -403,6 +490,40 @@ fieldset.ui-group legend {
   border-radius: 999px;
   background: rgba(5, 6, 15, 0.6);
   overflow: hidden;
+}
+
+.hud-minimap {
+  position: absolute;
+  bottom: calc(36px + env(safe-area-inset-bottom, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  width: 112px;
+  height: 112px;
+  padding: 10px;
+  border: 1px solid rgba(40, 230, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(5, 6, 15, 0.55);
+  box-shadow: 0 0 14px rgba(40, 230, 255, 0.2);
+}
+
+#hud-minimap-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: rgba(40, 230, 255, 0.9);
+  opacity: 0.85;
+}
+
+.hud-drift {
+  position: absolute;
+  top: calc(46px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+  color: var(--neon-magenta);
+  text-shadow: 0 0 14px rgba(255, 61, 242, 0.8);
 }
 
 .hud-nitro-bar {

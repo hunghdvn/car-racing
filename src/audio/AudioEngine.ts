@@ -74,6 +74,10 @@ export class AudioEngine {
     return this.level;
   }
 
+  private get engineGain(): number {
+    return (this.engine.speed > 0 ? 0.1 : 0) + this.engine.speed * 0.1;
+  }
+
   start(): void {
     if (this.isMuted || this.closed) return;
     this.ensureContext();
@@ -108,7 +112,7 @@ export class AudioEngine {
     this.ensureEngineNodes();
     const time = this.ctx.currentTime;
     this.engineOsc?.frequency.setTargetAtTime(55 + this.engine.speed * 165, time, 0.06);
-    this.engineOscGain?.gain.setTargetAtTime(0.1 + this.engine.speed * 0.1, time, 0.08);
+    this.engineOscGain?.gain.setTargetAtTime(this.engineGain, time, 0.08);
     this.nitroGain?.gain.setTargetAtTime(this.engine.nitro * 0.35, time, 0.1);
     this.driftGain?.gain.setTargetAtTime(this.engine.drift * 0.3, time, 0.08);
     this.applyMusicIntensity();
@@ -257,7 +261,7 @@ export class AudioEngine {
     osc.type = 'sawtooth';
     osc.frequency.value = 55 + this.engine.speed * 165;
     const oscGain = ctx.createGain();
-    oscGain.gain.value = 0.1 + this.engine.speed * 0.1;
+    oscGain.gain.value = this.engineGain;
     osc.connect(oscGain);
     oscGain.connect(bus);
     osc.start();

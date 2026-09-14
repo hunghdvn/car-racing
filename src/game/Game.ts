@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { AudioEngine } from '../audio/AudioEngine';
 import { aiProfiles } from '../config/ai';
 import { tracks } from '../config/tracks';
-import { applyUpgrades, vehicleById, vehicles } from '../config/vehicles';
+import { applyUpgrades, cosmeticValues, upgradeDefinitions, vehicleById, vehicles } from '../config/vehicles';
 import { CareerService } from '../progression/CareerService';
 import { SaveService } from '../progression/SaveService';
 import { EventRunner, type EventState } from '../race/EventRunner';
@@ -47,6 +47,7 @@ export const SIM_HZ = 120;
 
 const SIM_STEP_MS = 1000 / SIM_HZ;
 const QUALITY_FRAME_CLAMP_MS = 100;
+export const FRAME_DELTA_CLAMP_MS = 100;
 const MAX_STEPS_PER_TICK = 2400;
 const CAR_RADIUS = 1.05;
 const PLAYER_ID = 'player';
@@ -55,8 +56,27 @@ const RIM_COLOR = 0x8b98a9;
 const AI_COLORS = [0xff2e88, 0xffd166, 0x9d4edd, 0x3dffa0, 0xff7847];
 const DRIFT_MIN_SPEED = 6;
 
+const UPGRADE_FAILURE_MESSAGES: Record<string, string> = {
+  'unknown-vehicle': 'Unknown vehicle',
+  'vehicle-not-owned': 'Vehicle not owned',
+  'unknown-slot': 'Unknown upgrade',
+  'max-level': 'Upgrade already at max level',
+  'insufficient-currency': 'Not enough credits',
+};
+
+const COSMETIC_FAILURE_MESSAGES: Record<string, string> = {
+  'unknown-vehicle': 'Unknown vehicle',
+  'vehicle-not-owned': 'Vehicle not owned',
+  'unknown-cosmetic': 'Unknown cosmetic',
+};
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
+
+export function clampFrameDelta(deltaMs: number): number {
+  if (!Number.isFinite(deltaMs) || deltaMs <= 0) return 0;
+  return Math.min(deltaMs, FRAME_DELTA_CLAMP_MS);
 }
 
 function quickRaceEvent(track: TrackConfig): EventConfig {
@@ -233,6 +253,7 @@ class GameImpl {
     this.phaseInternal = 'paused';
     this.ui?.showScreen('paused');
     this.audio?.setMusicPhase('paused');
+    this.audio?.setEngineState(0, 0, 0);
   }
 
   resume(): void {
@@ -329,15 +350,17 @@ class GameImpl {
       setMuted: (muted) => this.setMuted(muted),
       startCareerEvent: (cupId, eventId) => this.startCareerEvent(cupId, eventId),
       selectVehicle: (vehicleId) => this.selectVehicle(vehicleId),
+      purchaseUpgrade: (vehicleId, slot) => this.purchaseUpgrade(vehicleId, slot),
+      equipCosmetic: (vehicleId, cosmeticId) => this.equipCosmetic(vehicleId, cosmeticId),
     };
   }
 
   private readonly frameLoop = (now: number): void => {
     if (this.disposed) return;
     this.rafId = requestAnimationFrame(this.frameLoop);
-    const delta = this.lastFrameMs === null ? 0 : Math.max(0, now - this.lastFrameMs);
+    const raw = this.lastFrameMs === null ? 0 : now - this.lastFrameMs;
     this.lastFrameMs = now;
-    this.tick(delta);
+    this.tick(clampFrameDelta(raw));
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -435,7 +458,7 @@ class GameImpl {
     );
     this.race = {
       trackId: track.id,
-      vehicleId: params.vehicleId,
+      vehicleId: base.id,
       track,
       model,
       variant,
@@ -466,7 +489,7 @@ class GameImpl {
     this.ui?.updateHud(this.buildHudSnapshot());
   }
 
-  private buildRaceVisuals(): void {
+  private buildRaceVisuals(snapCamera = true): void {
     const race = this.race;
     if (!race || !this.renderer || !this.rig || !this.quality || !this.worldBuilder) return;
     const quality = this.quality.settings;
@@ -488,14 +511,21 @@ class GameImpl {
       const color =
         id === PLAYER_ID ? PLAYER_COLOR : AI_COLORS[Number(id.slice(3)) % AI_COLORS.length] ?? PLAYER_COLOR;
       const view = new VehicleView(color, RIM_COLOR);
+      if (id === PLAYER_ID) {
+        const cosmeticId = this.saveData.cosmetics[race.vehicleId];
+        const cosmetic = cosmeticId ? cosmeticValues[cosmeticId] : undefined;
+        if (cosmetic) view.setCosmetic(cosmetic.body ?? color, cosmetic.rim ?? RIM_COLOR);
+      }
       view.group.position.set(state.position.x, state.position.y, state.position.z);
       view.group.rotation.y = state.heading;
       this.renderer.scene.add(view.group);
       this.views.set(id, view);
     }
     this.rig.setMode(this.saveData.settings.cameraMode);
-    const player = race.vehicles.get(PLAYER_ID)!;
-    this.rig.snap({ position: player.position, heading: player.heading, speed: 0 });
+    if (snapCamera) {
+      const player = race.vehicles.get(PLAYER_ID)!;
+      this.rig.snap({ position: player.position, heading: player.heading, speed: 0 });
+    }
   }
 
   private disposeRaceVisuals(): void {
@@ -529,7 +559,7 @@ class GameImpl {
     this.effects?.setQuality(settings);
     if (this.race && this.world && settings.propDensity !== this.worldPropDensity) {
       this.disposeRaceVisuals();
-      this.buildRaceVisuals();
+      this.buildRaceVisuals(false);
     }
   }
 
@@ -589,6 +619,31 @@ class GameImpl {
     this.saveService.save(this.saveData);
     this.ui?.setSaveData(this.saveData);
     this.ui?.showToast('Vehicle selected');
+  }
+
+  private purchaseUpgrade(vehicleId: string, slot: string): void {
+    if (this.disposed || this.phaseInternal !== 'menu') return;
+    const outcome = this.career.purchaseUpgrade(vehicleId, slot);
+    if (!outcome.ok) {
+      this.ui?.showToast(UPGRADE_FAILURE_MESSAGES[outcome.reason ?? 'unknown-vehicle'] ?? 'Upgrade failed');
+      return;
+    }
+    this.saveData = this.saveService.load();
+    this.ui?.setSaveData(this.saveData);
+    const name = upgradeDefinitions[slot]?.name ?? slot;
+    this.ui?.showToast(`${name} upgraded to Lv ${outcome.level}`);
+  }
+
+  private equipCosmetic(vehicleId: string, cosmeticId: string): void {
+    if (this.disposed || this.phaseInternal !== 'menu') return;
+    const outcome = this.career.equipCosmetic(vehicleId, cosmeticId);
+    if (!outcome.ok) {
+      this.ui?.showToast(COSMETIC_FAILURE_MESSAGES[outcome.reason ?? 'unknown-cosmetic'] ?? 'Cosmetic unavailable');
+      return;
+    }
+    this.saveData = outcome.save ?? this.saveData;
+    this.ui?.setSaveData(this.saveData);
+    this.ui?.showToast('Cosmetic equipped');
   }
 
   private updateSettings(mutate: (settings: GameSettings) => void): void {
@@ -765,6 +820,7 @@ class GameImpl {
     });
     this.ui?.showScreen('results');
     this.audio?.setMusicPhase('results');
+    this.audio?.setEngineState(0, 0, 0);
   }
 
   private buildHudSnapshot(): HudSnapshot {
@@ -783,6 +839,12 @@ class GameImpl {
       nitro: config.nitroCapacity > 0 ? player.nitro / config.nitroCapacity : 0,
       countdown: race.director.phase === 'countdown' ? Math.ceil(race.director.countdown) : null,
       objective: race.objective,
+      driftScore: player.driftScore,
+      minimap: {
+        points: this.trackMeshes?.minimapPoints ?? [],
+        bounds: race.track.minimapBounds,
+        player: { x: player.position.x, y: player.position.z },
+      },
     };
   }
 

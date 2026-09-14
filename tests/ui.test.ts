@@ -11,7 +11,7 @@ import {
 import { createDefaultSave, DEFAULT_SETTINGS } from '../src/progression/SaveService';
 import type { TouchInput } from '../src/simulation/PlayerController';
 
-it('shows touch controls only for touch or tilt mode', () => {
+it('shows touch controls only for touch mode', () => {
   expect(reduceUiState({ phase:'racing', controlMode:'touch' }).showTouchControls).toBe(true);
   expect(reduceUiState({ phase:'racing', controlMode:'keyboard' }).showTouchControls).toBe(false);
 });
@@ -52,6 +52,8 @@ function createActions() {
     setMuted: vi.fn(),
     startCareerEvent: vi.fn(),
     selectVehicle: vi.fn(),
+    purchaseUpgrade: vi.fn(),
+    equipCosmetic: vi.fn(),
   };
 }
 
@@ -70,9 +72,9 @@ function flushMicrotasks(): Promise<void> {
 }
 
 describe('reduceUiState', () => {
-  it('shows touch controls during racing for touch and tilt modes only', () => {
+  it('shows touch controls during racing for touch mode only, never dead buttons in tilt mode', () => {
     expect(reduceUiState({ phase: 'racing', controlMode: 'touch' }).showTouchControls).toBe(true);
-    expect(reduceUiState({ phase: 'racing', controlMode: 'tilt' }).showTouchControls).toBe(true);
+    expect(reduceUiState({ phase: 'racing', controlMode: 'tilt' }).showTouchControls).toBe(false);
     expect(reduceUiState({ phase: 'racing', controlMode: 'keyboard' }).showTouchControls).toBe(false);
   });
 
@@ -212,6 +214,53 @@ describe('HUD', () => {
     expect(objective.textContent).toBe('Target 1:20.000');
     ui.updateHud({ speed: 0, lap: 1, totalLaps: 1, position: 1, vehicleCount: 6, time: 0, nitro: 0, countdown: null });
     expect(objective.classList.contains('ui-hidden')).toBe(true);
+  });
+
+  it('renders the minimap from track bounds and positions the player marker', () => {
+    const ui = mountUi();
+    const minimap = document.getElementById('hud-minimap')!;
+    expect(minimap.classList.contains('ui-hidden')).toBe(true);
+    ui.updateHud({
+      speed: 0,
+      lap: 1,
+      totalLaps: 3,
+      position: 1,
+      vehicleCount: 6,
+      time: 0,
+      nitro: 0,
+      countdown: null,
+      minimap: {
+        points: [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 50 },
+          { x: 0, y: 50 },
+        ],
+        bounds: { minX: 0, minY: 0, maxX: 100, maxY: 50 },
+        player: { x: 42, y: 17.5 },
+      },
+    });
+    expect(minimap.classList.contains('ui-hidden')).toBe(false);
+    const path = document.querySelector<SVGPolylineElement>('#hud-minimap polyline')!;
+    expect(path.getAttribute('points')).toBe('0.00,0.00 100.00,0.00 100.00,50.00 0.00,50.00');
+    const svg = document.getElementById('hud-minimap-svg')!;
+    expect(svg.getAttribute('viewBox')).toBe('0.00 -25.00 100.00 100.00');
+    const marker = document.querySelector<SVGCircleElement>('#hud-minimap circle')!;
+    expect(marker.getAttribute('cx')).toBe('42.00');
+    expect(marker.getAttribute('cy')).toBe('17.50');
+    ui.updateHud({ speed: 0, lap: 1, totalLaps: 3, position: 1, vehicleCount: 6, time: 0, nitro: 0, countdown: null });
+    expect(minimap.classList.contains('ui-hidden')).toBe(true);
+  });
+
+  it('shows the live drift score only while drifting', () => {
+    const ui = mountUi();
+    const drift = document.getElementById('hud-drift')!;
+    expect(drift.classList.contains('ui-hidden')).toBe(true);
+    ui.updateHud({ speed: 120, lap: 1, totalLaps: 3, position: 2, vehicleCount: 6, time: 12.5, nitro: 0.5, countdown: null, driftScore: 123.4 });
+    expect(drift.classList.contains('ui-hidden')).toBe(false);
+    expect(drift.textContent).toBe('DRIFT 123');
+    ui.updateHud({ speed: 120, lap: 1, totalLaps: 3, position: 2, vehicleCount: 6, time: 13.0, nitro: 0.5, countdown: null, driftScore: 0 });
+    expect(drift.classList.contains('ui-hidden')).toBe(true);
   });
 });
 
@@ -553,5 +602,89 @@ describe('career and garage', () => {
 
     starter.dispatchEvent(new Event('click'));
     expect(actions.selectVehicle).toHaveBeenCalledWith('starter');
+  });
+});
+
+describe('garage upgrades and cosmetics', () => {
+  it('shows currency, XP, upgrade rows with level/cost/max for the selected owned vehicle', () => {
+    const ui = mountUi();
+    const actions = createActions();
+    ui.bindActions(actions);
+    ui.setSaveData(createDefaultSave());
+    ui.setMenuView('garage');
+
+    expect(document.getElementById('garage-status')!.textContent).toBe('0 credits · 0 XP');
+    expect(document.getElementById('garage-details')!.classList.contains('ui-hidden')).toBe(false);
+    expect(document.getElementById('garage-vehicle-title')!.textContent).toBe('Neon Starter');
+
+    const rows = Array.from(document.querySelectorAll<HTMLDivElement>('#garage-upgrades .upgrade-row'));
+    expect(rows.map((row) => row.dataset.slot)).toEqual(['engine', 'acceleration', 'grip', 'nitro']);
+    expect(rows.map((row) => row.querySelector('.upgrade-level')!.textContent)).toEqual([
+      'Lv 0/3',
+      'Lv 0/3',
+      'Lv 0/3',
+      'Lv 0/3',
+    ]);
+    expect(rows.map((row) => row.querySelector('.upgrade-buy')!.textContent)).toEqual([
+      '150 cr',
+      '120 cr',
+      '100 cr',
+      '180 cr',
+    ]);
+
+    rows[0]!.querySelector<HTMLButtonElement>('.upgrade-buy')!.dispatchEvent(new Event('click'));
+    expect(actions.purchaseUpgrade).toHaveBeenCalledWith('starter', 'engine');
+  });
+
+  it('marks a maxed upgrade row as MAX and disabled', () => {
+    const ui = mountUi();
+    const actions = createActions();
+    ui.bindActions(actions);
+    const save = createDefaultSave();
+    save.upgradeLevels = { 'starter:engine': 3 };
+    ui.setSaveData(save);
+    ui.setMenuView('garage');
+
+    const row = document.querySelector<HTMLDivElement>('#garage-upgrades .upgrade-row[data-slot="engine"]')!;
+    expect(row.querySelector('.upgrade-level')!.textContent).toBe('Lv 3/3');
+    const buy = row.querySelector<HTMLButtonElement>('.upgrade-buy')!;
+    expect(buy.textContent).toBe('MAX');
+    expect(buy.disabled).toBe(true);
+  });
+
+  it('renders a cosmetic picker from the vehicle options and marks the equipped one', () => {
+    const ui = mountUi();
+    const actions = createActions();
+    ui.bindActions(actions);
+    const save = createDefaultSave();
+    save.cosmetics = { starter: 'paint-starter-red' };
+    ui.setSaveData(save);
+    ui.setMenuView('garage');
+
+    const swatches = Array.from(document.querySelectorAll<HTMLButtonElement>('#garage-cosmetics .cosmetic-swatch'));
+    expect(swatches.map((swatch) => swatch.dataset.cosmeticId)).toEqual([
+      'paint-starter-silver',
+      'paint-starter-red',
+      'wheels-starter-steel',
+    ]);
+    expect(swatches[1]!.classList.contains('ui-selected')).toBe(true);
+    expect(swatches[0]!.classList.contains('ui-selected')).toBe(false);
+    expect(swatches[0]!.style.backgroundColor).toBe('#d7e1ec');
+
+    swatches[2]!.dispatchEvent(new Event('click'));
+    expect(actions.equipCosmetic).toHaveBeenCalledWith('starter', 'wheels-starter-steel');
+  });
+
+  it('hides the upgrade and cosmetic panels when the selected vehicle is not owned', () => {
+    const ui = mountUi();
+    const actions = createActions();
+    ui.bindActions(actions);
+    const save = createDefaultSave();
+    save.selectedVehicle = 'apex';
+    save.ownedVehicles = ['starter'];
+    ui.setSaveData(save);
+    ui.setMenuView('garage');
+
+    expect(document.getElementById('garage-details')!.classList.contains('ui-hidden')).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { careerCups, type CareerCup } from '../config/career';
 import { tracks } from '../config/tracks';
-import { vehicleById, vehicles } from '../config/vehicles';
+import { cosmeticValues, upgradeCost, upgradeDefinitions, vehicleById, vehicles } from '../config/vehicles';
 import { DEFAULT_SETTINGS } from '../progression/SaveService';
 import type { TouchInput } from '../simulation/PlayerController';
 import {
@@ -14,6 +14,7 @@ import {
   type GameSettings,
   type QualityPreset,
   type SaveData,
+  type Vec2,
 } from '../types';
 
 export interface UiStateInput {
@@ -41,6 +42,14 @@ export interface UiActions {
   setMuted(muted: boolean): void;
   startCareerEvent(cupId: string, eventId: string): void;
   selectVehicle(vehicleId: string): void;
+  purchaseUpgrade(vehicleId: string, slot: string): void;
+  equipCosmetic(vehicleId: string, cosmeticId: string): void;
+}
+
+export interface HudMinimap {
+  points: ReadonlyArray<Vec2>;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  player: Vec2;
 }
 
 export interface HudSnapshot {
@@ -53,6 +62,8 @@ export interface HudSnapshot {
   nitro: number;
   countdown: number | null;
   objective?: string;
+  driftScore?: number;
+  minimap?: HudMinimap;
 }
 
 export interface ResultsSnapshot {
@@ -86,10 +97,24 @@ function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function cosmeticLabel(cosmeticId: string): string {
+  const suffix = cosmeticId.split('-').pop() ?? cosmeticId;
+  return titleCase(suffix);
+}
+
+function cosmeticSwatchColor(cosmeticId: string): string {
+  const value = cosmeticValues[cosmeticId];
+  const hex = value?.body ?? value?.rim;
+  if (hex === undefined) return 'transparent';
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
 export function reduceUiState(input: UiStateInput): UiState {
   const racing = input.phase === 'racing';
   return {
-    showTouchControls: racing && (input.controlMode === 'touch' || input.controlMode === 'tilt'),
+    showTouchControls: racing && input.controlMode === 'touch',
     showHud: input.phase === 'countdown' || input.phase === 'racing' || input.phase === 'paused',
   };
 }
@@ -176,6 +201,16 @@ export class UiController {
   private readonly resultsUnlockRow: HTMLElement;
   private readonly resultsUnlock: HTMLElement;
   private readonly toastMessage: HTMLElement;
+  private readonly hudDrift: HTMLElement;
+  private readonly hudMinimap: HTMLElement;
+  private readonly hudMinimapSvg: SVGSVGElement;
+  private readonly hudMinimapPath: SVGPolylineElement;
+  private readonly hudMinimapMarker: SVGCircleElement;
+  private readonly garageStatus: HTMLElement;
+  private readonly garageDetails: HTMLElement;
+  private readonly garageDetailsTitle: HTMLElement;
+  private readonly garageUpgrades: HTMLElement;
+  private readonly garageCosmetics: HTMLElement;
 
   private phase: GamePhase = 'menu';
   private settings: GameSettings = cloneSettings(DEFAULT_SETTINGS);
@@ -245,6 +280,33 @@ export class UiController {
     this.resultsUnlockRow.id = 'results-unlock-row';
     this.toastMessage = this.create('div', 'toast');
     this.toastMessage.id = 'toast-message';
+    this.hudDrift = this.create('div', 'hud-drift ui-hidden');
+    this.hudDrift.id = 'hud-drift';
+    this.hudMinimap = this.create('div', 'hud-minimap ui-hidden');
+    this.hudMinimap.id = 'hud-minimap';
+    this.hudMinimapSvg = this.doc.createElementNS(SVG_NAMESPACE, 'svg');
+    this.hudMinimapSvg.id = 'hud-minimap-svg';
+    this.hudMinimapSvg.setAttribute('viewBox', '0 0 100 100');
+    this.hudMinimapSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    this.hudMinimapPath = this.doc.createElementNS(SVG_NAMESPACE, 'polyline');
+    this.hudMinimapPath.setAttribute('fill', 'none');
+    this.hudMinimapPath.setAttribute('stroke', 'currentColor');
+    this.hudMinimapPath.setAttribute('stroke-width', '2');
+    this.hudMinimapMarker = this.doc.createElementNS(SVG_NAMESPACE, 'circle');
+    this.hudMinimapMarker.setAttribute('r', '3.5');
+    this.hudMinimapSvg.appendChild(this.hudMinimapPath);
+    this.hudMinimapSvg.appendChild(this.hudMinimapMarker);
+    this.hudMinimap.appendChild(this.hudMinimapSvg);
+    this.garageStatus = this.create('div', 'garage-status ui-hidden');
+    this.garageStatus.id = 'garage-status';
+    this.garageDetails = this.create('section', 'garage-details ui-hidden');
+    this.garageDetails.id = 'garage-details';
+    this.garageDetailsTitle = this.create('h3', 'garage-vehicle-title');
+    this.garageDetailsTitle.id = 'garage-vehicle-title';
+    this.garageUpgrades = this.create('div', 'garage-upgrades');
+    this.garageUpgrades.id = 'garage-upgrades';
+    this.garageCosmetics = this.create('div', 'garage-cosmetics');
+    this.garageCosmetics.id = 'garage-cosmetics';
 
     this.buildMenu(home, careerView, garageView);
     this.buildHud();
@@ -340,6 +402,32 @@ export class UiController {
       this.hudCountdown.classList.remove('ui-hidden');
       this.hudCountdown.textContent = String(Math.max(0, Math.floor(snapshot.countdown)));
     }
+    const driftScore = Math.max(0, Math.floor(snapshot.driftScore ?? 0));
+    this.hudDrift.classList.toggle('ui-hidden', driftScore <= 0);
+    this.hudDrift.textContent = driftScore > 0 ? `DRIFT ${driftScore}` : '';
+    const minimap = snapshot.minimap;
+    if (!minimap || minimap.points.length < 2) {
+      this.hudMinimap.classList.add('ui-hidden');
+    } else {
+      this.hudMinimap.classList.remove('ui-hidden');
+      this.renderMinimap(minimap);
+    }
+  }
+
+  private renderMinimap(minimap: HudMinimap): void {
+    const { points, bounds, player } = minimap;
+    const width = Math.max(1, bounds.maxX - bounds.minX);
+    const height = Math.max(1, bounds.maxY - bounds.minY);
+    const span = Math.max(width, height);
+    const originX = bounds.minX - (span - width) / 2;
+    const originY = bounds.minY - (span - height) / 2;
+    this.hudMinimapSvg.setAttribute('viewBox', `${originX.toFixed(2)} ${originY.toFixed(2)} ${span.toFixed(2)} ${span.toFixed(2)}`);
+    this.hudMinimapPath.setAttribute(
+      'points',
+      points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
+    );
+    this.hudMinimapMarker.setAttribute('cx', player.x.toFixed(2));
+    this.hudMinimapMarker.setAttribute('cy', player.y.toFixed(2));
   }
 
   showResults(result: ResultsSnapshot): void {
@@ -477,7 +565,16 @@ export class UiController {
     garageHeader.appendChild(this.create('h2', null, 'Garage'));
     this.addButton(garageHeader, 'garage-back', 'Back', () => this.setMenuView('home'));
     garageView.appendChild(garageHeader);
+    garageView.appendChild(this.garageStatus);
     garageView.appendChild(this.garageList);
+    this.garageDetails.append(
+      this.garageDetailsTitle,
+      this.create('h4', 'garage-section-title', 'Upgrades'),
+      this.garageUpgrades,
+      this.create('h4', 'garage-section-title', 'Cosmetics'),
+      this.garageCosmetics,
+    );
+    garageView.appendChild(this.garageDetails);
     panel.appendChild(garageView);
 
     this.menu.appendChild(panel);
@@ -504,7 +601,7 @@ export class UiController {
     const nitro = this.create('div', 'hud-nitro');
     nitro.appendChild(this.hudNitroBar);
 
-    this.hud.append(topLeft, topRight, this.hudObjective, this.hudCountdown, bottomRight, nitro);
+    this.hud.append(topLeft, topRight, this.hudObjective, this.hudDrift, this.hudMinimap, this.hudCountdown, bottomRight, nitro);
   }
 
   private buildSettings(): void {
@@ -708,6 +805,8 @@ export class UiController {
   private renderGarage(): void {
     this.garageList.textContent = '';
     const save = this.save;
+    this.garageStatus.classList.toggle('ui-hidden', save === null);
+    this.garageStatus.textContent = save ? `${save.currency} credits · ${save.xp} XP` : '';
     for (const vehicle of vehicles) {
       const owned = save?.ownedVehicles.includes(vehicle.id) ?? false;
       const selected = save?.selectedVehicle === vehicle.id;
@@ -725,6 +824,45 @@ export class UiController {
       );
       button.addEventListener('click', () => this.actions?.selectVehicle(vehicle.id));
       this.garageList.appendChild(button);
+    }
+    this.renderGarageDetails(save?.selectedVehicle ?? null);
+  }
+
+  private renderGarageDetails(selectedVehicleId: string | null): void {
+    this.garageUpgrades.textContent = '';
+    this.garageCosmetics.textContent = '';
+    const save = this.save;
+    const vehicle = selectedVehicleId ? vehicleById(selectedVehicleId) : undefined;
+    const showDetails = Boolean(save && vehicle && save.ownedVehicles.includes(vehicle.id));
+    this.garageDetails.classList.toggle('ui-hidden', !showDetails);
+    if (!save || !vehicle || !showDetails) return;
+    this.garageDetailsTitle.textContent = vehicle.displayName;
+    for (const slot of vehicle.upgradeSlots) {
+      const definition = upgradeDefinitions[slot];
+      if (!definition) continue;
+      const level = Math.max(0, Math.floor(save.upgradeLevels[`${vehicle.id}:${slot}`] ?? 0));
+      const maxed = level >= definition.maxLevel;
+      const row = this.create('div', 'upgrade-row');
+      row.dataset.slot = slot;
+      row.dataset.vehicleId = vehicle.id;
+      row.appendChild(this.create('span', 'upgrade-name', definition.name));
+      row.appendChild(this.create('span', 'upgrade-level', `Lv ${level}/${definition.maxLevel}`));
+      const buy = this.create('button', 'upgrade-buy', maxed ? 'MAX' : `${upgradeCost(slot, level)} cr`);
+      buy.type = 'button';
+      buy.disabled = maxed;
+      buy.addEventListener('click', () => this.actions?.purchaseUpgrade(vehicle.id, slot));
+      row.appendChild(buy);
+      this.garageUpgrades.appendChild(row);
+    }
+    for (const cosmeticId of vehicle.cosmeticOptions) {
+      const swatch = this.create('button', 'cosmetic-swatch', cosmeticLabel(cosmeticId));
+      swatch.type = 'button';
+      swatch.dataset.cosmeticId = cosmeticId;
+      swatch.dataset.vehicleId = vehicle.id;
+      swatch.style.backgroundColor = cosmeticSwatchColor(cosmeticId);
+      if (save.cosmetics[vehicle.id] === cosmeticId) swatch.classList.add('ui-selected');
+      swatch.addEventListener('click', () => this.actions?.equipCosmetic(vehicle.id, cosmeticId));
+      this.garageCosmetics.appendChild(swatch);
     }
   }
 
