@@ -12,6 +12,16 @@ export const SAVE_STORAGE_KEY = 'neon-rush-3d:save';
 
 const TEXTURE_QUALITIES = ['low', 'medium', 'high'] as const;
 
+function detectDefaultControlMode(): GameSettings['controlMode'] {
+  const mediaQuery = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia;
+  if (typeof mediaQuery !== 'function') return 'keyboard';
+  try {
+    return mediaQuery('(pointer: coarse)').matches ? 'touch' : 'keyboard';
+  } catch {
+    return 'keyboard';
+  }
+}
+
 export const DEFAULT_SETTINGS: GameSettings = {
   quality: {
     preset: 'medium',
@@ -136,7 +146,7 @@ export function createDefaultSave(): SaveData {
     cosmetics: {},
     bestTimes: {},
     bestScores: {},
-    settings: { ...DEFAULT_SETTINGS, quality: { ...DEFAULT_SETTINGS.quality } },
+    settings: { ...DEFAULT_SETTINGS, controlMode: detectDefaultControlMode(), quality: { ...DEFAULT_SETTINGS.quality } },
   };
 }
 

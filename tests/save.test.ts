@@ -143,6 +143,19 @@ describe('SaveService', () => {
     expect(save.settings.muted).toBe(false);
   });
 
+  it('defaults the control mode to touch on coarse-pointer devices', () => {
+    const scope = globalThis as Record<string, unknown>;
+    const original = scope.matchMedia;
+    try {
+      scope.matchMedia = (query: string) => ({ matches: query === '(pointer: coarse)' });
+      expect(createDefaultSave().settings.controlMode).toBe('touch');
+      scope.matchMedia = () => ({ matches: false });
+      expect(createDefaultSave().settings.controlMode).toBe('keyboard');
+    } finally {
+      scope.matchMedia = original;
+    }
+  });
+
   it('keeps the selected vehicle inside the owned set', () => {
     const save = normalizeSave({
       schemaVersion: SAVE_SCHEMA_VERSION,

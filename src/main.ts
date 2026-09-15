@@ -15,7 +15,9 @@ export const gameCanvas = canvas;
 
 PwaService.register();
 
-const save = new SaveService();
+const save = new SaveService(globalThis.localStorage, (context, error) => {
+  console.warn(`[neon-rush] save ${context} failed`, error);
+});
 const settings = save.load().settings;
 const renderer = new Renderer(canvas, settings.quality);
 const ui = new UiController();

@@ -413,8 +413,10 @@ fieldset.ui-group legend {
 }
 
 .hud-pause {
-  margin-top: 6px;
+  pointer-events: auto;
+  touch-action: manipulation;
   min-height: 44px;
+  min-width: 44px;
   padding: 0 18px;
   border: 1px solid var(--line);
   border-radius: 10px;
