@@ -48,7 +48,7 @@ export const SIM_HZ = 120;
 const SIM_STEP_MS = 1000 / SIM_HZ;
 const QUALITY_FRAME_CLAMP_MS = 100;
 export const FRAME_DELTA_CLAMP_MS = 100;
-const MAX_STEPS_PER_TICK = 2400;
+const MAX_STEPS_PER_TICK = 600;
 const CAR_RADIUS = 1.05;
 const PLAYER_ID = 'player';
 const PLAYER_COLOR = 0x00e5ff;
@@ -172,7 +172,11 @@ class GameImpl {
   private lastFrameMs: number | null = null;
 
   constructor(deps: GameDependencies | null) {
-    const saveService = deps?.save ?? new SaveService();
+    const saveService =
+      deps?.save ??
+      new SaveService(globalThis.localStorage, (context, error) => {
+        console.warn(`[neon-rush] save ${context} failed`, error);
+      });
     this.saveService = saveService;
     this.career = new CareerService({
       load: () => saveService.load(),
@@ -200,6 +204,7 @@ class GameImpl {
     this.ui.setSaveData(this.saveData);
     this.ui.showScreen('menu');
     this.ui.bindActions(this.createActions());
+    this.ui.bindCareer(this.career);
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('resize', this.handleResize);
@@ -217,9 +222,11 @@ class GameImpl {
   startQuickRace(trackId: string, vehicleId: string): void {
     if (this.disposed) return;
     if (this.phaseInternal !== 'menu' && this.phaseInternal !== 'results') return;
+    const requested = vehicleId || this.saveData.selectedVehicle;
+    const vehicle = this.saveData.ownedVehicles.includes(requested) ? requested : this.saveData.selectedVehicle;
     this.beginRace({
       trackId,
-      vehicleId: vehicleId || this.saveData.selectedVehicle,
+      vehicleId: vehicle,
       event: null,
       eventConfig: null,
       careerEventId: null,
@@ -667,7 +674,8 @@ class GameImpl {
 
   private samplePlayerInput(): ControlInput {
     const ui = this.ui;
-    if (ui && this.playerController.mode === 'touch') {
+    const mode = this.playerController.mode;
+    if (ui && (mode === 'touch' || mode === 'tilt')) {
       this.playerController.setInput(ui.getTouchState());
     }
     return this.playerController.sample(this.simTimeMs);
@@ -895,6 +903,7 @@ class GameImpl {
       if (this.ui) this.ui.updateHud(this.buildHudSnapshot());
     }
     this.effects?.update(delta);
+    if (this.ui && this.effects) this.ui.setCollisionFlash(this.effects.flash);
     renderer.render(renderer.scene, rig.camera, delta);
   }
 }

@@ -1,6 +1,7 @@
-import { careerCups, type CareerCup } from '../config/career';
+import { careerCups, isCupUnlockedFor, isEventUnlockedFor, type CareerCup } from '../config/career';
 import { upgradeCost, upgradeDefinitions, vehicleById } from '../config/vehicles';
-import type { EventConfig, EventInstance, SaveData } from '../types';
+import type { EventConfig, EventInstance, SaveData, VehicleUpgrade } from '../types';
+import { clampUpgradeLevel, resolveVehicleUpgrades, upgradeKey } from './careerRules';
 import { createEventVariant } from './EventVariantService';
 import { normalizeSave } from './SaveService';
 
@@ -96,21 +97,17 @@ export class CareerService {
     return cup.events.every((event) => save.completedEvents.includes(event.id));
   }
 
+  vehicleUpgrades(vehicleId: string, save: SaveData = this.state()): VehicleUpgrade[] {
+    const vehicle = vehicleById(vehicleId);
+    return vehicle ? resolveVehicleUpgrades(vehicle, save) : [];
+  }
+
+  isCupUnlocked(cupId: string, save: SaveData = this.state()): boolean {
+    return isCupUnlockedFor(this.cups, save.completedEvents, cupId);
+  }
+
   isEventUnlocked(cupId: string, eventId: string, save: SaveData = this.state()): boolean {
-    const cup = this.cups.find((candidate) => candidate.id === cupId);
-    if (!cup) return false;
-    let gatesOpen = true;
-    for (const previous of this.cups) {
-      if (previous.id === cupId) break;
-      if (!this.isCupComplete(previous.id, save)) gatesOpen = false;
-    }
-    if (!gatesOpen) return false;
-    let priorEventsDone = true;
-    for (const event of cup.events) {
-      if (event.id === eventId) return priorEventsDone;
-      if (!save.completedEvents.includes(event.id)) priorEventsDone = false;
-    }
-    return false;
+    return isEventUnlockedFor(this.cups, save.completedEvents, cupId, eventId);
   }
 
   startEvent(cupId: string, eventId: string): StartEventOutcome {
@@ -176,8 +173,8 @@ export class CareerService {
     if (!vehicle.upgradeSlots.includes(slot)) return { ok: false, reason: 'unknown-slot' };
     const definition = upgradeDefinitions[slot];
     if (!definition) return { ok: false, reason: 'unknown-slot' };
-    const key = `${vehicleId}:${slot}`;
-    const current = save.upgradeLevels[key] ?? 0;
+    const key = upgradeKey(vehicleId, slot);
+    const current = clampUpgradeLevel(save.upgradeLevels[key] ?? 0, definition.maxLevel);
     if (current >= definition.maxLevel) return { ok: false, reason: 'max-level' };
     const cost = upgradeCost(slot, current);
     if (save.currency < cost) return { ok: false, reason: 'insufficient-currency', cost };

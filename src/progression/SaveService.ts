@@ -179,11 +179,15 @@ export interface SaveStorage {
   removeItem(key: string): void;
 }
 
+export type SaveErrorListener = (context: 'load' | 'save' | 'reset' | 'read', error: unknown) => void;
+
 export class SaveService {
   private readonly storage: SaveStorage;
+  private readonly onError: SaveErrorListener | null;
 
-  constructor(storage: SaveStorage = globalThis.localStorage) {
+  constructor(storage: SaveStorage = globalThis.localStorage, onError: SaveErrorListener | null = null) {
     this.storage = storage;
+    this.onError = onError;
   }
 
   load(): SaveData {
@@ -191,7 +195,8 @@ export class SaveService {
     if (text === null) return createDefaultSave();
     try {
       return normalizeSave(JSON.parse(text));
-    } catch {
+    } catch (error) {
+      this.onError?.('load', error);
       return createDefaultSave();
     }
   }
@@ -200,23 +205,24 @@ export class SaveService {
     const payload = JSON.stringify(normalizeSave({ ...data, schemaVersion: SAVE_SCHEMA_VERSION }));
     try {
       this.storage.setItem(SAVE_STORAGE_KEY, payload);
-    } catch {
-      return;
+    } catch (error) {
+      this.onError?.('save', error);
     }
   }
 
   reset(): void {
     try {
       this.storage.removeItem(SAVE_STORAGE_KEY);
-    } catch {
-      return;
+    } catch (error) {
+      this.onError?.('reset', error);
     }
   }
 
   private readText(): string | null {
     try {
       return this.storage.getItem(SAVE_STORAGE_KEY);
-    } catch {
+    } catch (error) {
+      this.onError?.('read', error);
       return null;
     }
   }

@@ -36,7 +36,6 @@ export function canvasViewport(canvas: HTMLCanvasElement): ViewportSize | null {
 
 export class Renderer {
   readonly scene: THREE.Scene;
-  readonly camera: THREE.PerspectiveCamera;
   readonly lights: WorldLights;
 
   private readonly canvas: HTMLCanvasElement;
@@ -67,8 +66,6 @@ export class Renderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x05070d);
     this.scene.fog = new THREE.FogExp2(0x0c1120, 0.0016);
-
-    this.camera = new THREE.PerspectiveCamera(62, this.width / this.height, 0.1, 2600);
 
     const hemisphere = new THREE.HemisphereLight(0x9db4d6, 0x2a3340, 0.85);
     const sun = new THREE.DirectionalLight(0xeaf1ff, 1.0);
@@ -103,8 +100,6 @@ export class Renderer {
     const ratio = Math.min(window.devicePixelRatio || 1, this.quality.pixelRatio);
     this.renderer.setPixelRatio(ratio * this.quality.resolutionScale);
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
   }
 
   updateShadowTarget(position: ShadowTargetPosition): void {

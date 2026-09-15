@@ -32,6 +32,7 @@ interface StandingsEntry {
 
 interface TestRace {
   vehicles: Map<string, VehicleState>;
+  configs: Map<string, { baseSpeed: number }>;
   model: AITrackProbe;
   track: { obstacles: ObstacleConfig[] };
   director: { phase: string; time: number; countdown: number };
@@ -198,6 +199,47 @@ it('starts a quick race with the track selected in the menu', () => {
   expect(started).toEqual(['city', 'coast']);
   ui.destroy();
   document.body.textContent = '';
+});
+
+it('falls back to the selected owned vehicle when a quick race asks for an unowned one', () => {
+  document.body.textContent = '';
+  for (const id of ['menu', 'hud', 'settings', 'pause', 'results', 'touch-controls', 'toast']) {
+    const node = document.createElement('div');
+    node.id = id;
+    document.body.appendChild(node);
+  }
+  const canvas = document.createElement('canvas');
+  document.body.appendChild(canvas);
+  const renderer = {
+    scene: new THREE.Scene(),
+    lights: {
+      hemisphere: new THREE.HemisphereLight(0x9db4d6, 0x2a3340, 0.85),
+      sun: new THREE.DirectionalLight(0xeaf1ff, 1.0),
+    },
+    resize: () => undefined,
+    setQuality: () => undefined,
+    updateShadowTarget: () => undefined,
+    render: () => undefined,
+    dispose: () => undefined,
+  } as unknown as Renderer;
+  vi.stubGlobal('requestAnimationFrame', () => 1);
+  vi.stubGlobal('cancelAnimationFrame', () => undefined);
+  const save = new SaveService();
+  save.reset();
+  try {
+    const ui = new UiController();
+    const game = createGame({ canvas, renderer, ui, audio: new AudioEngine(), save }) as unknown as TestGame;
+    game.startQuickRace('city', 'apex');
+    expect(game.phase).toBe('countdown');
+    const playerConfig = game.race!.configs.get('player')!;
+    expect(playerConfig.baseSpeed).toBeCloseTo(48, 1);
+    expect(playerConfig.baseSpeed).not.toBeCloseTo(82, 1);
+    game.dispose();
+    ui.destroy();
+  } finally {
+    vi.unstubAllGlobals();
+    document.body.textContent = '';
+  }
 });
 
 describe('browser frame delta clamp', () => {

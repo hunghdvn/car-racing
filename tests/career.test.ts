@@ -74,6 +74,25 @@ describe('CareerService', () => {
     expect(service.startEvent('cup-2', 'cup-2-event-1').ok).toBe(true);
   });
 
+  it('exposes cup/upgrade gates from the shared career rules with an explicit save', () => {
+    const { storage } = makeStorage();
+    const service = new CareerService(storage, null);
+    expect(service.isCupUnlocked('cup-1')).toBe(true);
+    expect(service.isCupUnlocked('cup-2')).toBe(false);
+    expect(service.isCupUnlocked('missing-cup')).toBe(false);
+    const completed = createDefaultSave();
+    completed.completedEvents = careerCups[0]!.events.map((event) => event.id);
+    expect(service.isCupUnlocked('cup-2', completed)).toBe(true);
+    expect(service.isEventUnlocked('cup-2', 'cup-2-event-1', completed)).toBe(true);
+    const rows = service.vehicleUpgrades('starter', { ...createDefaultSave(), upgradeLevels: { 'starter:engine': 2 } });
+    expect(rows.map((row) => [row.id, row.level, row.maxLevel])).toEqual([
+      ['starter:engine', 2, 3],
+      ['starter:acceleration', 0, 3],
+      ['starter:grip', 0, 3],
+      ['starter:nitro', 0, 3],
+    ]);
+  });
+
   it('awards rewards, records best results and applies unlock gates on pass', () => {
     const { storage } = makeStorage({ ...createDefaultSave(), currency: 1000, xp: 5 });
     const service = new CareerService(storage, null);

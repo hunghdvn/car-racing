@@ -77,6 +77,22 @@ describe('createPlayerController', () => {
     expect(back.throttle).toBe(0);
   });
 
+  it('reads nitro and drift buttons while steering with tilt', () => {
+    const controller = createPlayerController('tilt');
+    controller.setInput({ beta: 90, gamma: 0 });
+    expect(controller.sample(0).nitro).toBe(false);
+
+    controller.setInput({ ...zeroTouch, nitro: true, drift: true });
+    const pressed = controller.sample(100);
+    expect(pressed.nitro).toBe(true);
+    expect(pressed.drift).toBe(true);
+    expect(pressed.throttle).toBe(0);
+
+    controller.reset();
+    expect(controller.sample(200).nitro).toBe(false);
+    expect(controller.sample(300).drift).toBe(false);
+  });
+
   it('switches the active source when the mode changes', () => {
     const controller = createPlayerController('keyboard');
     expect(controller.mode).toBe('keyboard');

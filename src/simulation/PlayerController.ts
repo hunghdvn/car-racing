@@ -115,8 +115,8 @@ export function createPlayerController(mode: ControlMode): PlayerController {
       throttle: pitch < -TILT_DEAD_ZONE ? clamp01((-pitch - TILT_DEAD_ZONE) / BETA_PEDAL_RANGE) : 0,
       brake: pitch > TILT_DEAD_ZONE ? clamp01((pitch - TILT_DEAD_ZONE) / BETA_PEDAL_RANGE) : 0,
       steer: smoothedSteer,
-      drift: false,
-      nitro: false,
+      drift: touch.drift,
+      nitro: touch.nitro,
     };
   }
 

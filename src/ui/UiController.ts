@@ -1,6 +1,8 @@
-import { careerCups, type CareerCup } from '../config/career';
+import { careerCups, isCupUnlockedFor, isEventUnlockedFor, type CareerCup } from '../config/career';
 import { tracks } from '../config/tracks';
-import { cosmeticValues, upgradeCost, upgradeDefinitions, vehicleById, vehicles } from '../config/vehicles';
+import { cosmeticValues, vehicleById, vehicles } from '../config/vehicles';
+import type { CareerService } from '../progression/CareerService';
+import { resolveVehicleUpgrades } from '../progression/careerRules';
 import { DEFAULT_SETTINGS } from '../progression/SaveService';
 import type { TouchInput } from '../simulation/PlayerController';
 import {
@@ -24,6 +26,10 @@ export interface UiStateInput {
 
 export interface UiState {
   showTouchControls: boolean;
+  showSteerButtons: boolean;
+  showThrottleButtons: boolean;
+  showActionButtons: boolean;
+  showPauseButton: boolean;
   showHud: boolean;
 }
 
@@ -113,8 +119,13 @@ const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 export function reduceUiState(input: UiStateInput): UiState {
   const racing = input.phase === 'racing';
+  const touchLike = racing && (input.controlMode === 'touch' || input.controlMode === 'tilt');
   return {
-    showTouchControls: racing && input.controlMode === 'touch',
+    showTouchControls: touchLike,
+    showSteerButtons: racing && input.controlMode === 'touch',
+    showThrottleButtons: racing && input.controlMode === 'touch',
+    showActionButtons: touchLike,
+    showPauseButton: racing || input.phase === 'countdown',
     showHud: input.phase === 'countdown' || input.phase === 'racing' || input.phase === 'paused',
   };
 }
@@ -211,10 +222,17 @@ export class UiController {
   private readonly garageDetailsTitle: HTMLElement;
   private readonly garageUpgrades: HTMLElement;
   private readonly garageCosmetics: HTMLElement;
+  private readonly hudPause: HTMLButtonElement;
+  private readonly hudFlash: HTMLElement;
+  private readonly steerableButtons: HTMLButtonElement[] = [];
+  private readonly throttleButtons: HTMLButtonElement[] = [];
+  private readonly actionButtons: HTMLButtonElement[] = [];
+  private minimapPath: ReadonlyArray<Vec2> | null = null;
 
   private phase: GamePhase = 'menu';
   private settings: GameSettings = cloneSettings(DEFAULT_SETTINGS);
   private actions: UiActions | null = null;
+  private career: CareerService | null = null;
   private settingsOpen = false;
   private save: SaveData | null = null;
   private touch: TouchInput = zeroTouch();
@@ -258,6 +276,13 @@ export class UiController {
     this.hudObjective.id = 'hud-objective';
     this.hudCountdown = this.create('div', 'hud-countdown ui-hidden');
     this.hudCountdown.id = 'hud-countdown';
+    this.hudPause = this.create('button', 'hud-pause ui-hidden', 'Pause');
+    this.hudPause.id = 'hud-pause';
+    this.hudPause.type = 'button';
+    this.hudPause.setAttribute('aria-label', 'Pause race');
+    this.hudPause.addEventListener('click', () => this.actions?.pause());
+    this.hudFlash = this.create('div', 'hud-flash');
+    this.hudFlash.id = 'hud-flash';
     this.volumeInput = this.create('input', 'settings-volume');
     this.volumeInput.id = 'settings-volume';
     this.volumeLabel = this.create('span', 'settings-volume-value');
@@ -329,10 +354,24 @@ export class UiController {
     this.pauseScreen.classList.toggle('ui-active', phase === 'paused');
     this.resultsScreen.classList.toggle('ui-active', phase === 'results');
     this.touchControls.classList.toggle('ui-hidden', !state.showTouchControls);
+    this.applyControlVisibility(state);
     if (phase !== 'menu' && this.settingsOpen) this.closeSettings();
     if (phase !== 'countdown' && phase !== 'racing') {
       this.releaseTouchControls();
     }
+  }
+
+  private applyControlVisibility(state: UiState): void {
+    for (const button of this.steerableButtons) {
+      button.classList.toggle('ui-hidden', !state.showSteerButtons);
+    }
+    for (const button of this.throttleButtons) {
+      button.classList.toggle('ui-hidden', !state.showThrottleButtons);
+    }
+    for (const button of this.actionButtons) {
+      button.classList.toggle('ui-hidden', !state.showActionButtons);
+    }
+    this.hudPause.classList.toggle('ui-hidden', !state.showPauseButton);
   }
 
   private releaseTouchControls(): void {
@@ -368,6 +407,10 @@ export class UiController {
     this.actions = actions;
   }
 
+  bindCareer(career: CareerService): void {
+    this.career = career;
+  }
+
   setSettings(settings: GameSettings): void {
     this.settings = cloneSettings(settings);
     this.selectSegment(this.qualityGroup, settings.quality.preset);
@@ -377,6 +420,7 @@ export class UiController {
     this.volumeInput.value = String(volume);
     this.volumeLabel.textContent = `${Math.round(volume * 100)}%`;
     this.muteInput.checked = settings.muted;
+    this.applyControlVisibility(reduceUiState({ phase: this.phase, controlMode: settings.controlMode }));
   }
 
   setSaveData(save: SaveData): void {
@@ -422,10 +466,13 @@ export class UiController {
     const originX = bounds.minX - (span - width) / 2;
     const originY = bounds.minY - (span - height) / 2;
     this.hudMinimapSvg.setAttribute('viewBox', `${originX.toFixed(2)} ${originY.toFixed(2)} ${span.toFixed(2)} ${span.toFixed(2)}`);
-    this.hudMinimapPath.setAttribute(
-      'points',
-      points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
-    );
+    if (this.minimapPath !== points) {
+      this.hudMinimapPath.setAttribute(
+        'points',
+        points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
+      );
+      this.minimapPath = points;
+    }
     this.hudMinimapMarker.setAttribute('cx', player.x.toFixed(2));
     this.hudMinimapMarker.setAttribute('cy', player.y.toFixed(2));
   }
@@ -449,6 +496,11 @@ export class UiController {
       this.toast.classList.remove('ui-visible');
       this.toastTimer = null;
     }, TOAST_DURATION_MS);
+  }
+
+  setCollisionFlash(level: number): void {
+    const value = clamp01(Number.isFinite(level) ? level : 0);
+    this.hudFlash.style.opacity = value.toFixed(3);
   }
 
   getTouchState(): TouchInput {
@@ -589,7 +641,7 @@ export class UiController {
 
     const topRight = this.create('div', 'hud-corner hud-tr');
     this.hudTime.textContent = '0:00.000';
-    topRight.appendChild(this.hudTime);
+    topRight.append(this.hudTime, this.hudPause);
 
     const bottomRight = this.create('div', 'hud-corner hud-br');
     const speedRow = this.create('div', 'hud-speed-row');
@@ -601,7 +653,17 @@ export class UiController {
     const nitro = this.create('div', 'hud-nitro');
     nitro.appendChild(this.hudNitroBar);
 
-    this.hud.append(topLeft, topRight, this.hudObjective, this.hudDrift, this.hudMinimap, this.hudCountdown, bottomRight, nitro);
+    this.hud.append(
+      this.hudFlash,
+      topLeft,
+      topRight,
+      this.hudObjective,
+      this.hudDrift,
+      this.hudMinimap,
+      this.hudCountdown,
+      bottomRight,
+      nitro,
+    );
   }
 
   private buildSettings(): void {
@@ -703,13 +765,18 @@ export class UiController {
 
   private buildTouchControls(): void {
     const left = this.create('div', 'touch-cluster touch-left');
-    left.appendChild(this.makeTouchButton('touch-left', '◀', 'Steer left', 'steerLeft'));
-    left.appendChild(this.makeTouchButton('touch-right', '▶', 'Steer right', 'steerRight'));
+    const steerLeft = this.makeTouchButton('touch-left', '◀', 'Steer left', 'steerLeft');
+    const steerRight = this.makeTouchButton('touch-right', '▶', 'Steer right', 'steerRight');
+    left.append(steerLeft, steerRight);
+    this.steerableButtons.push(steerLeft, steerRight);
     const right = this.create('div', 'touch-cluster touch-right');
-    right.appendChild(this.makeTouchButton('touch-gas', 'GAS', 'Gas', 'gas'));
-    right.appendChild(this.makeTouchButton('touch-brake', 'BRAKE', 'Brake', 'brake'));
-    right.appendChild(this.makeTouchButton('touch-nitro', 'NITRO', 'Nitro', 'nitro'));
-    right.appendChild(this.makeTouchButton('touch-drift', 'DRIFT', 'Drift', 'drift'));
+    const gas = this.makeTouchButton('touch-gas', 'GAS', 'Gas', 'gas');
+    const brake = this.makeTouchButton('touch-brake', 'BRAKE', 'Brake', 'brake');
+    const nitro = this.makeTouchButton('touch-nitro', 'NITRO', 'Nitro', 'nitro');
+    const drift = this.makeTouchButton('touch-drift', 'DRIFT', 'Drift', 'drift');
+    right.append(gas, brake, nitro, drift);
+    this.throttleButtons.push(gas, brake);
+    this.actionButtons.push(nitro, drift);
     this.touchControls.append(left, right);
   }
 
@@ -755,25 +822,17 @@ export class UiController {
   }
 
   private cupUnlocked(cup: CareerCup): boolean {
-    const save = this.save;
-    if (!save) return true;
-    for (const previous of careerCups) {
-      if (previous.id === cup.id) break;
-      if (!previous.events.every((event) => save.completedEvents.includes(event.id))) return false;
-    }
-    return true;
+    if (!this.save) return true;
+    return this.career
+      ? this.career.isCupUnlocked(cup.id, this.save)
+      : isCupUnlockedFor(careerCups, this.save.completedEvents, cup.id);
   }
 
   private eventUnlocked(cup: CareerCup, eventId: string): boolean {
-    if (!this.cupUnlocked(cup)) return false;
-    const save = this.save;
-    if (!save) return true;
-    let open = true;
-    for (const event of cup.events) {
-      if (event.id === eventId) return open;
-      if (!save.completedEvents.includes(event.id)) open = false;
-    }
-    return false;
+    if (!this.save) return true;
+    return this.career
+      ? this.career.isEventUnlocked(cup.id, eventId, this.save)
+      : isEventUnlockedFor(careerCups, this.save.completedEvents, cup.id, eventId);
   }
 
   private renderCareer(): void {
@@ -837,20 +896,17 @@ export class UiController {
     this.garageDetails.classList.toggle('ui-hidden', !showDetails);
     if (!save || !vehicle || !showDetails) return;
     this.garageDetailsTitle.textContent = vehicle.displayName;
-    for (const slot of vehicle.upgradeSlots) {
-      const definition = upgradeDefinitions[slot];
-      if (!definition) continue;
-      const level = Math.max(0, Math.floor(save.upgradeLevels[`${vehicle.id}:${slot}`] ?? 0));
-      const maxed = level >= definition.maxLevel;
+    for (const upgrade of resolveVehicleUpgrades(vehicle, save)) {
+      const maxed = upgrade.level >= upgrade.maxLevel;
       const row = this.create('div', 'upgrade-row');
-      row.dataset.slot = slot;
+      row.dataset.slot = upgrade.slot;
       row.dataset.vehicleId = vehicle.id;
-      row.appendChild(this.create('span', 'upgrade-name', definition.name));
-      row.appendChild(this.create('span', 'upgrade-level', `Lv ${level}/${definition.maxLevel}`));
-      const buy = this.create('button', 'upgrade-buy', maxed ? 'MAX' : `${upgradeCost(slot, level)} cr`);
+      row.appendChild(this.create('span', 'upgrade-name', upgrade.name));
+      row.appendChild(this.create('span', 'upgrade-level', `Lv ${upgrade.level}/${upgrade.maxLevel}`));
+      const buy = this.create('button', 'upgrade-buy', maxed ? 'MAX' : `${upgrade.cost} cr`);
       buy.type = 'button';
       buy.disabled = maxed;
-      buy.addEventListener('click', () => this.actions?.purchaseUpgrade(vehicle.id, slot));
+      buy.addEventListener('click', () => this.actions?.purchaseUpgrade(vehicle.id, upgrade.slot));
       row.appendChild(buy);
       this.garageUpgrades.appendChild(row);
     }

@@ -85,6 +85,28 @@ it('exposes mute and volume state', () => {
   audio.dispose();
 });
 
+it('replays the cached phase when unmuted before the first phase change', async () => {
+  const scope = globalThis as Record<string, unknown>;
+  scope.AudioContext = FakeAudioContext as unknown as typeof AudioContext;
+  const audio = new AudioEngine();
+  try {
+    audio.setMuted(true);
+    audio.start();
+    audio.setMusicPhase('menu');
+    expect(fakeInstance).toBe(null);
+    audio.setMuted(false);
+    const fake = fakeInstance;
+    if (!fake) throw new Error('unmute should create the audio context');
+    fake.currentTime += 0.3;
+    await sleep(100);
+    expect(fake.oscillators.length).toBeGreaterThan(0);
+  } finally {
+    audio.dispose();
+    delete scope.AudioContext;
+    fakeInstance = null;
+  }
+});
+
 it('keeps public methods safe when audio is unavailable', () => {
   const audio = new AudioEngine();
   expect(() => {

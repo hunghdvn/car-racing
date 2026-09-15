@@ -58,6 +58,7 @@ export class AudioEngine {
   private nitroGain: GainNode | null = null;
   private driftGain: GainNode | null = null;
   private musicPhase: MusicPhase | null = null;
+  private desiredPhase: MusicPhase = 'menu';
   private paused = false;
   private step = 0;
   private nextTime = 0;
@@ -82,6 +83,7 @@ export class AudioEngine {
     if (this.isMuted || this.closed) return;
     this.ensureContext();
     this.ctx?.resume().catch(() => undefined);
+    this.restartMusic();
   }
 
   setMuted(value: boolean): void {
@@ -119,6 +121,7 @@ export class AudioEngine {
   }
 
   setMusicPhase(phase: GamePhase): void {
+    if (phase !== 'paused') this.desiredPhase = phase;
     if (this.isMuted || this.closed || !this.ctx) return;
     if (phase === 'paused') {
       this.paused = true;
@@ -299,7 +302,9 @@ export class AudioEngine {
   }
 
   private restartMusic(): void {
-    if (this.musicPhase && !this.paused) this.startScheduler();
+    if (this.paused || this.isMuted || this.closed || !this.ctx) return;
+    if (this.musicPhase === null) this.musicPhase = this.desiredPhase;
+    this.startScheduler();
   }
 
   private applyMusicIntensity(): void {

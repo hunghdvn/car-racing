@@ -412,6 +412,32 @@ fieldset.ui-group legend {
   align-items: flex-end;
 }
 
+.hud-pause {
+  margin-top: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: 700 13px/1 var(--font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-pause:active {
+  background: rgba(64, 84, 112, 0.55);
+}
+
+.hud-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 58%, rgba(255, 255, 255, 0.92), rgba(255, 170, 80, 0.35) 55%, transparent 78%);
+  opacity: 0;
+}
+
 .hud-br {
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   right: calc(16px + env(safe-area-inset-right, 0px));

@@ -218,6 +218,16 @@ describe('SaveService', () => {
     expect(() => service.save(createDefaultSave())).not.toThrow();
     expect(() => service.reset()).not.toThrow();
   });
+
+  it('surfaces storage failures through the error listener without throwing', () => {
+    const failures: Array<[string, unknown]> = [];
+    const service = new SaveService(new BrokenStorage(), (context, error) => failures.push([context, error]));
+    service.load();
+    service.save(createDefaultSave());
+    service.reset();
+    expect(failures.map(([context]) => context)).toEqual(['read', 'save', 'reset']);
+    expect(failures.every(([, error]) => error instanceof Error)).toBe(true);
+  });
 });
 
 describe('normalizeSave', () => {

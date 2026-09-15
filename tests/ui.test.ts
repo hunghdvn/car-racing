@@ -72,10 +72,28 @@ function flushMicrotasks(): Promise<void> {
 }
 
 describe('reduceUiState', () => {
-  it('shows touch controls during racing for touch mode only, never dead buttons in tilt mode', () => {
-    expect(reduceUiState({ phase: 'racing', controlMode: 'touch' }).showTouchControls).toBe(true);
-    expect(reduceUiState({ phase: 'racing', controlMode: 'tilt' }).showTouchControls).toBe(false);
+  it('shows touch controls in touch and tilt modes without dead drive buttons', () => {
+    const touch = reduceUiState({ phase: 'racing', controlMode: 'touch' });
+    expect(touch.showTouchControls).toBe(true);
+    expect(touch.showSteerButtons).toBe(true);
+    expect(touch.showThrottleButtons).toBe(true);
+    expect(touch.showActionButtons).toBe(true);
+
+    const tilt = reduceUiState({ phase: 'racing', controlMode: 'tilt' });
+    expect(tilt.showTouchControls).toBe(true);
+    expect(tilt.showSteerButtons).toBe(false);
+    expect(tilt.showThrottleButtons).toBe(false);
+    expect(tilt.showActionButtons).toBe(true);
+
     expect(reduceUiState({ phase: 'racing', controlMode: 'keyboard' }).showTouchControls).toBe(false);
+  });
+
+  it('shows the in-HUD pause button during countdown and racing only', () => {
+    expect(reduceUiState({ phase: 'countdown', controlMode: 'keyboard' }).showPauseButton).toBe(true);
+    expect(reduceUiState({ phase: 'racing', controlMode: 'keyboard' }).showPauseButton).toBe(true);
+    expect(reduceUiState({ phase: 'paused', controlMode: 'keyboard' }).showPauseButton).toBe(false);
+    expect(reduceUiState({ phase: 'menu', controlMode: 'keyboard' }).showPauseButton).toBe(false);
+    expect(reduceUiState({ phase: 'results', controlMode: 'keyboard' }).showPauseButton).toBe(false);
   });
 
   it('hides touch controls outside racing', () => {
@@ -508,6 +526,58 @@ describe('touch controls', () => {
     expect(ui.getTouchState().gas).toBe(true);
     pressPointer(gas, 'pointercancel');
     expect(ui.getTouchState().gas).toBe(false);
+  });
+
+  it('gives touch players a visible pause button wired to actions.pause', () => {
+    const ui = mountUi();
+    const actions = createActions();
+    ui.bindActions(actions);
+    ui.setSettings({ ...DEFAULT_SETTINGS, controlMode: 'touch' });
+    ui.showScreen('racing');
+    const pauseButton = document.getElementById('hud-pause')!;
+    expect(pauseButton.classList.contains('ui-hidden')).toBe(false);
+    pauseButton.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(actions.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the pause button while the pause screen is shown', () => {
+    const ui = mountUi();
+    ui.showScreen('racing');
+    const pauseButton = document.getElementById('hud-pause')!;
+    expect(pauseButton.classList.contains('ui-hidden')).toBe(false);
+    ui.showScreen('paused');
+    expect(pauseButton.classList.contains('ui-hidden')).toBe(true);
+    ui.showScreen('menu');
+    expect(pauseButton.classList.contains('ui-hidden')).toBe(true);
+  });
+
+  it('keeps nitro and drift reachable while driving with tilt', () => {
+    const ui = mountUi();
+    ui.setSettings({ ...DEFAULT_SETTINGS, controlMode: 'tilt' });
+    ui.showScreen('racing');
+    const nitro = document.getElementById('touch-nitro')!;
+    const drift = document.getElementById('touch-drift')!;
+    const gas = document.getElementById('touch-gas')!;
+    const steer = document.getElementById('touch-left')!;
+    expect(nitro.classList.contains('ui-hidden')).toBe(false);
+    expect(drift.classList.contains('ui-hidden')).toBe(false);
+    expect(gas.classList.contains('ui-hidden')).toBe(true);
+    expect(steer.classList.contains('ui-hidden')).toBe(true);
+    pressPointer(nitro, 'pointerdown');
+    expect(ui.getTouchState().nitro).toBe(true);
+    pressPointer(nitro, 'pointerup');
+    expect(ui.getTouchState().nitro).toBe(false);
+  });
+
+  it('shows the collision flash overlay only while the effect is active', () => {
+    const ui = mountUi();
+    ui.showScreen('racing');
+    const flash = document.getElementById('hud-flash')!;
+    expect(flash.style.opacity).toBe('');
+    ui.setCollisionFlash(0.8);
+    expect(Number.parseFloat(flash.style.opacity)).toBeGreaterThan(0.1);
+    ui.setCollisionFlash(0);
+    expect(flash.style.opacity).toBe('0.000');
   });
 });
 

@@ -177,3 +177,29 @@ export function eventLocation(eventId: string): { cup: CareerCup; event: EventCo
   }
   return undefined;
 }
+
+export function isCupUnlockedFor(cups: readonly CareerCup[], completedEventIds: readonly string[], cupId: string): boolean {
+  const cup = cups.find((candidate) => candidate.id === cupId);
+  if (!cup) return false;
+  if (cup.unlockAfterCupId === null) return true;
+  const gate = cups.find((candidate) => candidate.id === cup.unlockAfterCupId);
+  if (!gate) return false;
+  return gate.events.every((event) => completedEventIds.includes(event.id));
+}
+
+export function isEventUnlockedFor(
+  cups: readonly CareerCup[],
+  completedEventIds: readonly string[],
+  cupId: string,
+  eventId: string,
+): boolean {
+  if (!isCupUnlockedFor(cups, completedEventIds, cupId)) return false;
+  const cup = cups.find((candidate) => candidate.id === cupId);
+  if (!cup) return false;
+  let open = true;
+  for (const event of cup.events) {
+    if (event.id === eventId) return open;
+    if (!completedEventIds.includes(event.id)) open = false;
+  }
+  return false;
+}
