@@ -343,6 +343,29 @@ export function ensureOutwardWinding(geo: THREE.BufferGeometry): void {
 }
 
 /**
+ * Flip every triangle whose geometric normal opposes `up` (dominant-axis
+ * orient for near-planar ribbons: road surfaces, shoulders). Leaves
+ * side-facing tris (|dot| < tol) untouched so walls keep their authored order.
+ */
+export function forceUpWinding(geo: THREE.BufferGeometry, up: THREE.Vector3, tol = 0.05): void {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const idx = geo.getIndex() as THREE.BufferAttribute | null
+  if (!idx || idx.count < 3) return
+  const arr = new Uint32Array(idx.count)
+  for (let f = 0; f < idx.count; f += 3) {
+    const ia = idx.getX(f), ib = idx.getX(f + 1), ic = idx.getX(f + 2)
+    arr[f] = ia; arr[f + 1] = ib; arr[f + 2] = ic
+    const ux = pos.getX(ib) - pos.getX(ia), uy = pos.getY(ib) - pos.getY(ia), uz = pos.getZ(ib) - pos.getZ(ia)
+    const vx = pos.getX(ic) - pos.getX(ia), vy = pos.getY(ic) - pos.getY(ia), vz = pos.getZ(ic) - pos.getZ(ia)
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+    const l = Math.hypot(fx, fy, fz) || 1
+    const d = (fx * up.x + fy * up.y + fz * up.z) / l
+    if (d < -tol) { arr[f + 1] = ic; arr[f + 2] = ib }
+  }
+  geo.setIndex(new THREE.Uint32BufferAttribute(arr, 1))
+}
+
+/**
  * Sweep a closed 2D profile along a sampled path of frames.
  * frames: [x,y,z, nx,ny,nz(bank axis-free side), ux,uy,uz(up)] per station.
  * Emits a watertight tube (profile ring wrapped) + optional end caps.

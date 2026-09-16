@@ -17,7 +17,7 @@ export const THEME = {
   envIntensity: 1.02,
   fogColor: 0xcfd6da,
   fogDensity: 0.00128,
-  water: { deep: 0x0a2f47, shallow: 0x18687c, foam: 0xe4f2f5, spec: 0xffd9a8 },
+  water: { deep: 0x0a2f47, shallow: 0x115468, foam: 0xcfe4e8, spec: 0xffd9a8 },
 } as const
 
 /** Render/quality budgets (spec §3, §12, §17). */
@@ -175,7 +175,7 @@ export const TRACK = {
   /** Coastal terrain field (spec §4.4/§8/§9). */
   coast: {
     seaLevel: -6.5,
-    shelfAmp: 2.4,       // cliff-top shelf relief
+    shelfAmp: 1.0,       // cliff-top shelf relief (blends into dune field)
     seaFloor: -10.4,
     cliffZTop: -26,      // shelf begins falling here …
     cliffZBase: -47,     // … down to the sea floor

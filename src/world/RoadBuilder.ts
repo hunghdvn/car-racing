@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { TRACK, SEED } from '../config'
-import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry, crNormals, sweepProfile, type SweepFrame } from '../util'
+import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry, crNormals, sweepProfile, ensureOutwardWinding, forceUpWinding, type SweepFrame } from '../util'
+
+const UP = new THREE.Vector3(0, 1, 0)
 import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture } from '../assets/Textures'
 import type { TrackSpline } from './TrackSpline'
 
@@ -84,6 +86,7 @@ export class RoadBuilder {
     uvScale: number,
     colorAt?: (s: number, lat: number, out: THREE.Color, col: number) => void,
     flip = false,
+    up?: THREE.Vector3,
   ): THREE.BufferGeometry {
     const rows = Math.max(2, Math.ceil((sTo - sFrom) / sStep))
     const pos: number[] = [], uv: number[] = [], col: number[] = [], idx: number[] = []
@@ -109,6 +112,7 @@ export class RoadBuilder {
     if (colorAt) geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
     geo.setIndex(idx)
     sanitizeGeometry(geo)
+    if (up) forceUpWinding(geo, up)
     return geo
   }
 
@@ -117,7 +121,7 @@ export class RoadBuilder {
     const m = asphaltMaps()
     const mat = new THREE.MeshStandardMaterial({
       map: m.map, normalMap: m.normalMap, roughnessMap: m.roughnessMap,
-      roughness: 0.92, metalness: 0.02, vertexColors: true, side: THREE.DoubleSide,
+      roughness: 0.92, metalness: 0.02, vertexColors: true,
     })
     mat.normalScale = new THREE.Vector2(0.8, 0.8)
     return mat
@@ -127,8 +131,8 @@ export class RoadBuilder {
     const hw = TRACK.halfWidth
     const cols = [-hw, -hw * 0.6, -hw * 0.22, hw * 0.22, hw * 0.6, hw]
     const geo = this.loft(sFrom, sTo, 0.9, cols,
-      (s, lat, out) => { this.spline.surfacePoint(s, lat, rampLiftAt(s), out) },
-      0.2, (s, lat, c) => roadVertexColor(s, lat, c))
+      (s, lat, out) => { this.spline.surfacePoint(s, lat, rampLiftAt(s), out); },
+      0.2, (s, lat, c) => roadVertexColor(s, lat, c), false, UP)
     const mesh = new THREE.Mesh(geo, this.asphaltMat())
     mesh.receiveShadow = true
     mesh.name = 'road-asphalt'
@@ -148,13 +152,14 @@ export class RoadBuilder {
           const t = smoothstep(hw, so, Math.abs(lat))
           const d = lerp(0.97, 0.6, t)
           ccol.setRGB(d * lerp(1, 0.95, t), d, d * lerp(1, 0.8, t))
-        })
+        },
+        false, UP)
     }
     const geo = mergeGeometries([
       { geometry: build(1) },
       { geometry: build(-1) },
     ])
-    const mat = new THREE.MeshStandardMaterial({ map: gr.map, normalMap: gr.normalMap, roughness: 0.98, metalness: 0, vertexColors: true, side: THREE.DoubleSide })
+    const mat = new THREE.MeshStandardMaterial({ map: gr.map, normalMap: gr.normalMap, roughness: 0.98, metalness: 0, vertexColors: true })
     mat.normalScale = new THREE.Vector2(1.1, 1.1)
     const mesh = new THREE.Mesh(geo, mat)
     mesh.receiveShadow = true
@@ -499,9 +504,10 @@ export class RoadBuilder {
     slabGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
     slabGeo.setIndex(idx)
     sanitizeGeometry(slabGeo)
+    ensureOutwardWinding(slabGeo)
     const slab = new THREE.Mesh(slabGeo, new THREE.MeshStandardMaterial({
       map: asphalt.map, normalMap: asphalt.normalMap, roughnessMap: asphalt.roughnessMap,
-      roughness: 0.9, metalness: 0.02, vertexColors: true, side: THREE.DoubleSide,
+      roughness: 0.9, metalness: 0.02, vertexColors: true,
     }))
     slab.castShadow = true
     slab.receiveShadow = true

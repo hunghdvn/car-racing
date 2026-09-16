@@ -5,7 +5,7 @@ import { CoastField } from './Terrain'
 import { RoadBuilder, rampLiftAt, rampSlopeAt } from './RoadBuilder'
 import { buildWater, animateWater, type ShoreMap } from './Water'
 import { buildCluster } from './Buildings'
-import { placeVegetation } from './Vegetation'
+import { placeVegetation } from './VegetationKit'
 import { placeProps } from './Props'
 import { grassTuftTexture } from '../assets/Textures'
 

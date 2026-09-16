@@ -32,19 +32,19 @@ export function placeProps(host: THREE.Group, spline: TrackSpline, field: CoastF
   /* ---------------- masted road signs (facing oncoming traffic = -X) ------ */
   const makeSign = (kind: Parameters<typeof signFaceTexture>[0], w: number, h: number, twoPost = true): THREE.Group => {
     const g = new THREE.Group()
+    // panel spans local x and faces local −z; placement adds (π/2 + yaw) so
+    // the face normal lands on −tangent = into oncoming traffic
     const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: signFaceTexture(kind), roughness: 0.68, metalness: 0.04 }))
-    face.rotation.y = -Math.PI / 2
+    face.rotation.y = Math.PI
     face.position.y = 2.5
     g.add(face)
-    const back = new THREE.BoxGeometry(w, h, 0.07)
-    const bm = new THREE.Mesh(back, steelDark)
-    bm.rotation.y = -Math.PI / 2
-    bm.position.set(-0.055, 2.5, 0)
+    const bm = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.07), steelDark)
+    bm.position.set(0, 2.5, 0.055)
     g.add(bm)
     const postX = twoPost ? w * 0.34 : 0
     for (const off of twoPost ? [-postX, postX] : [0]) {
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 2.9, 7), steel)
-      post.position.set(-0.09, 1.45, off)
+      post.position.set(off, 1.45, 0.09)
       g.add(post)
     }
     shadow(g)

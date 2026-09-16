@@ -36,11 +36,16 @@ export class CoastField {
     }
     // meandering cliff line + sea floor
     const zE = z + (fbm2(x * 0.016 + 0.7, 5.1, 2) - 0.5) * C.edgeMeander
-    const shelf = 1.4 + fbm2(x * 0.021 + 3.3, 7.7, 3) * C.shelfAmp
-    const s1 = smoothstep(C.cliffZTop, C.cliffZTop - 10, zE)
-    const s2 = smoothstep(C.cliffZBase + 8, C.cliffZBase, zE)
+    const shelf = 0.35 + fbm2(x * 0.021 + 3.3, 7.7, 3) * C.shelfAmp
+    const s1 = smoothstep(C.cliffZTop, C.cliffZTop - 26, zE)
+    const s2 = smoothstep(C.cliffZBase + 22, C.cliffZBase + 2, zE)
     h = lerp(h, shelf, s1)
-    h = lerp(h, (shelf + C.seaFloor) * 0.5 - 0.8, s1 * s2)
+    // break the face: terraced noise over the transition so no flat slab wall
+    const wall = s1 * (1 - s2)
+    h += (fbm2(x * 0.11 + 6.6, zE * 0.16 + 2.4, 3) - 0.5) * 2.4 * wall
+    // terrace between cliff face and sea floor — must sit WELL below the
+    // waterline so the sea shader reads real depth (no dry-foam sheet over it)
+    h = lerp(h, C.seaFloor - 2.4 - fbm2(x * 0.02 + 5.9, zE * 0.02, 2) * 1.8, s1 * s2)
     h = lerp(h, C.seaFloor - fbm2(x * 0.03 + 8.1, 2.7, 2) * 1.6, s2)
     // authored cluster pad
     const pd = Math.hypot(x - this.pad.x, z - this.pad.z)
@@ -104,7 +109,7 @@ export class CoastField {
     const idx: number[] = []
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
       const a = j * w + i, b = a + 1, d = a + w, e = d + 1
-      idx.push(a, b, d, b, e, d)
+      idx.push(a, d, b, d, e, b)
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
@@ -112,6 +117,7 @@ export class CoastField {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
     geo.setIndex(idx)
     sanitizeGeometry(geo)
+    crNormals(geo)
     const detail = groundDetailTexture()
     const mat = new THREE.MeshStandardMaterial({
       map: detail, roughness: 0.97, metalness: 0, vertexColors: true,
@@ -124,33 +130,48 @@ export class CoastField {
 
   private paint(x: number, z: number, h: number, slope: number, c: THREE.Color): void {
     const v = fbm2(x * 0.05 + 12.7, z * 0.05 + 4.1, 3)
+    // second grain scale at its own patch mask — breaks single-frequency read
+    const fine = fbm2(x * 0.055 + 1.7, z * 0.055 + 8.9, 2)
+    const patch = smoothstep(0.5, 0.72, fbm2(x * 0.011 + 4.4, z * 0.011 + 2.2, 2))
+    const mott = 1 - smoothstep(0.34, 0.58, fbm2(x * 0.085 + 7.1, z * 0.085 + 3.3, 2))
     const near = this.spline.nearest(x, z)
     const aLat = Math.abs(near.lat)
     if (this.underwater(h)) {
       const d = clamp((this.seaLevel - h) / 5, 0, 1)
-      c.setRGB(lerp(0.24, 0.1, d), lerp(0.36, 0.16, d), lerp(0.34, 0.2, d))
+      const grit = hash21(Math.floor(x * 1.7) + 3, Math.floor(z * 1.7) + 7) > 0.99 ? 0.1 : 0
+      c.setRGB(lerp(0.24, 0.1, d) + grit, lerp(0.36, 0.16, d) + grit * 0.8, lerp(0.34, 0.2, d) + grit * 0.6)
       return
     }
-    // grass/scrub base
+    // grass/scrub base with scale-varied blotching
     const g1 = { r: 0.26, g: 0.33, b: 0.16 }
     const g2 = { r: 0.42, g: 0.47, b: 0.25 }
-    c.setRGB(lerp(g1.r, g2.r, v), lerp(g1.g, g2.g, v), lerp(g1.b, g2.b, v))
-    // dry grass patches inland
+    const gv = clamp(v * (1 - patch * 0.35) + fine * 0.28 * patch, 0, 1)
+    c.setRGB(lerp(g1.r, g2.r, gv), lerp(g1.g, g2.g, gv), lerp(g1.b, g2.b, gv))
+    c.multiplyScalar(lerp(1, 0.78 + patch * 0.22, mott * 0.85))
+    // dry grass patches inland at two scales
     const dry = smoothstep(0.66, 0.84, fbm2(x * 0.018 + 2.2, z * 0.018 + 6.6, 3))
-    c.setRGB(lerp(c.r, 0.5, dry * 0.34), lerp(c.g, 0.47, dry * 0.34), lerp(c.b, 0.31, dry * 0.34))
-    // rock on steep slopes (cliff faces)
+      + smoothstep(0.74, 0.9, fbm2(x * 0.007 + 8.3, z * 0.007 + 0.9, 2)) * 0.7
+    const dryT = clamp(dry, 0, 1) * 0.34
+    c.setRGB(lerp(c.r, 0.5, dryT), lerp(c.g, 0.47, dryT), lerp(c.b, 0.31, dryT))
+    // rock on steep slopes (cliff faces), grainy
     const rock = smoothstep(0.75, 1.7, slope)
-    const rv = 0.42 + v * 0.12
+    const rv = 0.42 + v * 0.12 + fine * 0.05
     c.setRGB(lerp(c.r, rv, rock), lerp(c.g, rv * 0.96, rock), lerp(c.b, rv * 0.9, rock))
-    // sand/gravel near the shoulder + cliff-top dunes
+    // sand/gravel near the shoulder + cliff-top dunes, tone-shifted per patch
     const band = smoothstep(11, 7.6, aLat) * (aLat > TRACK.shoulderOuter ? 1 : 0)
     const dune = smoothstep(0.71, 0.87, fbm2(x * 0.02 + 9, z * 0.02 + 1, 3)) * smoothstep(-16, -30, z)
     const sand = Math.max(band, dune * 0.85)
-    c.setRGB(lerp(c.r, 0.55, sand), lerp(c.g, 0.48, sand), lerp(c.b, 0.34, sand))
-    // shoreline light band
-    const shore = smoothstep(this.seaLevel + 0.7, this.seaLevel - 0.2, h) * (1 - rock)
-    c.setRGB(lerp(c.r, 0.6, shore), lerp(c.g, 0.55, shore), lerp(c.b, 0.42, shore))
-    void hash21
+    const sr = 0.5 + fine * 0.13 + patch * 0.06
+    c.setRGB(lerp(c.r, sr, sand), lerp(c.g, sr * 0.87, sand), lerp(c.b, sr * 0.62, sand))
+    // sea-side land reads beach sand, not scrub — kills the green shelf slab
+    const zE = z + (fbm2(x * 0.016 + 0.7, 5.1, 2) - 0.5) * C.edgeMeander
+    const beach = smoothstep(C.cliffZTop + 18, C.cliffZTop - 6, zE) * (1 - rock)
+    c.setRGB(lerp(c.r, 0.56 + fine * 0.1, beach), lerp(c.g, 0.49 + fine * 0.09, beach), lerp(c.b, 0.35 + fine * 0.07, beach))
+    // wet/dry shore gradient: damp darkening hugging the waterline
+    const wet = smoothstep(this.seaLevel + 0.12, this.seaLevel + 2.6, h)
+    c.multiplyScalar(lerp(0.62, 1, wet))
+    // scattered shell grit flecks
+    if (hash21(Math.floor(x * 0.45) + 11, Math.floor(z * 0.45) + 5) > 0.965) c.multiplyScalar(1.2)
   }
 
   /** Bake a height map of the field for the water shader (depth + foam). */

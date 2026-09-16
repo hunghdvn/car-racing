@@ -58,7 +58,6 @@ function windowUnit(mat: Mats, w = 1.15, h = 1.5): THREE.BufferGeometry {
   const sill = roundedPlateGeo(w + 0.18, 0.08, 0.18, 0.03)
   sill.translate(0, -h / 2 - 0.04, 0.07)
   const pane = new THREE.PlaneGeometry(w * 0.82, h * 0.82)
-  pane.rotateY(Math.PI)
   pane.translate(0, 0, -0.03)
   return mergeGeometries([
     { geometry: frame, materialIndex: 0 },

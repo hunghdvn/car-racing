@@ -74,20 +74,20 @@ void main() {
   float camD = length(uCam - vWorld);
   body = mix(body, uHorizonCol * 0.72, smoothstep(120.0, 620.0, camD) * 0.55);
 
-  vec3 col = mix(body, uSkyTint, fres * 0.82);
+  vec3 col = mix(body, uSkyTint, fres * 0.58);
 
-  // sun glint
+  // sun glint: tight sparkle + restrained broad sheen (no blown sheet)
   vec3 hv = normalize(uSunDir + v);
-  float spec = pow(max(dot(n, hv), 0.0), 140.0) * 14.0
-              + pow(max(dot(n, hv), 0.0), 26.0) * 0.65;
+  float spec = pow(max(dot(n, hv), 0.0), 140.0) * 7.0
+              + pow(max(dot(n, hv), 0.0), 26.0) * 0.24;
   col += uSunCol * spec * smoothstep(0.0, 0.25, uSunDir.y);
 
-  // shoreline foam: thin depth band with wobble + a low-frequency surf line
-  float wob = (noise2(p * 0.35 + vec2(t * 0.22)) - 0.5) * 0.55;
-  float foam = smoothstep(1.1 + wob * 0.5, 0.08, depth);
+  // shoreline foam: narrow wobbled band hugging the waterline only
+  float wob = (noise2(p * 0.35 + vec2(t * 0.22)) - 0.5) * 0.3;
+  float foam = smoothstep(0.42 + wob, 0.05, depth);
   float rip = smoothstep(0.86, 1.0, sin(depth * 2.6 - t * 1.4 + noise2(p * 0.6) * 3.0) * 0.5 + 0.5);
-  foam = max(foam, foam * rip * 0.8);
-  col = mix(col, uFoamCol, clamp(foam, 0.0, 1.0) * 0.9);
+  foam = max(foam, foam * rip * 0.8) * (1.0 - smoothstep(3.0, 5.0, depth));
+  col = mix(col, uFoamCol, clamp(foam, 0.0, 1.0) * 0.62);
 
   // exp2 fog matched to the sky (same curve as FogExp2)
   float f = 1.0 - exp(-uFogDensity * uFogDensity * camD * camD);

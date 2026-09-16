@@ -11,7 +11,7 @@ import type { CoastField } from './Terrain'
  * jittered scale/rot/colour) — never uniform runs. Two LOD levels (§4.7).
  * ------------------------------------------------------------------------- */
 
-const GREEN = { deep: [0.15, 0.26, 0.1], mid: [0.24, 0.38, 0.15], lite: [0.36, 0.48, 0.2], dry: [0.46, 0.44, 0.22], bark: [0.3, 0.23, 0.16], barkL: [0.4, 0.32, 0.23], rock: [0.46, 0.44, 0.4], moss: [0.26, 0.33, 0.16] }
+const GREEN = { deep: [0.15, 0.26, 0.1], mid: [0.24, 0.38, 0.15], lite: [0.36, 0.48, 0.2], dry: [0.46, 0.44, 0.22], bark: [0.3, 0.23, 0.16], barkL: [0.4, 0.32, 0.23], rock: [0.37, 0.35, 0.32], moss: [0.26, 0.33, 0.16] }
 
 function paint(geo: THREE.BufferGeometry, fn: (x: number, y: number, z: number, i: number) => [number, number, number]): THREE.BufferGeometry {
   const pos = geo.getAttribute('position') as THREE.BufferAttribute
@@ -183,35 +183,90 @@ function pineGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
     paint(stub, () => [GREEN.bark[0] * 0.9, GREEN.bark[1] * 0.9, GREEN.bark[2] * 0.9])
     parts.push({ geometry: stub })
   }
-  // clustered foliage volumes (wind-swept lean)
-  const blobsN = lod > 0 ? rnd.int(4, 6) : 2
-  for (let k = 0; k < blobsN; k++) {
-    const r = rnd.range(0.75, 1.45) * (lod > 0 ? 1 : 1.25)
-    const g = blob(r, 0.72, rnd.next() * 10, 0.5, lod > 0 ? 2 : 1)
-    g.translate(
-      rnd.range(-1.1, 1.1) + bend * 0.8,
-      rnd.range(h * 0.6, h * 1.06),
-      rnd.range(-1.0, 1.0),
-    )
-    const tone = rnd.next()
-    paint(g, (_x, y, _z, i) => {
-      const v = 0.82 + hash21(i * 1.7, k * 3.1) * 0.4
-      const lite = clamp((y - h * 0.5) / (h * 0.6), 0, 1) * 0.35
-      const base = tone > 0.6 ? GREEN.lite : GREEN.mid
-      return [lerp(GREEN.deep[0], base[0], 0.55 + lite) * v, lerp(GREEN.deep[1], base[1], 0.6 + lite) * v, lerp(GREEN.deep[2], base[2], 0.5 + lite) * v]
-    })
+  // layered needle pads: tiered whorls of drooping tapered fans around a
+  // slim leader — layered silhouette, no stacked-ball "popcorn" read.
+  const fanPaint = (base: number[], toneSeed: number) => (_x: number, y: number, _z: number, i: number): [number, number, number] => {
+    const v = 0.8 + hash21(i * 1.7 + toneSeed, toneSeed * 3.1) * 0.42
+    const lite = clamp(y / h, 0, 1) * 0.4
+    return [lerp(GREEN.deep[0], base[0], 0.5 + lite) * v, lerp(GREEN.deep[1], base[1], 0.58 + lite) * v, lerp(GREEN.deep[2], base[2], 0.46 + lite) * v]
+  }
+  const tiers: [number, number][] = lod > 0 ? [[0.5, 1], [0.66, 0.82], [0.8, 0.6], [0.92, 0.38]] : [[0.62, 0.8]]
+  for (const [tt, spread] of tiers) {
+    const attach = pts[Math.min(pts.length - 1, Math.round(tt * (rows - 1)))]
+    const nFan = lod > 0 ? 5 + rnd.int(0, 3) : 4
+    const yaw0 = rnd.range(0, Math.PI * 2)
+    const tone = rnd.next() > 0.6 ? GREEN.lite : GREEN.mid
+    for (let k = 0; k < nFan; k++) {
+      const a = yaw0 + (k / nFan) * Math.PI * 2 + rnd.range(-0.3, 0.3)
+      const len = h * 0.27 * spread * rnd.range(0.78, 1.22)
+      const droop = rnd.range(0.34, 0.62)
+      parts.push({ geometry: needlePad(rnd, len, droop, attach, a, fanPaint(tone, k + tt * 9)) })
+    }
+    // two squashed volume pads core the whorl (irregular, faceted at LOD0)
+    if (lod > 0) for (let k = 0; k < 2; k++) {
+      const r = h * 0.13 * spread * rnd.range(0.7, 1.1)
+      const g = blob(r, 0.5, rnd.next() * 10, 0.55, 1)
+      g.translate(attach.x + rnd.range(-0.3, 0.3) + bend * tt, attach.y + rnd.range(-0.1, 0.22), attach.z + rnd.range(-0.3, 0.3))
+      paint(g, fanPaint(tone, k + tt * 5 + 3))
+      parts.push({ geometry: g })
+    }
+  }
+  // wind-swept crown tuft
+  {
+    const r = h * 0.09 * rnd.range(0.8, 1.2)
+    const g = blob(r, 0.72, rnd.next() * 7, 0.5, lod > 0 ? 1 : 0)
+    const top = pts[pts.length - 1]
+    g.translate(top.x + bend * 0.12, top.y + r * 0.4, top.z)
+    paint(g, fanPaint(GREEN.lite, 99))
     parts.push({ geometry: g })
   }
   return mergeGeometries(parts)
 }
 
+/** One drooping tapered needle fan: apex at the attach point, tip outward. */
+function needlePad(
+  rnd: Rand, len: number, droop: number, attach: THREE.Vector3, yaw: number,
+  paintFn: (x: number, y: number, z: number, i: number) => [number, number, number],
+): THREE.BufferGeometry {
+  const steps = 5
+  const pos: number[] = [], col: number[] = [], idx: number[] = []
+  const nx = Math.cos(yaw), nz = Math.sin(yaw)
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const out = len * t
+    const y = attach.y + 0.06 + Math.sin(t * 2.1) * 0.09 - t * t * droop * 1.5
+    const w = (0.09 + Math.sin(Math.PI * t * 0.86) * 0.34) * (1 - t * 0.35) * (len * 0.9 + 0.3)
+    const px = attach.x + nx * out, pz = attach.z + nz * out
+    pos.push(px - nx * w * 0.35 - nz * w, y, pz - nz * w * 0.35 + nx * w)
+    pos.push(px + nx * w * 0.35 - nz * w * 0.12, y + 0.02, pz + nz * w * 0.35 + nx * w * 0.12)
+    const c = paintFn(px, y, pz, i)
+    col.push(c[0], c[1], c[2], c[0] * 1.12, c[1] * 1.12, c[2] * 1.05)
+  }
+  for (let i = 0; i < steps; i++) {
+    const a = i * 2
+    idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  g.setIndex(idx)
+  sanitizeGeometry(g)
+  void rnd
+  return g
+}
+
 function bushGeometry(rnd: Rand): THREE.BufferGeometry {
   const parts: { geometry: THREE.BufferGeometry }[] = []
-  const n = rnd.int(3, 5)
+  const n = rnd.int(4, 6)
+  // one dominant lobe + smaller satellites at varied squash — irregular mass,
+  // plus twig stubs breaking the silhouette rim
   for (let k = 0; k < n; k++) {
-    const r = rnd.range(0.3, 0.68)
-    const g = blob(r, 0.78, rnd.next() * 20, 0.55, 2)
-    g.translate(rnd.range(-0.5, 0.5), r * 0.62, rnd.range(-0.5, 0.5))
+    const big = k === 0
+    const r = big ? rnd.range(0.52, 0.68) : rnd.range(0.22, 0.5)
+    const g = blob(r, rnd.range(0.5, 0.82), rnd.next() * 20, 0.62, k === 0 ? 2 : 1)
+    const ox = big ? 0 : rnd.range(-0.55, 0.55)
+    const oz = big ? 0 : rnd.range(-0.55, 0.55)
+    g.translate(ox, (big ? 0.62 : 0.26) + Math.hypot(ox, oz) * -0.22 * rnd.next(), oz)
     const dry = rnd.next() > 0.72
     paint(g, (_x, y, _z, i) => {
       const v = 0.85 + hash21(i * 2.3 + k, 5) * 0.4
@@ -221,12 +276,29 @@ function bushGeometry(rnd: Rand): THREE.BufferGeometry {
     })
     parts.push({ geometry: g })
   }
+  for (let k = 0; k < 2; k++) {
+    const twig = new THREE.CylinderGeometry(0.018, 0.032, rnd.range(0.35, 0.6), 5)
+    twig.rotateZ(rnd.range(0.5, 1.1))
+    twig.translate(rnd.range(-0.35, 0.35), rnd.range(0.3, 0.5), rnd.range(-0.35, 0.35))
+    paint(twig, () => [GREEN.barkL[0] * 0.85, GREEN.barkL[1] * 0.85, GREEN.barkL[2] * 0.8])
+    parts.push({ geometry: twig })
+  }
   return mergeGeometries(parts)
 }
 
 function rockGeometry(rnd: Rand, seed: number): THREE.BufferGeometry {
-  const g = blob(1, 0.72, seed, 0.52, 2)
-  g.scale(rnd.range(0.75, 1.4), rnd.range(0.55, 0.95), rnd.range(0.75, 1.3))
+  // faceted, directionally deformed boulder with a settled flat base
+  const g = blob(1, rnd.range(0.55, 0.85), seed, 0.68, rnd.next() > 0.4 ? 1 : 0)
+  const pos = g.getAttribute('position') as THREE.BufferAttribute
+  const arr = pos.array as Float32Array
+  const bx = rnd.range(0.8, 1.35), bz = rnd.range(0.7, 1.2), by = rnd.range(0.45, 0.8)
+  for (let i = 0; i < arr.length; i += 3) {
+    arr[i] *= bx; arr[i + 1] *= by; arr[i + 2] *= bz
+    if (arr[i + 1] < -by * 0.3) arr[i + 1] = -by * (0.3 + hash21(arr[i] * 3 + seed, arr[i + 2] * 3) * 0.12)
+  }
+  pos.needsUpdate = true
+  crNormals(g)
+  g.scale(rnd.range(0.85, 1.35), rnd.range(0.85, 1.1), rnd.range(0.85, 1.3))
   paint(g, (_x, y, _z, i) => {
     const moss = clamp(y * 2.4, 0, 1) * (hash21(i * 3.3, seed) > 0.55 ? 0.55 : 0.18)
     const v = 0.82 + hash21(i + seed, 1.7) * 0.36
@@ -372,17 +444,17 @@ export function placeVegetation(host: VegeHost, spline: TrackSpline, field: Coas
     const col = new THREE.Color()
     for (let k = 0; k < N * 3 && n < N; k++) {
       let x: number, z: number
-      const r = k % 3
+      const r = k % 2
       if (r === 0) { x = rnd.range(-110, 120); z = -rnd.range(15, 30) }
-      else if (r === 1) { const f = spline.frame(rnd.range(150, 290)); const pp = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, (k % 2 ? 1 : -1) * rnd.range(7.5, 10)); x = pp.x; z = pp.z }
-      else { x = rnd.range(20, 80); z = rnd.range(36, 46) }
+      else { const f = spline.frame(rnd.range(150, 290)); const pp = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, (k % 2 ? 1 : -1) * rnd.range(7.5, 10)); x = pp.x; z = pp.z }
       const y = field.height(x, z)
       if (y < field.seaLevel + 0.5) continue
+      if (fbm2(x * 0.05 + 1.2, z * 0.05 + 3.7, 2) < 0.72) continue
       e.set(0, rnd.next() * Math.PI * 2, 0)
       q.setFromEuler(e)
       p.set(x, y - 0.02, z)
-      const sc = rnd.range(1.0, 1.9)
-      s.set(sc, rnd.range(1.1, 2.1), sc)
+      const sc = rnd.range(1.7, 2.8)
+      s.set(sc, rnd.range(1.3, 2.3), sc)
       m4.compose(p, q, s)
       inst.setMatrixAt(n, m4)
       const dry = rnd.next()

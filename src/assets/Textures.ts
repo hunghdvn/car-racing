@@ -514,14 +514,17 @@ export function groundDetailTexture(): THREE.Texture {
     return canvasTexture(256, 256, (ctx, w, h) => {
       const img = ctx.createImageData(w, h)
       for (let i = 0; i < w * h; i++) {
-        const v = clamp01(0.86 + (rnd.next() - 0.5) * 0.16) * 255
+        const gx = (i % w) / w, gy = (i / w | 0) / h
+        // low-frequency wash + restrained grain: patchy variation, no leopard
+        const wash = 0.88 + 0.05 * Math.sin(gx * 4.4 + 1.7) * Math.cos(gy * 3.7 - 0.6)
+        const v = clamp01(wash + (rnd.next() - 0.5) * 0.04) * 255
         const i4 = i * 4
         img.data[i4] = img.data[i4 + 1] = img.data[i4 + 2] = v
         img.data[i4 + 3] = 255
       }
       ctx.putImageData(img, 0, 0)
-      ctx.fillStyle = 'rgba(90,80,60,0.16)'
-      for (let k = 0; k < 90; k++) ctx.fillRect(rnd.next() * w, rnd.next() * h, 2 + rnd.next() * 6, 2 + rnd.next() * 6)
-    }, { srgb: true })
+      ctx.fillStyle = 'rgba(90,80,60,0.10)'
+      for (let k = 0; k < 34; k++) ctx.fillRect(rnd.next() * w, rnd.next() * h, 8 + rnd.next() * 26, 8 + rnd.next() * 26)
+    }, { srgb: true, anisotropy: 1 })
   })
 }
