@@ -172,6 +172,10 @@ export interface MergePart { geometry: THREE.BufferGeometry; matrix?: THREE.Matr
  * Merge geometries into one BufferGeometry with material groups.
  * Supports position (required), normal, uv, color (optional, consistent).
  */
+let kitLodOn = true
+export function setKitLodEnabled(v: boolean): void { kitLodOn = v }
+export function kitLodEnabled(): boolean { return kitLodOn }
+
 export function mergeGeometries(parts: MergePart[]): THREE.BufferGeometry {
   let hasColor = false, hasUv = false, hasNormal = false
   const geos = parts.map((p) => ({

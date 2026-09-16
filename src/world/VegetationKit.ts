@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { SEED } from '../config'
-import { Rand, lerp, clamp, fbm2, hash21, mergeGeometries, sanitizeGeometry, crNormals } from '../util'
+import { Rand, lerp, clamp, fbm2, hash21, mergeGeometries, sanitizeGeometry, crNormals, kitLodEnabled } from '../util'
 import { KIT } from '../config'
 import type { TrackSpline } from './TrackSpline'
 import type { CoastField } from './Terrain'
@@ -14,7 +14,7 @@ const side2 = (a: number, b: number, rnd: Rand): number => (rnd.chance(0.5) ? 1 
  * jittered scale/rot/colour) — never uniform runs. Two LOD levels (§4.7).
  * ------------------------------------------------------------------------- */
 
-const GREEN = { deep: [0.15, 0.26, 0.1], mid: [0.24, 0.38, 0.15], lite: [0.36, 0.48, 0.2], dry: [0.46, 0.44, 0.22], bark: [0.3, 0.23, 0.16], barkL: [0.4, 0.32, 0.23], rock: [0.37, 0.35, 0.32], moss: [0.26, 0.33, 0.16] }
+const GREEN = { deep: [0.055, 0.12, 0.04], mid: [0.13, 0.26, 0.075], lite: [0.24, 0.38, 0.12], dry: [0.38, 0.33, 0.14], bark: [0.115, 0.08, 0.05], barkL: [0.19, 0.135, 0.082], rock: [0.3, 0.28, 0.25], moss: [0.16, 0.24, 0.085] }
 
 function paint(geo: THREE.BufferGeometry, fn: (x: number, y: number, z: number, i: number) => [number, number, number]): THREE.BufferGeometry {
   const pos = geo.getAttribute('position') as THREE.BufferAttribute
@@ -106,7 +106,7 @@ export function palmGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   }
   const trunk = tubeAlong(pts, radii, lod > 0 ? 8 : 5, (t) => {
     const v = 0.8 + hash21(t * 90, 3) * 0.35
-    return [GREEN.bark[0] * v * 1.15, GREEN.bark[1] * v * 1.1, GREEN.bark[2] * v]
+    return [GREEN.bark[0] * v * 1.25, GREEN.bark[1] * v * 1.2, GREEN.bark[2] * v]
   }, 0.24)
   const parts: { geometry: THREE.BufferGeometry }[] = [{ geometry: trunk }]
   const crown = pts[pts.length - 1]
@@ -354,7 +354,7 @@ export function foliageMaterial(alphaMap: THREE.Texture | null = null, tint = 0x
 
 /** Colour-variant set (§10): three tints so repeats never read identical. */
 export function foliageVariants(): THREE.MeshStandardMaterial[] {
-  return [foliageMaterial(null, 0xffffff), foliageMaterial(null, 0xc9d8a8), foliageMaterial(null, 0xe4d6ae)]
+  return [foliageMaterial(null, 0xc8cfae), foliageMaterial(null, 0x9fb878), foliageMaterial(null, 0xd2c290)]
 }
 
 /* ------------------------------------------------------------ species+LOD -- */
@@ -373,7 +373,7 @@ export function broadleafGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   }
   parts.push({ geometry: tubeAlong(pts, Array.from({ length: rows }, (_, i) => lerp(0.21, 0.07, i / (rows - 1))) as never, lod > 0 ? 7 : 5, (t) => {
     const v = 0.82 + hash21(t * 61, 4) * 0.3
-    return [GREEN.bark[0] * v * 1.05, GREEN.bark[1] * v, GREEN.bark[2] * v * 0.9]
+    return [GREEN.bark[0] * v * 1.3, GREEN.bark[1] * v * 1.15, GREEN.bark[2] * v]
   }, 0.22) })
   // branch stubs under the crown
   const nBr = lod > 0 ? 4 : 2
@@ -413,9 +413,10 @@ export function broadleafGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
 }
 
 /** Wrap two seeded geometry levels into a real THREE.LOD (§4.7). */
-export function treeLOD(near: THREE.BufferGeometry, far: THREE.BufferGeometry, mat: THREE.Material): THREE.LOD {
+export function treeLOD(near: THREE.BufferGeometry, far: THREE.BufferGeometry, mat: THREE.Material): THREE.Object3D {
   const a = new THREE.Mesh(near, mat)
   a.castShadow = true
+  if (!kitLodEnabled()) return a
   const b = new THREE.Mesh(far, mat)
   b.castShadow = false
   const lod = new THREE.LOD()

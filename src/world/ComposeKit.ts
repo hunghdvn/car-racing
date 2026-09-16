@@ -1,9 +1,9 @@
 import * as THREE from 'three'
 import { SEED, THEME, KIT } from '../config'
-import { Rand, lerp, clamp, smoothstep, fbm2, mergeGeometries, sweepProfile, crNormals, type MergePart, type SweepFrame } from '../util'
+import { Rand, lerp, clamp, smoothstep, fbm2, mergeGeometries, sweepProfile, crNormals, kitLodEnabled, setKitLodEnabled, type MergePart, type SweepFrame } from '../util'
 import { buildBuilding, buildingMaterials, BUILDING_DESIGNS, type BuildingDesignId } from './BuildingKit'
 import { makeContainer, makeDrum, makeCrates, makePipeStack, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeUtilityPole, makeMastLight, makeVan, makeBarrierUnit, makeBollard, makeSignGantry, propLOD, makeGantryCrane, makeSign, makeTrafficLight, makeStreetlight } from './PropKit'
-import { broadleafGeometry, treeLOD, foliageVariants, foliageMaterial } from './VegetationKit'
+import { broadleafGeometry, treeLOD, foliageVariants, foliageMaterial, palmGeometry, bushGeometry, rockGeometry } from './VegetationKit'
 import { concreteMaps } from '../assets/Textures'
 import type { TrackSpline } from './TrackSpline'
 import type { CoastField } from './Terrain'
@@ -34,6 +34,8 @@ export type PrefabId =
 const RHYTHM = [1.0, 1.15, 0.72, 0.6, 1.6, 0.85, 0.7, 1.3] as const
 
 export interface ComposeOpts {
+  /** false renders full-detail meshes (kit boards); default true wires real LODs. */
+  lod?: boolean
   seed: number
   /** ground sampler (slice field or flat board) */
   field: (x: number, z: number) => number
@@ -71,14 +73,14 @@ function prefabCityBlockStreet(opts: ComposeOpts): THREE.Group {
   g.name = 'CityBlock_Street'
   const pool: BuildingDesignId[] = ['cafe', 'retail', 'apartment', 'terrace', 'office', 'civic']
   const ids = designRun(rnd, pool, 5)
-  ids[4] = rnd.chance(0.5) ? 'office' : 'civic'
+  ids[4] = ids[3] === 'civic' ? 'office' : rnd.chance(0.5) ? 'office' : 'civic'
   // massing line with rhythm spacing (+ footprint aware)
   let x = -30
   for (let i = 0; i < ids.length; i++) {
     const b = buildBuilding(ids[i], rnd, true)
     const depthJit = rnd.range(-0.9, 0.9)
     b.position.set(x + rnd.range(-1.2, 1.2), opts.field(x, 2) - 0.06, 2 + depthJit)
-    b.rotation.y = Math.PI + rnd.range(-0.04, 0.04)
+    b.rotation.y = rnd.range(-0.04, 0.04)
     vary(b, rnd, 1, 0.012)
     g.add(b)
     const fw = FOOTPRINT_W[ids[i]]
@@ -314,6 +316,32 @@ function prefabCoastalCliffDune(opts: ComposeOpts): THREE.Group {
   branch.position.set(2.2, opts.field(2.6, 2) + 0.42, 1.8)
   branch.rotation.z = 0.8
   g.add(branch)
+  // leaning palm trio crowning the headland + spinifex drifts at the foot
+  const palmMat = foliageMaterial(null, 0xb7c98a)
+  const trio: [number, number, number, number][] = [[-1.6, -1.2, 0.5, 0.24], [0.9, 1.6, -0.4, -0.3], [2.4, -0.4, 0.2, 0.14]]
+  for (const [px, pz, lean, yaw] of trio) {
+    const palm = treeLOD(palmGeometry(rnd, 1), palmGeometry(rnd, 0), palmMat)
+    palm.position.set(px, opts.field(px, pz) + 2.6, pz)
+    palm.rotation.set(lean, yaw, lean * 0.6)
+    palm.scale.setScalar(0.9 + rnd.range(0, 0.35))
+    g.add(palm)
+  }
+  for (let b = 0; b < 6; b++) {
+    const bx = rnd.range(-4.6, 4.6), bz = rnd.range(-4.2, 4.8)
+    const bush = new THREE.Mesh(bushGeometry(rnd), foliageVariants()[b % 3])
+    bush.position.set(bx, opts.field(bx, bz) + 0.14, bz)
+    bush.scale.setScalar(0.5 + rnd.range(0, 0.5))
+    bush.castShadow = true
+    g.add(bush)
+  }
+  for (let r = 0; r < 3; r++) {
+    const rx = rnd.range(-5.4, 5.4), rz = rnd.range(-5, 5.4)
+    const rk = new THREE.Mesh(rockGeometry(rnd, 40 + r), new THREE.MeshStandardMaterial({ color: 0x6e6a62, roughness: 0.93, flatShading: true }))
+    rk.position.set(rx, opts.field(rx, rz) + 0.05, rz)
+    rk.scale.setScalar(0.5 + rnd.range(0, 0.7))
+    rk.castShadow = true
+    g.add(rk)
+  }
   return g
 }
 
@@ -370,13 +398,32 @@ function prefabTunnelApproach(opts: ComposeOpts): THREE.Group {
   bar.position.y = H - 0.5
   bar.castShadow = true
   g.add(bar)
+  // stub tube behind the portal so the strips sit under a real roof
+  const tube = new THREE.Mesh(new THREE.BoxGeometry(span + 2.6, 0.9, 13.5), S.concrete)
+  tube.position.set(0, H + 0.15, 6.9)
+  tube.castShadow = tube.receiveShadow = true
+  g.add(tube)
+  for (const sx of [-1, 1]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(1.3, H + 1.2, 13.5), S.concrete)
+    wall.position.set(sx * (span / 2 + 1.3), (H + 1.2) / 2, 6.9)
+    wall.castShadow = wall.receiveShadow = true
+    g.add(wall)
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(1.0, H + 2.9, 1.2), S.concrete)
+    cheek.position.set(sx * (span / 2 + 1.3), (H + 2.9) / 2, 0.3)
+    cheek.castShadow = cheek.receiveShadow = true
+    g.add(cheek)
+  }
   // ceiling fitting strips (emissive; the Phase-5 tube reuses their rhythm)
   for (const fy of [H - 0.18]) void fy
   for (let i = 0; i < 4; i++) {
     const strip = new THREE.Mesh(new THREE.BoxGeometry(span * 0.8, 0.06, 0.3), S.glow)
-    strip.position.set(0, H - 0.25, -3.2 - i * 3.1)
+    strip.position.set(0, H - 0.35, 2.2 + i * 3.1)
     g.add(strip)
   }
+  // portal dark throat
+  const throat = new THREE.Mesh(new THREE.PlaneGeometry(span - 0.4, H - 0.5), new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95, side: THREE.DoubleSide }))
+  throat.position.set(0, (H - 0.5) / 2 + 0.05, 13.4)
+  g.add(throat)
   // kerb hazard panels
   for (const sx of [-1, 1]) {
     const panel = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, 0.16), new THREE.MeshStandardMaterial({ color: 0xd8a41d, roughness: 0.6 }))
@@ -456,8 +503,8 @@ function prefabSkylineBackdrop(opts: ComposeOpts): THREE.Group {
     parts.push({ geometry: geo, matrix: m4.clone(), materialIndex: mi })
   }
   const baseZ = KIT.skyline.bandZ
-  let x = -62
-  for (let mI = 0; mI < rnd.int(3, 4); mI++) {
+  let x = -(KIT.skyline.modules * 31) / 2
+  for (let mI = 0; mI < KIT.skyline.modules; mI++) {
     const kind = mI % 3
     if (kind === 0) {
       const hs = [14, 22, 11]
@@ -500,6 +547,7 @@ function prefabSkylineBackdrop(opts: ComposeOpts): THREE.Group {
   const mesh = new THREE.Mesh(merged, tones)
   mesh.castShadow = false
   mesh.receiveShadow = false
+  mesh.scale.set(1.75, 2.1, 1)
   g.add(mesh)
   return g
 }
@@ -521,7 +569,9 @@ const PREFABS: Record<PrefabId, (o: ComposeOpts) => THREE.Group> = {
 }
 
 export function composePrefab(id: PrefabId, opts: ComposeOpts): THREE.Group {
-  return PREFABS[id](opts)
+  const prev = kitLodEnabled()
+  setKitLodEnabled(opts.lod ?? true)
+  try { return PREFABS[id](opts) } finally { setKitLodEnabled(prev) }
 }
 
 /* ====================================================== section composition ==

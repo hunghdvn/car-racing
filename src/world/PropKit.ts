@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { SEED, THEME, KIT } from '../config'
-import { Rand, lerp, sweepProfile, type SweepFrame } from '../util'
+import { Rand, lerp, sweepProfile, type SweepFrame, kitLodEnabled} from '../util'
 import { concreteMaps, signFaceTexture, billboardFaceTexture, roundedPlateGeo, corrugatedMaps, rivetMetalMaps, woodMaps } from '../assets/Textures'
 import type { TrackSpline } from './TrackSpline'
 import type { CoastField } from './Terrain'
@@ -38,7 +38,7 @@ const shadowOn = (g: THREE.Object3D, cast = true): void => {
 
 /** Wrap a prop into a real THREE.LOD (full at 0, low-poly far variant). */
 export function propLOD(full: THREE.Object3D, far: THREE.Object3D | null, mid: number = KIT.lodMid, farAt: number = KIT.lodFar): THREE.Object3D {
-  if (!far) { full.updateMatrixWorld(false); return full }
+  if (!far || !kitLodEnabled()) { full.updateMatrixWorld(false); return full }
   const lod = new THREE.LOD()
   lod.addLevel(full, KIT.lodNear)
   lod.addLevel(far, farAt)
@@ -57,6 +57,14 @@ function farMass(w: number, h: number, d: number, color: number, y = h / 2): THR
 }
 
 /* ================================================================== props == */
+
+function strut(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material): THREE.Mesh {
+  const dir = new THREE.Vector3().subVectors(b, a)
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, dir.length(), 5), mat)
+  m.position.copy(a).addScaledVector(dir, 0.5)
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize())
+  return m
+}
 
 /** 1. Curved-arm streetlight (lathe pole, lofted arm, tilted head+lens). */
 export function makeStreetlight(rnd: Rand, height = rnd.range(6.0, 6.9)): THREE.Object3D {
@@ -84,8 +92,8 @@ export function makeStreetlight(rnd: Rand, height = rnd.range(6.0, 6.9)): THREE.
   head.rotation.y = dir * -0.24
   g.add(head)
   const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.16), new THREE.MeshStandardMaterial({ color: 0xf5e9c8, emissive: new THREE.Color(THEME.skySunTint).convertSRGBToLinear(), emissiveIntensity: 0.9, roughness: 0.35 }))
-  lens.position.set(0, height + 0.345, dir * 1.72)
-  lens.rotation.x = -Math.PI / 2 + dir * 0.2
+  lens.position.set(0, height + 0.34, dir * 1.72)
+  lens.rotation.x = Math.PI / 2 + dir * 0.22
   g.add(lens)
   shadowOn(g)
   return propLOD(g, farMass(0.5, height + 0.5, 1.9, 0x6a7076))
@@ -108,8 +116,8 @@ export function makeMastLight(rnd: Rand): THREE.Object3D {
     head.rotation.x = -0.4
     g.add(head)
     const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.2), new THREE.MeshStandardMaterial({ color: 0xf5e9c8, emissive: new THREE.Color(THEME.skySunTint).convertSRGBToLinear(), emissiveIntensity: 0.75, roughness: 0.4 }))
-    lens.position.set(sx, h - 0.02, 0.1)
-    lens.rotation.x = -Math.PI / 2 - 0.4
+    lens.position.set(sx, h - 0.05, 0.08)
+    lens.rotation.x = Math.PI / 2 + 0.45
     g.add(lens)
   }
   const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.42, 0.5, 8, 1, true), S.steel)
@@ -501,18 +509,17 @@ export function makeWaterTower(): THREE.Object3D {
     leg.position.set(lx * 2.05, (legH + 0.4) / 2, lz * 2.05)
     leg.rotation.set(-lz * 0.09, 0, lx * 0.09)
     g.add(leg)
-    for (let q = 1; q <= 3; q++) {
-      const br = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 4.3, 5), S.steel)
-      br.position.set(lx * 1.7, q * 2.7, lz * 1.7)
-      br.rotation.set(0, a, 1.15)
-      g.add(br)
-    }
     const a2 = (k + 1) * Math.PI / 2 + 0.4
-    const midX = (lx + Math.cos(a2)) * 0.85, midZ = (lz + Math.sin(a2)) * 0.85
-    const tie = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.1, 4), S.steel)
-    tie.position.set(midX, legH * 0.6, midZ)
-    tie.rotation.set(Math.sin(Math.atan2(midZ, midX) + Math.PI / 2) * 0.35, 0, -Math.cos(Math.atan2(midZ, midX)) * 0.35)
-    g.add(tie)
+    const c2x = Math.cos(a2), c2z = Math.sin(a2)
+    const legPt = (cx: number, cz: number, y: number) => new THREE.Vector3(cx * 1.98, y, cz * 1.98)
+    if (k < 4) {
+      for (let q = 0; q < 3; q++) {
+        const yA = 0.5 + q * 3.5, yB = 0.5 + (q + 1) * 3.5
+        g.add(strut(legPt(lx, lz, yA), legPt(c2x, c2z, yB), 0.05, S.steel))
+        g.add(strut(legPt(c2x, c2z, yA), legPt(lx, lz, yB), 0.05, S.steel))
+        if (q === 2) g.add(strut(legPt(lx, lz, legH - 0.2), legPt(c2x, c2z, legH - 0.2), 0.045, S.steel))
+      }
+    }
   }
   const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5, 7), S.steelDark)
   pipe.position.set(0, legH - 3.5, 0)

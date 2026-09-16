@@ -528,7 +528,7 @@ export function facadeMaps(style: FacadeStyle, tone = 0xb9b2a4, seed = 11): { ma
         const bh = 22, bw = 46
         for (let y = 0, row = 0; y < h; y += bh, row++) {
           for (let x = -bw / (row % 2 ? 2 : 1); x < w; x += bw) {
-            const v = 0.86 + rnd.next() * 0.3
+            const v = 0.9 + rnd.next() * 0.2
             const rr = Math.floor(clamp01(((tone >> 16) & 255) / 255 * v) * 255)
             const gg = Math.floor(clamp01(((tone >> 8) & 255) / 255 * v) * 255)
             const bb = Math.floor(clamp01(((tone >> 0) & 255) / 255 * v) * 255)
@@ -560,10 +560,10 @@ export function facadeMaps(style: FacadeStyle, tone = 0xb9b2a4, seed = 11): { ma
         ctx.putImageData(img, 0, 0)
       }
       // water staining + grime streaks from the crown
-      for (let k = 0; k < 9; k++) {
+      for (let k = 0; k < 14; k++) {
         const x = rnd.next() * w
         const g = ctx.createLinearGradient(0, 0, 0, h)
-        g.addColorStop(0, `rgba(42,40,34,${0.1 + rnd.next() * 0.14})`)
+        g.addColorStop(0, `rgba(40,38,32,${0.14 + rnd.next() * 0.18})`)
         g.addColorStop(0.4 + rnd.next() * 0.4, 'rgba(42,40,34,0)')
         ctx.fillStyle = g
         ctx.fillRect(x, 0, 3 + rnd.next() * 8, h)
@@ -752,9 +752,10 @@ export function billboardFaceTexture(kind: 'rush' | 'octane' | 'tyreking' | 'har
       }
       const [t1, t2] = titles[kind]
       ctx.fillStyle = ink
-      ctx.font = 'bold 74px sans-serif'
+      let fs = 74
+      do { ctx.font = `bold ${fs}px sans-serif`; fs -= 2 } while (ctx.measureText(t1).width > w * 0.88 && fs > 30)
       ctx.fillText(t1, w / 2, h * 0.52)
-      ctx.font = 'bold 30px sans-serif'
+      ctx.font = 'bold 26px sans-serif'
       ctx.fillStyle = 'rgba(240,236,220,0.85)'
       ctx.fillText(t2, w / 2, h * 0.78)
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'

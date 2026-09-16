@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { KIT } from '../config'
-import { Rand, mergeGeometries, sanitizeGeometry, crNormals, ensureOutwardWinding, type MergePart } from '../util'
+import { Rand, mergeGeometries, sanitizeGeometry, crNormals, ensureOutwardWinding, kitLodEnabled, type MergePart } from '../util'
 import { roundedPlateGeo, concreteMaps, facadeMaps, roofMembraneMaps, corrugatedMaps, rivetMetalMaps, signFaceTexture, billboardFaceTexture, woodMaps } from '../assets/Textures'
 
 /* ------------------------------------------------------------------------- *
@@ -39,7 +39,7 @@ export function buildingMaterials(): BuildingMats {
   if (sharedMats) return sharedMats
   const p1 = facadeMaps('plaster', 0xbdb9ae, 41)
   const p2 = facadeMaps('plaster', 0x9a948a, 57)
-  const br = facadeMaps('brick', 0x8f6a52, 73)
+  const br = facadeMaps('brick', 0x6e5243, 73)
   const pn = facadeMaps('panel', 0x8b929a, 29)
   const rm = roofMembraneMaps()
   const corr = corrugatedMaps(0x77838c, 91)
@@ -404,6 +404,13 @@ function designWarehouse(rnd: Rand): THREE.Group {
   const kit = rooftopKit(rnd, W * 0.6, D * 0.6)
   kit.position.y = H + 0.12
   g.add(kit)
+  for (const sx of [-1, 1]) {
+    const winWh = windowUnit(1.3, 1.6)
+    g.add(windowWall(winWh, 1.3, 1.6, 3, 2, [sx * (10 + 0.02), 3.4, -4.2], 3.2, 2.6, sx > 0 ? -Math.PI / 2 : Math.PI / 2, rnd, 0.16, 'z'))
+    const duct = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 2.6, 8), mat.metal)
+    duct.position.set(sx * 9.6, 5.6, 3.4)
+    g.add(duct)
+  }
   // dock bays on the road face
   for (let i = 0; i < 3; i++) {
     const recess = box(3.1, 3.4, 0.3, mat.frame)
@@ -540,7 +547,7 @@ function designOffice(rnd: Rand): THREE.Group {
   g.name = 'bldg-office'
   const W = 14, D = 12
   const pH = 5.6, sH = 18.4
-  const podium = box(W, pH, D, mat.brick, 'podium')
+  const podium = box(W, pH, D, mat.panel, 'podium')
   podium.position.y = pH / 2
   g.add(podium)
   const shaft = box(W * 0.74, sH, D * 0.78, mat.panel)
@@ -580,19 +587,20 @@ function designOffice(rnd: Rand): THREE.Group {
   g.add(doors, drGlass)
   // curtain wall: instanced panes with vertical fins between floors
   const cw = 2.0, ch = 2.55
-  const cols = 4, rowsN = 7
+  const cols = 5, rowsN = 7
+  void cw
   const paneG = mergeGeometries([
-    { geometry: (() => { const p = new THREE.PlaneGeometry(cw * 0.92, ch * 0.88); p.translate(0, 0, -0.02); return p })(), materialIndex: 0 },
+    { geometry: (() => { const p = new THREE.PlaneGeometry(cw * 1.02, ch * 0.94); p.translate(0, 0, -0.02); return p })(), materialIndex: 0 },
     { geometry: (() => { const f = roundedPlateGeo(cw, ch, 0.09, 0.04); f.translate(0, 0, 0.03); return f })(), materialIndex: 1 },
   ])
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1)
   const cwMat = new THREE.MeshPhysicalMaterial({ color: 0x42617a, roughness: 0.12, metalness: 0.4, transparent: true, opacity: 0.72, ior: 1.52, envMapIntensity: 1.7 })
-  for (const [yaw, oxBase, ozBase, cSpan] of [[Math.PI, 0, -(D * 0.78) / 2 + 0.3, true], [0, 0, (D * 0.78) / 2 + 0.3, false]] as const) {
+  for (const [yaw, oxBase, ozBase, cSpan] of [[Math.PI, 0, -(D * 0.78) / 2 - 0.32, true], [0, 0, (D * 0.78) / 2 + 0.32, false]] as const) {
     const inst = new THREE.InstancedMesh(paneG, [cwMat, mat.panel], cols * rowsN)
     let i = 0
     for (let r = 0; r < rowsN; r++) for (let c = 0; c < cols; c++) {
       e.set(0, yaw, 0); q.setFromEuler(e)
-      p.set(oxBase === 0 ? -W * 0.37 + 1.1 + c * ((W * 0.74 - 2.2) / 3) : 0, pH + 1.6 + r * 2.42, ozBase)
+      p.set(oxBase === 0 ? -W * 0.37 + 0.95 + c * ((W * 0.74 - 1.9) / 4) : 0, pH + 1.5 + r * 2.42, ozBase)
       void cSpan
       m4.compose(p, q, s); inst.setMatrixAt(i++, m4)
     }
@@ -600,6 +608,15 @@ function designOffice(rnd: Rand): THREE.Group {
     inst.castShadow = true
     g.add(inst)
   }
+  // spandrel bands: dark floor-line separators across the curtain shaft
+  for (let r = 0; r <= 7; r++) {
+    const sp = box(W * 0.74 + 0.1, 0.22, D * 0.78 + 0.5, mat.roofDeckDark)
+    sp.position.set(0, pH + 0.28 + r * 2.42, 0.3)
+    g.add(sp)
+  }
+  // podium storefront band
+  const winP = windowUnit(1.5, 1.9)
+  g.add(windowWall(winP, 1.5, 1.9, 4, 1, [-W / 2 + 2.2, 2.2, -D / 2 - 0.02], 2.4, 0, Math.PI, rnd, 0.55))
   // side-face slit windows
   const winS = windowUnit(0.8, 1.3, false)
   g.add(windowWall(winS, 0.8, 1.3, 1, 7, [W * 0.74 / 2 + 0.02, pH + 1.6, -3.2], 0, 2.42, Math.PI / 2, rnd, 0.3))
@@ -658,7 +675,19 @@ function designCivic(rnd: Rand): THREE.Group {
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, pH - 0.6, 9), mat.stucco)
     col.position.set(-4 + c * 1.6, (pH - 0.6) / 2, -D * 0.7 - 0.25)
     g.add(col)
+    if (c < 5 && c !== 2) {
+      const niche = box(0.95, 3.6, 0.14, mat.frame)
+      niche.position.set(-3.2 + c * 1.6, 2.4, -D * 0.7 - 0.42)
+      g.add(niche)
+      const ng = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 3.3), mat.glass)
+      ng.rotation.y = Math.PI
+      ng.position.set(-3.2 + c * 1.6, 2.4, -D * 0.7 - 0.5)
+      g.add(ng)
+    }
   }
+  const civicDoor = box(1.7, 3.4, 0.16, mat.trim)
+  civicDoor.position.set(0, 1.8, -D * 0.7 - 0.46)
+  g.add(civicDoor)
   // stairs
   for (let st = 0; st < 4; st++) {
     const step = box(9.4 + st * 0.3, 0.18, 0.5, mat.concrete)
@@ -730,6 +759,20 @@ function designFactory(rnd: Rand): THREE.Group {
     const step = box(1.1, 0.16, 0.36, mat.metal)
     step.position.set(plat.position.x + 3.7, 0.08 + st * 0.16, -D / 2 - 1.2 - st * 0.36)
     g.add(step)
+  }
+  for (const sx of [-1, 1]) {
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(D - 4, 1.5), mat.glass)
+    strip.rotation.y = sx > 0 ? -Math.PI / 2 : Math.PI / 2
+    strip.position.set(sx * (W / 2 + 0.02), H - 1.7, 0)
+    g.add(strip)
+    const lb = box(0.14, 2.0, 3.4, mat.metal)
+    lb.position.set(sx * (W / 2 + 0.05), H - 1.7, -D / 2 + 2.4)
+    lb.rotation.y = Math.PI / 2
+    g.add(lb)
+    const lad = box(0.7, H - 0.6, 0.1, mat.metal)
+    lad.position.set(sx * (W / 2 + 0.16), (H - 0.6) / 2, D / 2 - 1.4)
+    lad.rotation.y = Math.PI / 2
+    g.add(lad)
   }
   // stack with band
   const stackX = -W / 2 + 1.6, stackZ = D / 2 - 1.6
@@ -1020,6 +1063,17 @@ function designRetail(rnd: Rand): THREE.Group {
     g.add(storefront(bx, W / 3 - 2.2, 2.1, -D / 2 + 0.36, 3, b % 2 ? mat.accent : mat.trim))
     g.add(awning(bx, 3.3, -D / 2 + 0.4, W / 3 - 1.4, 8800 + b))
   }
+  for (const sx of [-1, 1]) {
+    const winR = windowUnit(1.2, 1.5)
+    g.add(windowWall(winR, 1.2, 1.5, 2, 2, [sx * (W / 2), 2.1, -2.6], 3.0, 2.4, sx > 0 ? -Math.PI / 2 : Math.PI / 2, rnd, 0.2, 'z'))
+    const vent = box(1.3, 0.9, 0.22, mat.metal)
+    vent.position.set(sx * (W / 2 + 0.02), 1.1, 3.2)
+    vent.rotation.y = Math.PI / 2
+    g.add(vent)
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, H - 0.4, 6), mat.trim)
+    pipe.position.set(sx * (W / 2 - 0.35), (H - 0.4) / 2 + 0.3, D / 2 - 0.5)
+    g.add(pipe)
+  }
   const deck = box(W - 0.4, 0.12, D - 0.4, mat.roofDeck)
   deck.position.y = H + 0.05
   g.add(deck)
@@ -1215,7 +1269,7 @@ function farLOD(id: BuildingDesignId): THREE.Mesh {
  */
 export function buildBuilding(id: BuildingDesignId, rnd: Rand, useLod = true): THREE.Object3D {
   const full = DESIGNERS[id](rnd)
-  if (!useLod) return full
+  if (!useLod || !kitLodEnabled()) return full
   const lod = new THREE.LOD()
   lod.name = `bldg-${id}-lod`
   lod.addLevel(full, KIT.lodNear)
