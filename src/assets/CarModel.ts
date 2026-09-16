@@ -255,7 +255,7 @@ const shared = {
     return new THREE.MeshStandardMaterial({ color: 0xd6dde6, metalness: 1, roughness: 0.11 })
   },
   alloy(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0xc3ccd6, metalness: 1, roughness: 0.26, roughnessMap: alloyRoughness() })
+    return new THREE.MeshStandardMaterial({ color: 0x98a8c0, metalness: 0.65, roughness: 0.26, roughnessMap: alloyRoughness() })
   },
   dark(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.55, metalness: 0.25 })
@@ -296,42 +296,58 @@ function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.
   tire.name = 'tire'
   spin.add(tire)
 
+  // Inboard backing cap — closes the wheel barrel, no sky/ground leaks through.
   const inboardCap = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.50, R * 0.50, 0.018, 22), shared.darkSoft())
   inboardCap.geometry.translate(0, -hw * 0.92, 0)
   inboardCap.name = 'wheelback'
   spin.add(inboardCap)
 
-  const dish = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.46, R * 0.53, 0.026, 26), shared.alloy())
-  dish.geometry.translate(0, hw * 0.72, 0)
+  // Brake disc — large annular surface, INBOARD of the dish.
+  // Extends to r=R*0.58, well beyond the dish edge (R*0.42), so its outer
+  // annular ring is legible through the gaps between the five spokes.
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.58, R * 0.58, 0.018, 28), shared.disc())
+  disc.geometry.translate(0, hw * 0.12, 0)
+  disc.name = 'brake-disc'
+  spin.add(disc)
+
+  // Caliper — clamped at the 3-o'clock position, INBOARD of the dish so it
+  // peeks through spoke gaps without being buried under the dish.
+  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper())
+  cal.geometry.translate(0, hw * 0.20, R * 0.575)
+  cal.name = 'brake-caliper'
+
+  // Alloy dish (centre hub plate) — small radius, INBOARD of the spokes so it
+  // acts as a backing plate behind them, not as a foreground brass shield.
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.40, R * 0.42, 0.024, 26), shared.alloy())
+  dish.geometry.translate(0, hw * 0.30, 0)
   dish.name = 'wheel-dish'
   spin.add(dish)
-  const lip = new THREE.Mesh(new THREE.TorusGeometry(R * 0.525, 0.015, 8, 30), shared.alloy())
+
+  // Rim lip — at the outer face edge.
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(R * 0.54, 0.015, 8, 30), shared.alloy())
   lip.geometry.rotateX(-Math.PI / 2)
   lip.geometry.translate(0, hw * 0.86, 0)
   lip.name = 'wheel-lip'
   spin.add(lip)
 
+  // Five spokes — OUTBOARD of the dish (hw*0.68 vs dish at hw*0.30), extending
+  // radially from near the hub centre (R*0.05) past the dish edge (R*0.42) to
+  // near the rim (R*0.57), so the alloy alloy profile is legible from the side.
   for (let k = 0; k < 5; k++) {
-    const sp = new THREE.Mesh(roundedPlateGeo(0.072, R * 0.46, 0.028, 0.016), shared.alloy())
+    const ang = (k * Math.PI * 2) / 5
+    const sp = new THREE.Mesh(roundedPlateGeo(0.072, R * 0.50, 0.024, 0.014), shared.alloy())
     sp.geometry.rotateX(Math.PI / 2)
-    sp.geometry.rotateY((k * Math.PI * 2) / 5)
-    sp.geometry.translate(Math.sin((k * Math.PI * 2) / 5) * R * 0.30, hw * 0.72, Math.cos((k * Math.PI * 2) / 5) * R * 0.30)
+    sp.geometry.rotateY(ang)
+    sp.geometry.translate(Math.sin(ang) * R * 0.30, hw * 0.68, Math.cos(ang) * R * 0.30)
     sp.name = 'wheel-spoke'
     spin.add(sp)
   }
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.03, 14), shared.chrome())
+
+  // Chrome centre hub cap — outboard, sits at the spoke convergence point.
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.030, 14), shared.chrome())
   hub.geometry.translate(0, hw * 0.80, 0)
   hub.name = 'wheel-hub'
   spin.add(hub)
-
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.58, R * 0.58, 0.02, 28), shared.disc())
-  disc.geometry.translate(0, hw * 0.40, 0)
-  disc.name = 'brake-disc'
-  spin.add(disc)
-
-  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper())
-  cal.geometry.translate(0, hw * 0.32, R * 0.575)
-  cal.name = 'brake-caliper'
 
   const bake = new THREE.Matrix4().makeRotationZ(sideSign * -Math.PI / 2)
   const bakeCal = bake.clone()
