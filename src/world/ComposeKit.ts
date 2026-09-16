@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { SEED, THEME, KIT } from '../config'
-import { Rand, lerp, clamp, smoothstep, fbm2, mergeGeometries, sweepProfile, crNormals, kitLodEnabled, setKitLodEnabled, type MergePart, type SweepFrame } from '../util'
+import { Rand, lerp, clamp, smoothstep, fbm2, hash21, mergeGeometries, sweepProfile, sanitizeGeometry, crNormals, kitLodEnabled, setKitLodEnabled, type MergePart, type SweepFrame } from '../util'
 import { buildBuilding, buildingMaterials, BUILDING_DESIGNS, type BuildingDesignId } from './BuildingKit'
 import { makeContainer, makeDrum, makeCrates, makePipeStack, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeUtilityPole, makeMastLight, makeVan, makeBarrierUnit, makeBollard, makeSignGantry, propLOD, makeGantryCrane, makeSign, makeTrafficLight, makeStreetlight } from './PropKit'
 import { broadleafGeometry, treeLOD, foliageVariants, foliageMaterial, palmGeometry, bushGeometry, rockGeometry } from './VegetationKit'
@@ -287,41 +287,71 @@ function prefabCoastalCliffDune(opts: ComposeOpts): THREE.Group {
   const rnd = new Rand(opts.seed ^ 0xc1a5)
   const g = new THREE.Group()
   g.name = 'CoastalCliff_Dune'
-  // focal boulder group (noise-deformed via VegetationKit path is heavy here;
-  // three stacked faceted masses read as a settled headland core)
-  const S = buildingMaterials()
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e6a62, roughness: 0.92, metalness: 0.02, flatShading: true })
-  const base = new THREE.Mesh(new THREE.IcosahedronGeometry(2.3, 1), rockMat)
-  deform(base.geometry, 0.55, rnd)
-  base.position.set(0, opts.field(0, 0) + 0.9, 0)
-  base.scale.set(1.15, 0.72, 1.0)
-  const crest = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), rockMat)
-  deform(crest.geometry, 0.5, rnd)
-  crest.position.set(0.8, opts.field(0, 0) + 2.0, -0.5)
-  crest.scale.set(1.0, 0.6, 0.9)
-  const chip = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 0), rockMat)
-  deform(chip.geometry, 0.45, rnd)
-  chip.position.set(-1.9, opts.field(-1.9, 1.4) + 0.3, 1.4)
-  for (const r of [base, crest, chip]) { r.castShadow = true; r.receiveShadow = true }
-  g.add(base, crest, chip)
-  void S
+  // settled headland silhouette (Gate C1 round-1): two coherent lobes share
+  // ONE profile — broad base, gentle windward slope, crest, steep lee slip
+  // face — sampled as a continuous grid so normals stay coherent (no facet
+  // explosion). fbm grain keeps the dune skin natural without shard noise.
+  const duneH = (x: number, z: number): number => {
+    const lobe = (cz: number, halfW: number, amp: number, crestX: number, crestW: number): number => {
+      const v = Math.abs(z - cz) / (halfW * 0.62)
+      if (v >= 1) return 0
+      const u = (x - crestX) / crestW
+      const along = u < 0
+        ? Math.cos(clamp(-u, 0, 1) * Math.PI / 2) * (1 - 0.22 * Math.min(1, -u))
+        : Math.pow(Math.max(0, 1 - u), 0.6)
+      return Math.max(0, along) * (1 - v * v) * amp
+    }
+    const h = lobe(-1.1, 5.8, 2.8, 0.9, 6.6) + lobe(2.4, 4.8, 1.8, 2.7, 5.4)
+    const grain = fbm2(x * 0.55 + 7.3, z * 0.55 + 2.1) * 0.2 + Math.sin(x * 1.9 + z * 0.8) * 0.04
+    return Math.max(0, h + grain * Math.min(1, h))
+  }
+  const sx = 16.6 / 30, sz = 12.6 / 26
+  const posA: number[] = [], uvA: number[] = [], colA: number[] = [], idxA: number[] = []
+  const wet = [0.26, 0.235, 0.19], crestC = [0.46, 0.385, 0.285], rockC = [0.315, 0.295, 0.255]
+  for (let j = 0; j <= 26; j++) for (let i = 0; i <= 30; i++) {
+    const x = -7.4 + i * sx, z = -5.8 + j * sz
+    const h = duneH(x, z)
+    posA.push(x, h, z)
+    uvA.push(i / 30, j / 26)
+    const t = clamp(h / 2.7, 0, 1)
+    const g = 0.86 + hash21(i * 0.37, j * 0.41) * 0.26
+    const c = t < 0.18 ? wet : t > 0.8 ? crestC : rockC
+    colA.push(c[0] * g, c[1] * g, c[2] * g)
+  }
+  for (let j = 0; j < 26; j++) for (let i = 0; i < 30; i++) {
+    const a = j * 31 + i
+    idxA.push(a, a + 31, a + 1, a + 1, a + 31, a + 32)
+  }
+  const duneGeo = new THREE.BufferGeometry()
+  duneGeo.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3))
+  duneGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvA, 2))
+  duneGeo.setAttribute('color', new THREE.Float32BufferAttribute(colA, 3))
+  duneGeo.setIndex(idxA)
+  sanitizeGeometry(duneGeo)
+  crNormals(duneGeo)
+  const dune = new THREE.Mesh(duneGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0.02 }))
+  dune.castShadow = true
+  dune.receiveShadow = true
+  g.add(dune)
   // driftwood log
   const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 2.6, 7), new THREE.MeshStandardMaterial({ color: 0x8b7a5e, roughness: 0.95, flatShading: true }))
   log.rotation.z = Math.PI / 2 - 0.08
   log.rotation.y = 0.5
-  log.position.set(2.6, opts.field(2.6, 2) + 0.14, 2)
+  log.position.set(2.6, duneH(2.6, 2) + 0.06, 2)
   log.castShadow = true
   g.add(log)
   const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 1.1, 5), log.material)
-  branch.position.set(2.2, opts.field(2.6, 2) + 0.42, 1.8)
+  branch.position.set(2.2, duneH(2.2, 1.8) + 0.34, 1.8)
   branch.rotation.z = 0.8
   g.add(branch)
   // leaning palm trio crowning the headland + spinifex drifts at the foot
   const palmMat = foliageMaterial(null, 0xb7c98a)
-  const trio: [number, number, number, number][] = [[-1.6, -1.2, 0.5, 0.24], [0.9, 1.6, -0.4, -0.3], [2.4, -0.4, 0.2, 0.14]]
+  // palms seat INTO the crest (base sunk below the surface so the trunk
+  // emerges from the dune skin — no float gap)
+  const trio: [number, number, number, number][] = [[-0.4, -1.0, 0.42, 0.24], [0.7, 0.7, -0.36, -0.3], [2.5, 2.9, 0.22, 0.14]]
   for (const [px, pz, lean, yaw] of trio) {
     const palm = treeLOD(palmGeometry(rnd, 1), palmGeometry(rnd, 0), palmMat)
-    palm.position.set(px, opts.field(px, pz) + 2.6, pz)
+    palm.position.set(px, duneH(px, pz) - 0.16, pz)
     palm.rotation.set(lean, yaw, lean * 0.6)
     palm.scale.setScalar(0.9 + rnd.range(0, 0.35))
     g.add(palm)
@@ -329,7 +359,7 @@ function prefabCoastalCliffDune(opts: ComposeOpts): THREE.Group {
   for (let b = 0; b < 6; b++) {
     const bx = rnd.range(-4.6, 4.6), bz = rnd.range(-4.2, 4.8)
     const bush = new THREE.Mesh(bushGeometry(rnd), foliageVariants()[b % 3])
-    bush.position.set(bx, opts.field(bx, bz) + 0.14, bz)
+    bush.position.set(bx, duneH(bx, bz) + 0.02, bz)
     bush.scale.setScalar(0.5 + rnd.range(0, 0.5))
     bush.castShadow = true
     g.add(bush)
@@ -337,7 +367,7 @@ function prefabCoastalCliffDune(opts: ComposeOpts): THREE.Group {
   for (let r = 0; r < 3; r++) {
     const rx = rnd.range(-5.4, 5.4), rz = rnd.range(-5, 5.4)
     const rk = new THREE.Mesh(rockGeometry(rnd, 40 + r), new THREE.MeshStandardMaterial({ color: 0x6e6a62, roughness: 0.93, flatShading: true }))
-    rk.position.set(rx, opts.field(rx, rz) + 0.05, rz)
+    rk.position.set(rx, duneH(rx, rz) - 0.06, rz)
     rk.scale.setScalar(0.5 + rnd.range(0, 0.7))
     rk.castShadow = true
     g.add(rk)

@@ -116,6 +116,21 @@ function boot(): void {
     })
   }
 
+  // Gate C1 round-1 grounding evidence: the rebuilt CoastalCliff_Dune prefab
+  // (sea verge) + inland broadleaf strip seen from the beach — in-shadow
+  // terrain, real sun, no display raft.
+  {
+    const sD = slice.spline.sFromX(44)
+    const rp = roadPose(slice.spline, sD, -1.5)
+    Debug.registerPose('coast_dunes', {
+      camera: [22, slice.field.height(22, -58) + 2.4, -58],
+      look: [38, 1.5, -22],
+      fov: 55,
+      player: { pos: rp.pos, yaw: rp.yaw, pitch: rp.pitch, bank: rp.bank, speed: 0 },
+      freezeSim: true, tag: 'ground',
+    })
+  }
+
   /* ---------------- Phase 4 Gate C1/M — kit boards (dev-only showcases) ----
    * Each board lives in its own isolated zone (fog hides neighbours) so no
    * horizon contamination; boards render FULL detail (lod:false) — the LOD
@@ -191,14 +206,14 @@ function boot(): void {
       const BX = 1600, BZ = 2000
       const row = new THREE.Group()
       row.name = 'board-vegetation'
-      const r1 = new Rand(9)
-      const species: { near: () => THREE.BufferGeometry; far: () => THREE.BufferGeometry }[] = [
-        { near: () => palmGeometry(r1, 1), far: () => palmGeometry(r1, 0) },
-        { near: () => palmGeometry(r1, 1), far: () => palmGeometry(r1, 0) },
-        { near: () => pineGeometry(r1, 1), far: () => pineGeometry(r1, 0) },
-        { near: () => pineGeometry(r1, 1), far: () => pineGeometry(r1, 0) },
-        { near: () => broadleafGeometry(r1, 1), far: () => broadleafGeometry(r1, 0) },
-        { near: () => broadleafGeometry(r1, 1), far: () => broadleafGeometry(r1, 0) },
+      // each specimen gets its own seeded Rand so the board is deterministic
+      // and every species shows a representative specimen (no seed flukes)
+      const sp = (fn: (r: Rand, l: number) => THREE.BufferGeometry, seed: number) =>
+        ({ near: () => fn(new Rand(seed), 1), far: () => fn(new Rand(seed), 0) })
+      const species = [
+        sp(palmGeometry, 101), sp(palmGeometry, 102),
+        sp(pineGeometry, 201), sp(pineGeometry, 202),
+        sp(broadleafGeometry, 301), sp(broadleafGeometry, 302),
       ]
       species.forEach((sp, i) => {
         const t = treeLOD(sp.near(), sp.far(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0, side: THREE.DoubleSide }))

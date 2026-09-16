@@ -36,13 +36,31 @@ const shadowOn = (g: THREE.Object3D, cast = true): void => {
   g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = cast; m.receiveShadow = true } })
 }
 
-/** Wrap a prop into a real THREE.LOD (full at 0, low-poly far variant). */
-export function propLOD(full: THREE.Object3D, far: THREE.Object3D | null, mid: number = KIT.lodMid, farAt: number = KIT.lodFar): THREE.Object3D {
+/** Tag an ornament mesh so the mid LOD can shed it (landmark greebles). */
+function greeble<T extends THREE.Object3D>(o: T): T {
+  o.userData.greeble = true
+  return o
+}
+
+/** Mid-distance variant of a full landmark: deep copy minus tagged greebles
+ *  (ladders, rails, guys, cables, truss diagonals) — a real reduction, not a
+ *  second imposter. Call before propLOD while `src` is fully composed. */
+export function propMid(src: THREE.Object3D): THREE.Object3D {
+  const copy = src.clone(true)
+  const kill: THREE.Object3D[] = []
+  copy.traverse((o) => { if (o.userData && o.userData.greeble === true) kill.push(o) })
+  for (const k of kill) k.parent?.remove(k)
+  return copy
+}
+
+/** Wrap a prop into a real THREE.LOD: full at near, optional decimated mid
+ *  (propMid strip), low-poly far imposter. */
+export function propLOD(full: THREE.Object3D, far: THREE.Object3D | null, mid: THREE.Object3D | null = null, midAt: number = KIT.lodMid, farAt: number = KIT.lodFar): THREE.Object3D {
   if (!far || !kitLodEnabled()) { full.updateMatrixWorld(false); return full }
   const lod = new THREE.LOD()
   lod.addLevel(full, KIT.lodNear)
+  if (mid) lod.addLevel(mid, midAt)
   lod.addLevel(far, farAt)
-  void mid
   return lod
 }
 
@@ -498,7 +516,7 @@ export function makeWaterTower(): THREE.Object3D {
   const cap = new THREE.Mesh(new THREE.ConeGeometry(0.72, 0.8, 14), new THREE.MeshStandardMaterial({ color: 0x6f7a84, metalness: 0.6, roughness: 0.48 }))
   cap.position.y = legH + 3.5
   g.add(cap)
-  const rail = new THREE.Mesh(new THREE.TorusGeometry(2.55, 0.06, 6, 20), S.steel)
+  const rail = greeble(new THREE.Mesh(new THREE.TorusGeometry(2.55, 0.06, 6, 20), S.steel))
   rail.rotation.x = Math.PI / 2
   rail.position.y = legH + 0.62
   g.add(rail)
@@ -525,7 +543,7 @@ export function makeWaterTower(): THREE.Object3D {
   pipe.position.set(0, legH - 3.5, 0)
   g.add(pipe)
   // access ladder up the leg
-  const lad = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, legH, 5), S.steel)
+  const lad = greeble(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, legH, 5), S.steel))
   lad.position.set(2.0, legH / 2, 0.4)
   g.add(lad)
   g.updateMatrixWorld(false)
@@ -536,7 +554,7 @@ export function makeWaterTower(): THREE.Object3D {
   const legsF = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, legH, 5), new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.7, metalness: 0.4 }))
   legsF.position.y = legH / 2
   far.add(tankF, legsF)
-  return propLOD(g, far, KIT.lodMid, 240)
+  return propLOD(g, far, propMid(g), KIT.lodMid, 240)
 }
 
 /** 19. Radio mast on ridge — lattice rings, guys, beacon. */
@@ -549,12 +567,12 @@ export function makeRadioMast(height = 24): THREE.Object3D {
   for (let q = 0; q < 5; q++) {
     const y = 2.5 + q * 4.2
     const rr = lerp(1.7, 0.55, y / height)
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.05, 5, 12), S.steel)
+    const ring = greeble(new THREE.Mesh(new THREE.TorusGeometry(rr, 0.05, 5, 12), S.steel))
     ring.rotation.x = Math.PI / 2
     ring.position.y = y
     g.add(ring)
     for (const a of [0, Math.PI / 2]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, rr * 2, 4), S.steel)
+      const post = greeble(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, rr * 2, 4), S.steel))
       post.rotation.z = Math.PI / 2
       post.rotation.y = a
       post.position.y = y
@@ -566,7 +584,7 @@ export function makeRadioMast(height = 24): THREE.Object3D {
   g.add(beacon)
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * Math.PI * 2 + 0.5
-    const guy = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 14, 4), S.steel)
+    const guy = greeble(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 14, 4), S.steel))
     guy.position.set(Math.cos(a) * 3.6, height * 0.42, Math.sin(a) * 3.6)
     guy.rotation.set(Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5)
     g.add(guy)
@@ -579,7 +597,7 @@ export function makeRadioMast(height = 24): THREE.Object3D {
   const mF = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, height, 5), new THREE.MeshStandardMaterial({ color: 0x7d848b, roughness: 0.7, metalness: 0.5 }))
   mF.position.y = height / 2
   far.add(mF)
-  return propLOD(g, far, KIT.lodMid, 300)
+  return propLOD(g, far, propMid(g), KIT.lodMid, 300)
 }
 
 /** 20. Gantry crane — landmark with CONNECTED jib: apex, pendants, cab,
@@ -613,7 +631,7 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   const cab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 2.0, 2.4), new THREE.MeshStandardMaterial({ color: 0x5c574a, roughness: 0.7, metalness: 0.3 }))
   cab.position.set(0, mastH + 1.0, 0.3)
   g.add(cab)
-  const cabWin = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.9), new THREE.MeshStandardMaterial({ color: 0x2c3a44, metalness: 0.4, roughness: 0.2 }))
+  const cabWin = greeble(new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.9), new THREE.MeshStandardMaterial({ color: 0x2c3a44, metalness: 0.4, roughness: 0.2 })))
   cabWin.position.set(0, mastH + 1.2, -0.91)
   g.add(cabWin)
   // apex tower above cab + pendant cables to jib and counter-jib
@@ -622,7 +640,7 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   g.add(apex)
   const jibY = mastH + 1.9
   for (const [toZ, len] of [[13.5, 13.6], [-8.6, 8.8]] as const) {
-    const pend = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, Math.hypot(len, 5.2), 4), S.steel)
+    const pend = greeble(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, Math.hypot(len, 5.2), 4), S.steel))
     pend.position.set(0, mastH + 6.4, toZ / 2)
     pend.rotation.x = Math.atan2(toZ, 5.2)
     g.add(pend)
@@ -639,11 +657,11 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   jib.add(tie)
   for (let dI = 0; dI < 14; dI++) {
     const dz = 0.6 + dI * 2.0
-    const diag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.6, 0.07), bodyMat)
+    const diag = greeble(new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.6, 0.07), bodyMat))
     diag.position.set(0, jibY + 0.65, dz)
     diag.rotation.x = (dI % 2 ? 0.78 : -0.78)
     jib.add(diag)
-    const vert = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.3, 0.07), bodyMat)
+    const vert = greeble(new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.3, 0.07), bodyMat))
     vert.position.set(0, jibY + 0.62, dz + 1.0)
     jib.add(vert)
   }
@@ -659,10 +677,10 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   const trolley = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 1.2), new THREE.MeshStandardMaterial({ color: 0x8a5530, roughness: 0.7, metalness: 0.3 }))
   trolley.position.set(0, jibY - 0.35, 15)
   g.add(trolley)
-  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.6, 4), S.steel)
+  const cable = greeble(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.6, 4), S.steel))
   cable.position.set(0, jibY - 2.35, 15)
   g.add(cable)
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.09, 6, 10, Math.PI * 1.5), S.steel)
+  const hook = greeble(new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.09, 6, 10, Math.PI * 1.5), S.steel))
   hook.position.set(0, jibY - 4.25, 15)
   g.add(hook)
   // container load under the hook — the crane is loading, not floating
@@ -672,7 +690,7 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   const base = new THREE.Mesh(new THREE.BoxGeometry(8, 2.2, 8), new THREE.MeshStandardMaterial({ color: 0x767164, roughness: 0.9 }))
   base.position.y = 1.1
   g.add(base)
-  const railA = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.2, 0.3), S.steelDark)
+  const railA = greeble(new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.2, 0.3), S.steelDark))
   railA.position.set(0, 2.28, 2.6)
   g.add(railA)
   const railB = railA.clone()
@@ -688,7 +706,7 @@ export function makeGantryCrane(rnd = new Rand(11)): THREE.Object3D {
   const cf = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 7.5), mf.material)
   cf.position.set(0, jibY - 0.35, -8.6)
   far.add(mf, jf, cf)
-  return propLOD(g, far, KIT.lodMid, 420)
+  return propLOD(g, far, propMid(g), KIT.lodMid, 420)
 }
 
 /** 21. Masted billboard on a lattice leg (Tier-1 roadside landmark). */
@@ -700,7 +718,7 @@ export function makeBillboard(kind: Parameters<typeof billboardFaceTexture>[0], 
   leg.position.y = h / 2
   g.add(leg)
   for (let b = 0; b < 4; b++) {
-    const br = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.08), S.steel)
+    const br = greeble(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.08), S.steel))
     br.position.set(0, 1.2 + b * 1.7, 0)
     br.rotation.x = 0.7
     g.add(br)
@@ -713,7 +731,7 @@ export function makeBillboard(kind: Parameters<typeof billboardFaceTexture>[0], 
   face.position.set(0, h + H / 2 - 0.4, -0.14)
   face.rotation.y = Math.PI
   g.add(face)
-  const lights = new THREE.Group()
+  const lights = greeble(new THREE.Group())
   for (const lx of [-W * 0.3, 0, W * 0.3]) {
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.8), S.steel)
     arm.position.set(lx, h - 0.2, -0.6)
@@ -729,7 +747,7 @@ export function makeBillboard(kind: Parameters<typeof billboardFaceTexture>[0], 
   footA.position.y = 0.25
   g.add(footA)
   shadowOn(g)
-  return propLOD(g, farMass(W, h + H, 1, 0x5b6067, (h + H) / 2), KIT.lodMid, 380)
+  return propLOD(g, farMass(W, h + H, 1, 0x5b6067, (h + H) / 2), propMid(g), KIT.lodMid, 380)
 }
 
 /** 22. Parked van (Tier-2 dressing): lofted shell read, not a cube. */

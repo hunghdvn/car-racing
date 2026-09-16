@@ -14,7 +14,7 @@ const side2 = (a: number, b: number, rnd: Rand): number => (rnd.chance(0.5) ? 1 
  * jittered scale/rot/colour) — never uniform runs. Two LOD levels (§4.7).
  * ------------------------------------------------------------------------- */
 
-const GREEN = { deep: [0.055, 0.12, 0.04], mid: [0.13, 0.26, 0.075], lite: [0.24, 0.38, 0.12], dry: [0.38, 0.33, 0.14], bark: [0.115, 0.08, 0.05], barkL: [0.19, 0.135, 0.082], rock: [0.3, 0.28, 0.25], moss: [0.16, 0.24, 0.085] }
+const GREEN = { deep: [0.055, 0.12, 0.04], mid: [0.105, 0.225, 0.062], lite: [0.165, 0.3, 0.082], dry: [0.38, 0.33, 0.14], bark: [0.115, 0.08, 0.05], barkL: [0.19, 0.135, 0.082], rock: [0.3, 0.28, 0.25], moss: [0.16, 0.24, 0.085] }
 
 function paint(geo: THREE.BufferGeometry, fn: (x: number, y: number, z: number, i: number) => [number, number, number]): THREE.BufferGeometry {
   const pos = geo.getAttribute('position') as THREE.BufferAttribute
@@ -196,9 +196,9 @@ export function pineGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   const tiers: [number, number][] = lod > 0 ? [[0.5, 1], [0.66, 0.82], [0.8, 0.6], [0.92, 0.38]] : [[0.62, 0.8]]
   for (const [tt, spread] of tiers) {
     const attach = pts[Math.min(pts.length - 1, Math.round(tt * (rows - 1)))]
-    const nFan = lod > 0 ? 5 + rnd.int(0, 3) : 4
+    const nFan = lod > 0 ? 6 + rnd.int(0, 3) : 4
     const yaw0 = rnd.range(0, Math.PI * 2)
-    const tone = rnd.next() > 0.6 ? GREEN.lite : GREEN.mid
+    const tone = rnd.next() > 0.72 ? GREEN.lite : rnd.next() > 0.4 ? GREEN.mid : GREEN.deep
     for (let k = 0; k < nFan; k++) {
       const a = yaw0 + (k / nFan) * Math.PI * 2 + rnd.range(-0.3, 0.3)
       const len = h * 0.27 * spread * rnd.range(0.78, 1.22)
@@ -220,7 +220,7 @@ export function pineGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
     const g = blob(r, 0.72, rnd.next() * 7, 0.5, lod > 0 ? 1 : 0)
     const top = pts[pts.length - 1]
     g.translate(top.x + bend * 0.12, top.y + r * 0.4, top.z)
-    paint(g, fanPaint(GREEN.lite, 99))
+    paint(g, fanPaint(GREEN.mid, 99))
     parts.push({ geometry: g })
   }
   return mergeGeometries(parts)
@@ -375,39 +375,49 @@ export function broadleafGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
     const v = 0.82 + hash21(t * 61, 4) * 0.3
     return [GREEN.bark[0] * v * 1.3, GREEN.bark[1] * v * 1.15, GREEN.bark[2] * v]
   }, 0.22) })
-  // branch stubs under the crown
-  const nBr = lod > 0 ? 4 : 2
-  for (let k = 0; k < nBr; k++) {
-    const t = rnd.range(0.55, 0.85)
-    const a = (k / nBr) * Math.PI * 2 + rnd.range(-0.5, 0.5)
-    const stub = new THREE.CylinderGeometry(0.035, 0.075, rnd.range(0.55, 1.1), 5)
-    stub.rotateZ(1.05 + rnd.range(-0.25, 0.25))
-    stub.rotateY(a)
-    const attach = pts[Math.min(pts.length - 1, Math.floor(t * (rows - 1)))]
-    stub.translate(attach.x, attach.y, attach.z)
-    paint(stub, () => [GREEN.bark[0] * 0.92, GREEN.bark[1] * 0.88, GREEN.bark[2] * 0.8])
-    parts.push({ geometry: stub })
-  }
-  // 3–5 clustered foliage volumes: dominant core + satellites, lit from top
+  // 4–5 clustered foliage volumes: dominant core + offset satellites at
+  // staggered heights (breaks the single-blob lollipop profile), each with a
+  // CONNECTED limb running from the trunk to the satellite's underside — no
+  // floating stubs (Gate C1 round-1: connected structure doctrine).
   const crown = pts[pts.length - 1]
-  const nVol = lod > 0 ? 3 + rnd.int(0, 2) : 2
-  const dry = rnd.next() > 0.8
-  const leaf = dry ? GREEN.dry : rnd.next() > 0.55 ? GREEN.lite : GREEN.mid
+  const nVol = lod > 0 ? 4 + rnd.int(0, 1) : 2
+  const leaf = rnd.next() > 0.75 ? GREEN.lite : GREEN.mid
   const leafPaint = (cx: number, cyBase: number) => (_x: number, y: number, _z: number, i: number): [number, number, number] => {
     const v = 0.74 + hash21(i * 2.1 + cx * 7, cyBase * 3) * 0.5
     const up = clamp((y - cyBase + 0.4) / 1.4, 0, 1)
     return [lerp(GREEN.deep[0], leaf[0], 0.35 + up * 0.6) * v, lerp(GREEN.deep[1], leaf[1], 0.42 + up * 0.6) * v, lerp(GREEN.deep[2], leaf[2], 0.3 + up * 0.5) * v]
   }
+  let rCore = 1
+  const limbAt = lod > 0 ? Math.floor((rows - 1) * 0.8) : Math.floor((rows - 1) * 0.72)
+  const trunkPt = pts[limbAt]
   for (let k = 0; k < nVol; k++) {
     const big = k === 0
-    const r = big ? rnd.range(0.95, 1.25) : rnd.range(0.55, 0.92)
-    const g = blob(r, rnd.range(0.62, 0.85), rnd.next() * 16, 0.68, lod > 0 ? 2 : 0)
-    const ox = big ? 0 : rnd.range(-0.95, 0.95)
-    const oz = big ? 0 : rnd.range(-0.95, 0.95)
-    const oy = big ? 0.25 : rnd.range(-0.35, 0.5)
-    g.translate(crown.x + ox + lean * 0.4, crown.y + oy, crown.z + oz)
+    const r = big ? rnd.range(0.95, 1.2) : rnd.range(0.68, 0.98)
+    if (big) rCore = r
+    const g = blob(r, rnd.range(0.62, 0.82), rnd.next() * 16, 0.68, lod > 0 ? 2 : 0)
+    // satellites sit ON the core's surface (distance built from radii —
+    // overlap guaranteed, no floating LOD0 blobs); the last one droops low
+    const dirA = (k / (nVol - 1 || 1)) * Math.PI * 2 + rnd.range(-0.5, 0.5)
+    const sep = k === 0 ? 0 : rCore * 0.52 + r * 0.62
+    const ox = big ? 0 : Math.cos(dirA) * sep
+    const oz = big ? 0 : Math.sin(dirA) * sep
+    const oy = big ? 0.3 : k === nVol - 1 ? -rCore * 0.5 : rnd.range(-rCore * 0.3, rCore * 0.45)
+    const cx = crown.x + ox + lean * 0.4, cy = crown.y + oy, cz = crown.z + oz
+    g.translate(cx, cy, cz)
     paint(g, leafPaint(ox + oz, crown.y - 0.5))
     parts.push({ geometry: g })
+    if (big) continue // core sits directly on the trunk crown
+    if (lod === 0 && k > 1) continue // far level keeps one connected satellite
+    // connected limb: trunk attach point → satellite underside
+    const target = new THREE.Vector3(cx, cy - r * 0.15, cz)
+    const src = trunkPt.clone().lerp(target, 0.3)
+    const dir = target.clone().sub(src)
+    const len = dir.length()
+    const limb = new THREE.CylinderGeometry(0.075, 0.14, len, 6)
+    limb.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()))
+    limb.translate(src.x + (target.x - src.x) * 0.5, src.y + (target.y - src.y) * 0.5, src.z + (target.z - src.z) * 0.5)
+    paint(limb, () => [GREEN.bark[0] * 0.6, GREEN.bark[1] * 0.56, GREEN.bark[2] * 0.5])
+    parts.push({ geometry: limb })
   }
   return mergeGeometries(parts)
 }
