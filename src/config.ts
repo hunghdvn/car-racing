@@ -17,7 +17,7 @@ export const THEME = {
   envIntensity: 1.02,
   fogColor: 0xcfd6da,
   fogDensity: 0.00128,
-  water: { deep: 0x0d3c55, shallow: 0x1f7d92, foam: 0xdff2f7, spec: 0xffd9a8 },
+  water: { deep: 0x0a2f47, shallow: 0x18687c, foam: 0xe4f2f5, spec: 0xffd9a8 },
 } as const
 
 /** Render/quality budgets (spec §3, §12, §17). */
@@ -139,3 +139,52 @@ export const PAINTS: PaintDef[] = [
 
 /** Determinism: master seed for all seeded placement (spec §22). */
 export const SEED = 20260916
+
+/** Track profile — Phase 3 representative coastal slice (~300 m, spec §7/§8/§20).
+ *  Control points are (x, z, y): road centreline crown elevation above sea datum.
+ *  Hero composition looks west (-X): sea + sun ahead-left, building cluster
+ *  mid-right, ramp as built infrastructure, hills/skyline background. */
+export interface TrackPoint { x: number; z: number; y: number }
+export const TRACK = {
+  controlPoints: [
+    { x: -160, z: 24, y: 1.15 },
+    { x: -126, z: 27, y: 1.05 },
+    { x: -92, z: 24, y: 0.95 },
+    { x: -58, z: 17, y: 0.85 },
+    { x: -26, z: 7, y: 0.8 },
+    { x: 4, z: 0.5, y: 0.9 },
+    { x: 32, z: -1.5, y: 1.05 },
+    { x: 58, z: 0, y: 1.5 },
+    { x: 72, z: 0.5, y: 1.35 },
+    { x: 90, z: 5, y: 1.55 },
+    { x: 112, z: 15, y: 2.1 },
+    { x: 138, z: 29, y: 2.9 },
+  ] as TrackPoint[],
+  halfWidth: 5.4,        // asphalt half-width (crown centre)
+  crown: 0.055,          // drainage camber of the surface (edge fall)
+  shoulderOuter: 8.0,    // engineered shoulder extent from centre
+  shoulderDrop: 0.62,    // outer shoulder edge fall below crown
+  camberGain: 9.4,       // superelevation: tan(bank) = clamp(curvature * gain)
+  camberMaxDeg: 4.5,     // arcade-sane corner banking
+  /** Big-jump kicker (built object on the racing line before the sweep).
+   *  Arc-length stations along the ~330 m spline (x = 56..64 hero straight). */
+  ramp: {
+    sStart: 213, sLip: 224.6, height: 1.26, lipThick: 0.2,
+    landingS: 228.6, landingLen: 6.2, sideTrim: 0.55, // asphalt inset each side
+  },
+  /** Coastal terrain field (spec §4.4/§8/§9). */
+  coast: {
+    seaLevel: -6.5,
+    shelfAmp: 2.4,       // cliff-top shelf relief
+    seaFloor: -10.4,
+    cliffZTop: -26,      // shelf begins falling here …
+    cliffZBase: -47,     // … down to the sea floor
+    fieldAmp: 2.6,
+    northHillStart: 44,
+    northHillRise: 0.15,
+    northHillNoise: 5.5,
+    edgeMeander: 9,      // lateral bay/headland meander of the cliff line
+  },
+  /** Building-cluster pad anchor (world XZ) — Phase 3: one authored cluster. */
+  cluster: { x: 48, z: 24, padR: 30 },
+} as const

@@ -517,6 +517,12 @@ export function buildCar(paintHex: number): CarModel {
     sill.rotation.y = Math.PI / 2
     sill.position.set(side * 0.968, 0.385, 0.06)
     group.add(named(sill, `sill-${side < 0 ? 'l' : 'r'}`))
+    // rocker filler: closes the daylight gap between skirt and ground so the
+    // side view reads as solid rocker panel, not a bar floating over the road
+    const rocker = new THREE.Mesh(roundedPlateGeo(1.95, 0.30, 0.05, 0.03), shared.dark())
+    rocker.rotation.y = Math.PI / 2
+    rocker.position.set(side * 0.90, 0.185, 0.055)
+    group.add(named(rocker, `rocker-${side < 0 ? 'l' : 'r'}`))
   }
 
   // exhaust tips (read under the bumper)

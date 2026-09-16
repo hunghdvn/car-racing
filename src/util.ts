@@ -209,7 +209,7 @@ export function mergeGeometries(parts: MergePart[]): THREE.BufferGeometry {
       }
       if (hasUv) { uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0) }
       if (hasColor) {
-        if (col) colors.push(col.getX(i), col.getY(i), col.getZ(i))
+        if (col && i < col.count) colors.push(col.getX(i), col.getY(i), col.getZ(i))
         else colors.push(1, 1, 1)
       }
     }
@@ -233,6 +233,158 @@ export function mergeGeometries(parts: MergePart[]): THREE.BufferGeometry {
   }
   out.computeBoundingSphere()
   return out
+}
+
+/* --------------------------- geometry hardening ------------------------------ */
+
+/**
+ * NaN discipline (shared, spec §3 budgets + bloom-poison protection):
+ * filter zero-area/NaN faces, then rebuild all-finite unit vertex normals
+ * from the surviving faces. Any custom BufferGeometry goes through this.
+ */
+export function sanitizeGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  if (!pos || pos.count === 0) return geo
+  let bad = 0
+  for (let i = 0; i < pos.count; i++) {
+    if (!Number.isFinite(pos.getX(i)) || !Number.isFinite(pos.getY(i)) || !Number.isFinite(pos.getZ(i))) bad++
+  }
+  if (bad) {
+    // positions poisoned: rebuild as a degenerate-safe point cloud at origin
+    const arr = pos.array as Float32Array
+    for (let i = 0; i < arr.length; i++) if (!Number.isFinite(arr[i])) arr[i] = 0
+  }
+  const idx = geo.getIndex()
+  let keep: number[] | null = null
+  if (idx) {
+    keep = []
+    for (let f = 0; f < idx.count; f += 3) {
+      const ia = idx.getX(f), ib = idx.getX(f + 1), ic = idx.getX(f + 2)
+      const ux = pos.getX(ib) - pos.getX(ia), uy = pos.getY(ib) - pos.getY(ia), uz = pos.getZ(ib) - pos.getZ(ia)
+      const vx = pos.getX(ic) - pos.getX(ia), vy = pos.getY(ic) - pos.getY(ia), vz = pos.getZ(ic) - pos.getZ(ia)
+      const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+      if (!Number.isFinite(fx + fy + fz) || fx * fx + fy * fy + fz * fz < 1e-14) continue
+      keep.push(ia, ib, ic)
+    }
+    if (keep.length === 0) keep.push(0, 0, 0)
+    geo.setIndex(keep)
+  }
+  crNormals(geo)
+  return geo
+}
+
+/** Catmull-Rom smoothed, guaranteed-finite unit vertex normals. */
+export function crNormals(geo: THREE.BufferGeometry): void {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const idx = geo.getIndex() as THREE.BufferAttribute | null
+  const n = pos.count
+  const nx = new Float32Array(n), ny = new Float32Array(n), nz = new Float32Array(n)
+  const used = new Uint8Array(n)
+  const tri = (ia: number, ib: number, ic: number): void => {
+    const ux = pos.getX(ib) - pos.getX(ia), uy = pos.getY(ib) - pos.getY(ia), uz = pos.getZ(ib) - pos.getZ(ia)
+    const vx = pos.getX(ic) - pos.getX(ia), vy = pos.getY(ic) - pos.getY(ia), vz = pos.getZ(ic) - pos.getZ(ia)
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+    if (!Number.isFinite(fx + fy + fz) || fx * fx + fy * fy + fz * fz < 1e-12) return
+    nx[ia] += fx; ny[ia] += fy; nz[ia] += fz
+    nx[ib] += fx; ny[ib] += fy; nz[ib] += fz
+    nx[ic] += fx; ny[ic] += fy; nz[ic] += fz
+    used[ia] = 1; used[ib] = 1; used[ic] = 1
+  }
+  if (idx) for (let f = 0; f < idx.count; f += 3) tri(idx.getX(f), idx.getX(f + 1), idx.getX(f + 2))
+  else for (let f = 0; f + 2 < n; f += 3) tri(f, f + 1, f + 2)
+  let cx = 0, cy = 0, cz = 0
+  for (let i = 0; i < n; i++) { cx += pos.getX(i); cy += pos.getY(i); cz += pos.getZ(i) }
+  cx /= n; cy /= n; cz /= n
+  const arr = new Float32Array(n * 3)
+  for (let i = 0; i < n; i++) {
+    let x = nx[i], y = ny[i], z = nz[i]
+    let len = Number.isFinite(x + y + z) ? Math.sqrt(x * x + y * y + z * z) : 0
+    if (len < 1e-6 || !used[i]) {
+      const rx = pos.getX(i) - cx, ry = pos.getY(i) - cy, rz = pos.getZ(i) - cz
+      const rl = Math.sqrt(rx * rx + ry * ry + rz * rz)
+      if (Number.isFinite(rl) && rl > 1e-6) { x = rx / rl; y = ry / rl; z = rz / rl }
+      else { x = 0; y = 1; z = 0 }
+      len = Math.sqrt(x * x + y * y + z * z)
+      if (!Number.isFinite(len) || len < 1e-6) { x = 0; y = 1; z = 0; len = 1 }
+    }
+    x /= len; y /= len; z /= len
+    if (!Number.isFinite(x + y + z)) { x = 0; y = 1; z = 0 }
+    arr[i * 3] = x; arr[i * 3 + 1] = y; arr[i * 3 + 2] = z
+  }
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(arr, 3))
+  geo.computeBoundingSphere()
+}
+
+/** Flip index winding when the majority of triangles face the centroid. */
+export function ensureOutwardWinding(geo: THREE.BufferGeometry): void {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const idx = geo.getIndex() as THREE.BufferAttribute | null
+  if (!idx || idx.count < 3) return
+  let cx = 0, cy = 0, cz = 0
+  for (let i = 0; i < pos.count; i++) { cx += pos.getX(i); cy += pos.getY(i); cz += pos.getZ(i) }
+  cx /= pos.count; cy /= pos.count; cz /= pos.count
+  let outward = 0, inward = 0
+  for (let f = 0; f < idx.count; f += 3) {
+    const a = idx.getX(f), b = idx.getX(f + 1), c = idx.getX(f + 2)
+    const ux = pos.getX(b) - pos.getX(a), uy = pos.getY(b) - pos.getY(a), uz = pos.getZ(b) - pos.getZ(a)
+    const vx = pos.getX(c) - pos.getX(a), vy = pos.getY(c) - pos.getY(a), vz = pos.getZ(c) - pos.getZ(a)
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+    const mx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3 - cx
+    const my = (pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3 - cy
+    const mz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3 - cz
+    if (fx * mx + fy * my + fz * mz >= 0) outward++; else inward++
+  }
+  if (inward <= outward) return
+  const arr = new Uint32Array(idx.count)
+  for (let f = 0; f < idx.count; f += 3) {
+    arr[f] = idx.getX(f); arr[f + 1] = idx.getX(f + 2); arr[f + 2] = idx.getX(f + 1)
+  }
+  geo.setIndex(new THREE.Uint32BufferAttribute(arr, 1))
+}
+
+/**
+ * Sweep a closed 2D profile along a sampled path of frames.
+ * frames: [x,y,z, nx,ny,nz(bank axis-free side), ux,uy,uz(up)] per station.
+ * Emits a watertight tube (profile ring wrapped) + optional end caps.
+ */
+export interface SweepFrame { p: [number, number, number]; s: [number, number, number]; u: [number, number, number] }
+export function sweepProfile(profile: [number, number][], frames: SweepFrame[], opts: { caps?: boolean; uvScale?: number } = {}): THREE.BufferGeometry {
+  const pos: number[] = [], uv: number[] = [], idx: number[] = []
+  const ring = profile.length
+  const S = frames.length
+  if (S < 2 || ring < 3) throw new Error('[sweep] insufficient frames/profile')
+  let runLen = 0
+  for (let i = 1; i < S; i++) {
+    const dx = frames[i].p[0] - frames[i - 1].p[0], dy = frames[i].p[1] - frames[i - 1].p[1], dz = frames[i].p[2] - frames[i - 1].p[2]
+    runLen += Math.sqrt(dx * dx + dy * dy + dz * dz)
+  }
+  const sc = opts.uvScale ?? 1
+  let acc = 0
+  for (let i = 0; i < S; i++) {
+    if (i > 0) {
+      const dx = frames[i].p[0] - frames[i - 1].p[0], dy = frames[i].p[1] - frames[i - 1].p[1], dz = frames[i].p[2] - frames[i - 1].p[2]
+      acc += Math.sqrt(dx * dx + dy * dy + dz * dz)
+    }
+    const f = frames[i]
+    for (const [a, b] of profile) {
+      pos.push(f.p[0] + f.s[0] * a + f.u[0] * b, f.p[1] + f.s[1] * a + f.u[1] * b, f.p[2] + f.s[2] * a + f.u[2] * b)
+      uv.push(a * sc, (acc + b) * sc)
+    }
+  }
+  for (let i = 0; i < S - 1; i++) {
+    for (let j = 0; j < ring; j++) {
+      const jn = (j + 1) % ring
+      const a = i * ring + j, b = a + ring, c = i * ring + jn, d = b + (jn - j)
+      idx.push(a, c, b, c, d, b)
+    }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  geo.setIndex(idx)
+  ensureOutwardWinding(geo)
+  sanitizeGeometry(geo)
+  return geo
 }
 
 /* ---------------------------------- misc ----------------------------------- */

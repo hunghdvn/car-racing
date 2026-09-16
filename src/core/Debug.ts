@@ -11,6 +11,9 @@ export interface ShotPose {
   player?: {
     pos?: [number, number, number]
     yaw?: number
+    /** road-frame orientation (YXZ order) so the car sits on banked/pitched deck */
+    pitch?: number
+    bank?: number
     speed?: number
     drift?: boolean
     nitro?: boolean

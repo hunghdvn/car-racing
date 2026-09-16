@@ -6,6 +6,7 @@ import type { ShotPose } from './core/Debug'
 import { buildCar, type CarModel } from './assets/CarModel'
 import { ChaseCamera, type CarView } from './camera/ChaseCamera'
 import { PAINTS, VEHICLE } from './config'
+import { buildTrackSlice, roadPose, heroShot } from './world/TrackSlice'
 
 const $ = (id: string): HTMLElement | null => document.getElementById(id)
 
@@ -32,13 +33,9 @@ function boot(): void {
   const sky = new Sky()
   view.attachSky(sky)
 
-  const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(160, 72),
-    new THREE.MeshStandardMaterial({ color: 0xa07940, roughness: 0.94 }),
-  )
-  ground.rotateX(-Math.PI / 2)
-  ground.receiveShadow = true
-  view.scene.add(ground)
+  // Phase 3 — the representative slice replaces the Phase-2 placeholder disc
+  const slice = buildTrackSlice()
+  view.scene.add(slice.group)
 
   const car: CarModel = buildCar(PAINTS[1].color)
   view.scene.add(car.group)
@@ -47,6 +44,7 @@ function boot(): void {
   if (qp['nocar']) car.group.visible = false
   if (qp['hide']) for (const tok of qp['hide'].split(',')) for (const ch of car.group.children) if (ch.name.includes(tok)) ch.visible = false
   if (qp['noshadow']) view.sun.castShadow = false
+  if (qp['hideW']) for (const tok of qp['hideW'].split(',')) slice.group.traverse((o: unknown) => { const n = o as THREE.Object3D; if (n.name === tok) n.visible = false })
   if (qp['dblside']) car.group.traverse((o: unknown) => { const m = o as { isMesh?: boolean; material?: { side?: number } }; if (m.isMesh && m.material) m.material.side = THREE.DoubleSide })
   if (qp['flat']) car.group.traverse((o: unknown) => { const m = o as { isMesh?: boolean; material?: unknown }; if (m.isMesh) m.material = new THREE.MeshBasicMaterial({ color: 0xff2222 }) })
   if (qp['noemi']) car.group.traverse((o: unknown) => {
@@ -74,16 +72,44 @@ function boot(): void {
 
   const spinners: { spin: THREE.Group; steer: THREE.Group | null }[] = car.wheels.map((w) => ({ spin: w.spin, steer: w.steer }))
 
-  // ---- deterministic validation poses (Gate A) --------------------------------
+  // ---- deterministic validation poses (Gate A on the road + Gate C0 hero) ----
+  const anchor = roadPose(slice.spline, slice.spline.sFromX(30), 0)
+  const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean } = {}): ShotPose => {
+    const cy = Math.cos(anchor.yaw), sy = Math.sin(anchor.yaw)
+    const rot = (v: [number, number, number]): [number, number, number] => [
+      anchor.pos[0] + v[0] * cy + v[2] * sy,
+      anchor.pos[1] + v[1],
+      anchor.pos[2] - v[0] * sy + v[2] * cy,
+    ]
+    return {
+      camera: rot(camOff), look: rot(lookOff), fov,
+      player: { pos: anchor.pos, yaw: anchor.yaw, pitch: anchor.pitch, bank: anchor.bank, speed: 0, ...extra },
+      freezeSim: true,
+    }
+  }
   Debug.registerPoses([
-    ['car_front', { camera: [0, 0.80, -6.05], look: [0, 0.58, 0], fov: 33, player: { pos: [0, 0, 0], yaw: 0, speed: 0 }, freezeSim: true }],
-    ['car_rear', { camera: [0, 0.95, 6.05], look: [0, 0.60, 0], fov: 33, player: { pos: [0, 0, 0], yaw: 0, speed: 0 }, freezeSim: true }],
-    ['car_side', { camera: [7.55, 0.64, 0.10], look: [0, 0.58, 0], fov: 26, player: { pos: [0, 0, 0], yaw: 0, speed: 0 }, freezeSim: true }],
-    ['car_fq3', { camera: [4.28, 0.98, -4.28], look: [0, 0.58, 0], fov: 33, player: { pos: [0, 0, 0], yaw: 0, speed: 0 }, freezeSim: true }],
-    ['car_rq3', { camera: [4.35, 1.10, 4.35], look: [0, 0.60, 0], fov: 33, player: { pos: [0, 0, 0], yaw: 0, speed: 0 }, freezeSim: true }],
-    ['car_drift', { camera: [2.6, 1.35, 2.6], look: [0, 0.6, 0], fov: 62, player: { pos: [0, 0, 0], yaw: 0, speed: 40, drift: true }, freezeSim: true }],
-    ['car_nitro', { camera: [2.7, 1.25, 2.7], look: [0, 0.62, 0], fov: 62, player: { pos: [0, 0, 0], yaw: 0, speed: 50, nitro: true }, freezeSim: true }],
+    ['car_front', onRoad([0, 0.80, -6.05], [0, 0.58, 0], 33)],
+    ['car_rear', onRoad([0, 0.95, 6.05], [0, 0.60, 0], 33)],
+    ['car_side', onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26)],
+    ['car_fq3', onRoad([4.28, 0.98, -4.28], [0, 0.58, 0], 33)],
+    ['car_rq3', onRoad([4.35, 1.10, 4.35], [0, 0.60, 0], 33)],
+    ['car_drift', onRoad([2.6, 1.35, 2.6], [0, 0.6, 0], 62, { speed: 40, drift: true })],
+    ['car_nitro', onRoad([2.7, 1.25, 2.7], [0, 0.62, 0], 62, { speed: 50, nitro: true })],
   ])
+  if (qp['kick']) {
+    const hero = heroShot(slice.spline)
+    const cx = hero.car.pos[0], cz = hero.car.pos[2]
+    Debug.registerPose('kick', { camera: [cx + 7.4, hero.car.pos[1] + 2.3, cz - 4.6], look: [cx - 3, hero.car.pos[1] + 0.9, cz + 1.5], fov: 50, player: { pos: hero.car.pos, yaw: hero.car.yaw, pitch: hero.car.pitch, bank: hero.car.bank, speed: 0 }, freezeSim: true })
+  }
+  // Gate C0 — the 5-Second Test hero composition (chase cam down the coast)
+  {
+    const hero = heroShot(slice.spline)
+    Debug.registerPose('slice', {
+      camera: hero.camera, look: hero.look, fov: hero.fov,
+      player: { pos: hero.car.pos, yaw: hero.car.yaw, pitch: hero.car.pitch, bank: hero.car.bank, speed: 46, drift: true },
+      freezeSim: true, tag: 'coastal',
+    })
+  }
 
   const carView: CarView = { pos, yaw: 0, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 }
   let simFrozen = false
@@ -96,13 +122,16 @@ function boot(): void {
       shotDrift = !!p.player?.drift
       if (p.player?.pos) { pos.set(...p.player.pos); yaw = p.player.yaw ?? 0 }
       car.group.position.copy(pos)
-      car.group.rotation.set(0, yaw, 0)
+      car.group.rotation.order = 'YXZ'
+      car.group.rotation.set(p.player?.pitch ?? 0, yaw, p.player?.bank ?? 0)
+      const spinA = -shotSpeed * 0.09
+      for (const s of spinners) s.spin.rotation.x = spinA
       carView.speed = shotSpeed
       carView.yaw = yaw
       carView.nitro = shotNitro
       carView.drift = shotDrift ? 0.55 : 0
       car.setNitro(shotNitro ? 1 : 0)
-      car.setBrake(shotSpeed > 30 ? 0.7 : 0)
+      car.setBrake(shotSpeed > 30 ? Math.min(0.32, shotSpeed / 160 + 0.08) : 0)
       car.group.updateMatrixWorld(true)
       view.camera.position.fromArray(p.camera)
       view.camera.lookAt(p.look ? new THREE.Vector3(...p.look) : new THREE.Vector3(0, 0.6, 0))
@@ -161,24 +190,28 @@ function boot(): void {
     const passes = c.passes as Record<string, any>[]
     const r: Record<string, unknown> = {}
     const rb = c.readBuffer as THREE.WebGLRenderTarget
+    const mode = Number(qp['bis']) || 0
     passes[0].renderToScreen = false
-    passes[0].render(view.gl, c.writeBuffer, rb, 0, false)
+    passes[0].render(view.gl, c.writeBuffer, rb, mode, false)
     r.sceneOnly = statRT2(rb)
     passes[1].renderToScreen = false
-    passes[1].render(view.gl, c.writeBuffer, rb, 0, false)
+    passes[1].render(view.gl, c.writeBuffer, rb, mode, false)
     r.afterBloom = statRT2(rb)
     const bl = dp.bloom as Record<string, any>
     r.bright = statRT2(bl.renderTargetBright)
     // geometry scan
     const geo: Record<string, unknown> = {}
     const nz = new THREE.Vector3()
-    car.group.traverse((o: unknown) => {
+    const scanRoot = (qp['all'] ? view.scene : car.group) as THREE.Object3D
+    scanRoot.traverse((o: unknown) => {
       const m = o as THREE.Mesh
       if (!m.isMesh) return
       const g = m.geometry as THREE.BufferGeometry
       const nAttr = g.getAttribute("normal") as THREE.BufferAttribute | undefined
       const pAttr = g.getAttribute("position") as THREE.BufferAttribute
-      let badN = 0, badP = 0, zeroN = 0
+      const cAttr = g.getAttribute("color") as THREE.BufferAttribute | undefined
+      const uAttr = g.getAttribute("uv") as THREE.BufferAttribute | undefined
+      let badN = 0, badP = 0, zeroN = 0, badC = 0, badU = 0
       if (nAttr) for (let i = 0; i < nAttr.count; i++) {
         nz.set(nAttr.getX(i), nAttr.getY(i), nAttr.getZ(i))
         if (!Number.isFinite(nz.x) || !Number.isFinite(nz.y) || !Number.isFinite(nz.z)) badN++
@@ -187,7 +220,22 @@ function boot(): void {
       for (let i = 0; i < pAttr.count; i++) {
         if (!Number.isFinite(pAttr.getX(i)) || !Number.isFinite(pAttr.getY(i)) || !Number.isFinite(pAttr.getZ(i))) badP++
       }
-      if (badN || badP || zeroN) geo[m.name || g.type] = { verts: pAttr.count, badN, badP, zeroN, mat: (m.material as THREE.Material).type }
+      if (cAttr) for (let i = 0; i < cAttr.count; i++) {
+        if (!Number.isFinite(cAttr.getX(i)) || !Number.isFinite(cAttr.getY(i)) || !Number.isFinite(cAttr.getZ(i))) badC++
+      }
+      if (uAttr) for (let i = 0; i < uAttr.count; i++) {
+        if (!Number.isFinite(uAttr.getX(i)) || !Number.isFinite(uAttr.getY(i))) badU++
+      }
+      if (badN || badP || zeroN || badC || badU) {
+        g.computeBoundingBox()
+        const bb = g.boundingBox
+        let firstBad = -1
+        if (cAttr && badC) for (let i = 0; i < cAttr.count; i++) { if (!Number.isFinite(cAttr.getX(i)) || !Number.isFinite(cAttr.getY(i)) || !Number.isFinite(cAttr.getZ(i))) { firstBad = i; break } }
+        const fbY = firstBad >= 0 ? Math.round(pAttr.getY(firstBad) * 10) / 10 : 0
+        const fbX = firstBad >= 0 ? Math.round(pAttr.getX(firstBad)) : 0
+        const fbZ = firstBad >= 0 ? Math.round(pAttr.getZ(firstBad)) : 0
+        geo[m.name || g.type] = { verts: pAttr.count, badN, badP, zeroN, badC, badU, firstBad: [fbX, fbY, fbZ], bb: bb ? [bb.min.toArray(), bb.max.toArray()].map((a) => a.map((v) => Math.round(v))) : null, mat: (m.material as THREE.Material).type }
+      }
     })
     r.geoScan = geo
     return r
@@ -271,6 +319,7 @@ function boot(): void {
   }
   const clock = new THREE.Clock()
   let t = 0
+  let dist = 0
   let loadingHidden = false
   let wheelAngle = 0
   let frameCount = 0
@@ -280,12 +329,15 @@ function boot(): void {
     frameCount++
     if (!simFrozen) {
       t += dt
-      const speed = 14 + Math.sin(t * 0.35) * 11
-      yaw += Math.sin(t * 0.21) * 0.32 * dt * 2.2
-      pos.add(new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)).multiplyScalar(speed * dt))
-      const bump = Math.sin(t * 7.3) * 0.012 + Math.sin(t * 13.7) * 0.006
-      car.group.position.set(pos.x, bump, pos.z)
-      car.group.rotation.set(-0.012 - speed * 0.0004, yaw, Math.sin(t * 0.4) * 0.022)
+      const speed = 17 + Math.sin(t * 0.35) * 9
+      dist += speed * dt
+      const sDrive = 170 + (dist % 142)
+      const rp = roadPose(slice.spline, sDrive, Math.sin(t * 0.18) * 1.6)
+      pos.set(rp.pos[0], rp.pos[1], rp.pos[2])
+      yaw = rp.yaw
+      car.group.position.copy(pos)
+      car.group.rotation.order = 'YXZ'
+      car.group.rotation.set(rp.pitch - speed * 0.0004, rp.yaw, rp.bank + Math.sin(t * 0.4) * 0.014)
       const steerA = Math.sin(t * 0.21) * 0.3
       carView.speed = speed
       carView.yaw = yaw
@@ -305,6 +357,7 @@ function boot(): void {
       applyPose(Debug.lastPose)
     }
     view.update(dt, car.group.position)
+    slice.update(t, view.camera.position)
     view.render()
     if (!loadingHidden && t > 0.5) { loadingHidden = true; $('loading')?.classList.add('hidden') }
     document.title = `Velocity Rush — ${Math.round(view.fps)} fps — ${view.tier}`
