@@ -1,8 +1,11 @@
 import * as THREE from 'three'
 import { SEED } from '../config'
 import { Rand, lerp, clamp, fbm2, hash21, mergeGeometries, sanitizeGeometry, crNormals } from '../util'
+import { KIT } from '../config'
 import type { TrackSpline } from './TrackSpline'
 import type { CoastField } from './Terrain'
+
+const side2 = (a: number, b: number, rnd: Rand): number => (rnd.chance(0.5) ? 1 : -1) * rnd.range(a, b)
 
 /* ------------------------------------------------------------------------- *
  * Real-silhouette vegetation (spec §4.3): curved-trunk palms with arched
@@ -89,7 +92,7 @@ function blob(r: number, squashY: number, seed: number, rough: number, detail = 
 
 /* ------------------------------------------------------------- species ---- */
 
-function palmGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
+export function palmGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   const h = rnd.range(4.0, 5.6)
   const bend = rnd.range(0.5, 1.5) * (rnd.chance(0.5) ? 1 : -1)
   const lean = rnd.range(-0.35, 0.35)
@@ -157,7 +160,7 @@ function palmGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   return merged
 }
 
-function pineGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
+export function pineGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
   const h = rnd.range(3.2, 5.4)
   const parts: { geometry: THREE.BufferGeometry }[] = []
   const pts: THREE.Vector3[] = []
@@ -255,38 +258,52 @@ function needlePad(
   return g
 }
 
-function bushGeometry(rnd: Rand): THREE.BufferGeometry {
+export function bushGeometry(rnd: Rand): THREE.BufferGeometry {
+  // Spec §4.3: clustered blobs with a SETTLED base — a wide flattened skirt,
+  // 5–8 angular lobes sharing one mass (not round popcorn), twig crown and
+  // deep olive-green body with a sunlit top gradient (kills the pale read).
   const parts: { geometry: THREE.BufferGeometry }[] = []
-  const n = rnd.int(4, 6)
-  // one dominant lobe + smaller satellites at varied squash — irregular mass,
-  // plus twig stubs breaking the silhouette rim
+  const dry = rnd.next() > 0.8
+  const base = dry ? GREEN.dry : GREEN.mid
+  const dark = GREEN.deep
+  const skirt = blob(rnd.range(0.62, 0.8), 0.34, rnd.next() * 30, 0.5, 1)
+  skirt.translate(0, 0.13, 0)
+  paint(skirt, (_x, y, _z, i) => {
+    const v = 0.62 + hash21(i * 1.9, 9) * 0.28
+    return [dark[0] * v * 1.05, dark[1] * v * 1.05, dark[2] * v]
+  })
+  parts.push({ geometry: skirt })
+  const n = rnd.int(5, 8)
+  const spread = rnd.range(0.5, 0.78)
   for (let k = 0; k < n; k++) {
     const big = k === 0
-    const r = big ? rnd.range(0.52, 0.68) : rnd.range(0.22, 0.5)
-    const g = blob(r, rnd.range(0.5, 0.82), rnd.next() * 20, 0.62, k === 0 ? 2 : 1)
-    const ox = big ? 0 : rnd.range(-0.55, 0.55)
-    const oz = big ? 0 : rnd.range(-0.55, 0.55)
-    g.translate(ox, (big ? 0.62 : 0.26) + Math.hypot(ox, oz) * -0.22 * rnd.next(), oz)
-    const dry = rnd.next() > 0.72
+    const r = big ? rnd.range(0.44, 0.58) : rnd.range(0.2, 0.42)
+    const g = blob(r, rnd.range(0.52, 0.9), rnd.next() * 20, 0.85, k === 0 ? 2 : 1)
+    const a = (k / n) * Math.PI * 2 + rnd.range(-0.5, 0.5)
+    const rad = big ? 0 : spread * rnd.range(0.45, 1)
+    const ox = Math.cos(a) * rad
+    const oz = Math.sin(a) * rad
+    g.translate(ox, (big ? 0.52 : 0.2 + rnd.range(0, 0.16)) + r * 0.3, oz)
     paint(g, (_x, y, _z, i) => {
-      const v = 0.85 + hash21(i * 2.3 + k, 5) * 0.4
-      const t = clamp(y / 0.8, 0, 1) * 0.4
-      const base = dry ? GREEN.dry : GREEN.mid
-      return [(base[0] + t * 0.1) * v, (base[1] + t * 0.14) * v, base[2] * v]
+      const v = 0.7 + hash21(i * 2.3 + k, 5) * 0.44
+      const t = clamp((y - 0.2) / 0.75, 0, 1)
+      return [lerp(dark[0] * 0.9, base[0] + 0.1, t) * v, lerp(dark[1] * 0.95, base[1] + 0.12, t) * v, lerp(dark[2] * 0.9, base[2], t) * v]
     })
     parts.push({ geometry: g })
   }
-  for (let k = 0; k < 2; k++) {
-    const twig = new THREE.CylinderGeometry(0.018, 0.032, rnd.range(0.35, 0.6), 5)
-    twig.rotateZ(rnd.range(0.5, 1.1))
-    twig.translate(rnd.range(-0.35, 0.35), rnd.range(0.3, 0.5), rnd.range(-0.35, 0.35))
-    paint(twig, () => [GREEN.barkL[0] * 0.85, GREEN.barkL[1] * 0.85, GREEN.barkL[2] * 0.8])
+  // twigs punching through the rim — breaks the round silhouette
+  for (let k = 0; k < 4; k++) {
+    const twig = new THREE.CylinderGeometry(0.016, 0.03, rnd.range(0.4, 0.72), 5)
+    twig.rotateZ(rnd.range(0.45, 1.2))
+    twig.rotateY(rnd.next() * Math.PI * 2)
+    twig.translate(rnd.range(-0.45, 0.45), rnd.range(0.42, 0.62), rnd.range(-0.45, 0.45))
+    paint(twig, () => [GREEN.barkL[0] * 0.8, GREEN.barkL[1] * 0.78, GREEN.barkL[2] * 0.7])
     parts.push({ geometry: twig })
   }
   return mergeGeometries(parts)
 }
 
-function rockGeometry(rnd: Rand, seed: number): THREE.BufferGeometry {
+export function rockGeometry(rnd: Rand, seed: number): THREE.BufferGeometry {
   // faceted, directionally deformed boulder with a settled flat base
   const g = blob(1, rnd.range(0.55, 0.85), seed, 0.68, rnd.next() > 0.4 ? 1 : 0)
   const pos = g.getAttribute('position') as THREE.BufferAttribute
@@ -328,11 +345,83 @@ function grassTuftGeometry(): THREE.BufferGeometry {
 
 /* ----------------------------------------------------------- materials ---- */
 
-export function foliageMaterial(alphaMap: THREE.Texture | null = null): THREE.MeshStandardMaterial {
+export function foliageMaterial(alphaMap: THREE.Texture | null = null, tint = 0xffffff): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.86, metalness: 0, side: THREE.DoubleSide,
+    vertexColors: true, roughness: 0.86, metalness: 0, side: THREE.DoubleSide, color: tint,
     alphaMap: alphaMap ?? undefined, transparent: alphaMap != null, alphaTest: alphaMap ? 0.4 : 0,
   })
+}
+
+/** Colour-variant set (§10): three tints so repeats never read identical. */
+export function foliageVariants(): THREE.MeshStandardMaterial[] {
+  return [foliageMaterial(null, 0xffffff), foliageMaterial(null, 0xc9d8a8), foliageMaterial(null, 0xe4d6ae)]
+}
+
+/* ------------------------------------------------------------ species+LOD -- */
+
+/** Broadleaf: leaning trunk, branch stubs, 3–5 clustered foliage volumes
+ *  (spec §4.3 — layered clusters, never a cylinder+ball lollipop). */
+export function broadleafGeometry(rnd: Rand, lod = 1): THREE.BufferGeometry {
+  const h = rnd.range(3.4, 5.8)
+  const parts: { geometry: THREE.BufferGeometry }[] = []
+  const rows = lod > 0 ? 8 : 4
+  const lean = rnd.range(-0.5, 0.5)
+  const pts: THREE.Vector3[] = []
+  for (let i = 0; i < rows; i++) {
+    const t = i / (rows - 1)
+    pts.push(new THREE.Vector3(lean * t * t, t * h, Math.sin(t * 2.6) * 0.16 * lean))
+  }
+  parts.push({ geometry: tubeAlong(pts, Array.from({ length: rows }, (_, i) => lerp(0.21, 0.07, i / (rows - 1))) as never, lod > 0 ? 7 : 5, (t) => {
+    const v = 0.82 + hash21(t * 61, 4) * 0.3
+    return [GREEN.bark[0] * v * 1.05, GREEN.bark[1] * v, GREEN.bark[2] * v * 0.9]
+  }, 0.22) })
+  // branch stubs under the crown
+  const nBr = lod > 0 ? 4 : 2
+  for (let k = 0; k < nBr; k++) {
+    const t = rnd.range(0.55, 0.85)
+    const a = (k / nBr) * Math.PI * 2 + rnd.range(-0.5, 0.5)
+    const stub = new THREE.CylinderGeometry(0.035, 0.075, rnd.range(0.55, 1.1), 5)
+    stub.rotateZ(1.05 + rnd.range(-0.25, 0.25))
+    stub.rotateY(a)
+    const attach = pts[Math.min(pts.length - 1, Math.floor(t * (rows - 1)))]
+    stub.translate(attach.x, attach.y, attach.z)
+    paint(stub, () => [GREEN.bark[0] * 0.92, GREEN.bark[1] * 0.88, GREEN.bark[2] * 0.8])
+    parts.push({ geometry: stub })
+  }
+  // 3–5 clustered foliage volumes: dominant core + satellites, lit from top
+  const crown = pts[pts.length - 1]
+  const nVol = lod > 0 ? 3 + rnd.int(0, 2) : 2
+  const dry = rnd.next() > 0.8
+  const leaf = dry ? GREEN.dry : rnd.next() > 0.55 ? GREEN.lite : GREEN.mid
+  const leafPaint = (cx: number, cyBase: number) => (_x: number, y: number, _z: number, i: number): [number, number, number] => {
+    const v = 0.74 + hash21(i * 2.1 + cx * 7, cyBase * 3) * 0.5
+    const up = clamp((y - cyBase + 0.4) / 1.4, 0, 1)
+    return [lerp(GREEN.deep[0], leaf[0], 0.35 + up * 0.6) * v, lerp(GREEN.deep[1], leaf[1], 0.42 + up * 0.6) * v, lerp(GREEN.deep[2], leaf[2], 0.3 + up * 0.5) * v]
+  }
+  for (let k = 0; k < nVol; k++) {
+    const big = k === 0
+    const r = big ? rnd.range(0.95, 1.25) : rnd.range(0.55, 0.92)
+    const g = blob(r, rnd.range(0.62, 0.85), rnd.next() * 16, 0.68, lod > 0 ? 2 : 0)
+    const ox = big ? 0 : rnd.range(-0.95, 0.95)
+    const oz = big ? 0 : rnd.range(-0.95, 0.95)
+    const oy = big ? 0.25 : rnd.range(-0.35, 0.5)
+    g.translate(crown.x + ox + lean * 0.4, crown.y + oy, crown.z + oz)
+    paint(g, leafPaint(ox + oz, crown.y - 0.5))
+    parts.push({ geometry: g })
+  }
+  return mergeGeometries(parts)
+}
+
+/** Wrap two seeded geometry levels into a real THREE.LOD (§4.7). */
+export function treeLOD(near: THREE.BufferGeometry, far: THREE.BufferGeometry, mat: THREE.Material): THREE.LOD {
+  const a = new THREE.Mesh(near, mat)
+  a.castShadow = true
+  const b = new THREE.Mesh(far, mat)
+  b.castShadow = false
+  const lod = new THREE.LOD()
+  lod.addLevel(a, KIT.lodNear)
+  lod.addLevel(b, KIT.vegLodMid)
+  return lod
 }
 
 /* ---------------------------------------------------------- compositions --- */
@@ -342,8 +431,10 @@ export interface VegeHost { add(o: THREE.Object3D): void }
 export function placeVegetation(host: VegeHost, spline: TrackSpline, field: CoastField, grassCard: THREE.Texture | null): void {
   const rnd = new Rand(SEED ^ 0xbeef)
   const foliage = foliageMaterial()
-  const drop = (geo: THREE.BufferGeometry, x: number, z: number, sc: number, tilt = 0): THREE.Mesh => {
-    const m = new THREE.Mesh(geo, foliage)
+  const [foliageA, foliageB, foliageC] = foliageVariants()
+  const pickFol = (): THREE.MeshStandardMaterial => rnd.chance(0.5) ? foliage : rnd.chance(0.55) ? foliageA : foliageB
+  const drop = (geo: THREE.BufferGeometry, x: number, z: number, sc: number, tilt = 0, mat: THREE.MeshStandardMaterial = foliage): THREE.Mesh => {
+    const m = new THREE.Mesh(geo, mat)
     const y = field.height(x, z)
     m.position.set(x, y - 0.06, z)
     m.scale.setScalar(sc)
@@ -360,7 +451,7 @@ export function placeVegetation(host: VegeHost, spline: TrackSpline, field: Coas
       const f = spline.frame(s)
       const lat = -9.4 - rnd.range(0.4, 3.4)
       const p = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, lat)
-      host.add(drop(palmGeometry(rnd), p.x, p.z, rnd.range(0.82, 1.22), 0.05))
+      host.add(drop(palmGeometry(rnd), p.x, p.z, rnd.range(0.82, 1.22), 0.05, pickFol()))
     }
   }
   {
@@ -378,7 +469,30 @@ export function placeVegetation(host: VegeHost, spline: TrackSpline, field: Coas
       const f = spline.frame(s)
       const lat = rnd.range(latA, latB)
       const p = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, lat)
-      host.add(drop(pineGeometry(rnd), p.x, p.z, rnd.range(0.8, 1.25), 0.06))
+      {
+        const t = treeLOD(pineGeometry(rnd, 1), pineGeometry(rnd, 0), pickFol())
+        const y = field.height(p.x, p.z)
+        t.position.set(p.x, y - 0.06, p.z)
+        t.scale.setScalar(rnd.range(0.8, 1.25))
+        t.rotation.set(rnd.range(-0.06, 0.06), rnd.next() * Math.PI * 2, rnd.range(-0.06, 0.06))
+        host.add(t)
+      }
+    }
+  }
+  /* broadleaf groups — cluster flank + mid-ground band (species breadth §4.3) */
+  for (const [sC, count, latA, latB] of [[140, 3, 11, 17], [185, 2, 12, 18], [228, 3, 11, 16], [280, 2, 12, 19]] as const) {
+    for (let k = 0; k < count; k++) {
+      const s = sC + rnd.range(-5, 5)
+      const f = spline.frame(s)
+      const lat = side2(latA, latB, rnd)
+      const p = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, lat)
+      if (field.height(p.x, p.z) < field.seaLevel + 0.8) continue
+      const t = treeLOD(broadleafGeometry(rnd, 1), broadleafGeometry(rnd, 0), pickFol())
+      const y = field.height(p.x, p.z)
+      t.position.set(p.x, y - 0.06, p.z)
+      t.scale.setScalar(rnd.range(0.85, 1.3))
+      t.rotation.set(0, rnd.next() * Math.PI * 2, 0)
+      host.add(t)
     }
   }
   // low LOD copies on the far hills (two LOD levels per spec §4.7)
@@ -400,7 +514,7 @@ export function placeVegetation(host: VegeHost, spline: TrackSpline, field: Coas
     else { x = rnd.range(16, 84); z = rnd.range(34, 44) }
     const gy = field.height(x, z)
     if (gy < field.seaLevel + 0.8) continue
-    host.add(drop(bushGeometry(rnd), x, z, rnd.range(0.5, 1.35)))
+    host.add(drop(bushGeometry(rnd), x, z, rnd.range(0.5, 1.35), 0, pickFol()))
   }
 
   /* authored mid-ground infill: barrier-to-buildings band must never be empty */
@@ -410,7 +524,7 @@ export function placeVegetation(host: VegeHost, spline: TrackSpline, field: Coas
     const lat = rnd.range(9.8, 16)
     const p = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, lat)
     if (field.height(p.x, p.z) < field.seaLevel + 0.8) continue
-    host.add(drop(bushGeometry(rnd), p.x, p.z, rnd.range(0.65, 1.5)))
+    host.add(drop(bushGeometry(rnd), p.x, p.z, rnd.range(0.65, 1.5), 0, pickFol()))
   }
 
   /* rocks — cliff rim, shoreline, a pair of shoulder stones */
