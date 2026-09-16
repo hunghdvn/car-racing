@@ -63,6 +63,8 @@ export class Renderer {
 
   constructor(canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' })
+    // counters are sampled manually for the whole composer chain (see composerRenderSafe)
+    this.gl.info.autoReset = false
     this.gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, GRAPHICS.maxPixelRatio))
     this.gl.toneMapping = THREE.ACESFilmicToneMapping
     this.gl.toneMappingExposure = GRAPHICS.exposure
@@ -182,12 +184,16 @@ export class Renderer {
   private composerRenderSafe(): void {
     this.gl.shadowMap.autoUpdate = false
     this.gl.shadowMap.needsUpdate = true
+    this.gl.info.reset()
     try {
       this.composer.render()
     } finally {
       this.gl.shadowMap.autoUpdate = true
+      this.lastChain = { calls: this.gl.info.render.calls, tris: this.gl.info.render.triangles }
     }
   }
+  /** draw calls/triangles of the most recent full composer chain (dev probe) */
+  lastChain = { calls: 0, tris: 0 }
 
   private updateShadowFor(p: THREE.Vector3): void {
     this.sun.position.copy(p).addScaledVector(this.sunDir, 240)

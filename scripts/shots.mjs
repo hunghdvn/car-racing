@@ -76,6 +76,10 @@ for (const name of list) {
   console.log(`[shots] wrote shots/${name}.png`)
   const p2 = await page.evaluate(() => (window).__probe?.() ?? null)
   console.log(`[post ${name}]`, JSON.stringify(p2))
+  if (process.env.TALLY) {
+    const t = await page.evaluate(() => (window).__tally?.() ?? null)
+    if (t) for (const [k, v] of Object.entries(t)) if (v.meshes) console.log(`  [${k}] meshes=${v.meshes} tris=${v.tris} ${JSON.stringify(Object.entries(v.names).sort((a, b) => b[1] - a[1]).slice(0, 8))}`)
+  }
 }
 await browser.close()
 server.kill()

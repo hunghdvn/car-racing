@@ -159,26 +159,86 @@ export const KIT = {
   skyline: { bandZ: 122, depth: 46, modules: 7 },
 } as const
 
-/** Track profile — Phase 3 representative coastal slice (~300 m, spec §7/§8/§20).
+/** Track profile — the full Velocity Rush circuit (spec §7/§20).
  *  Control points are (x, z, y): road centreline crown elevation above sea datum.
- *  Hero composition looks west (-X): sea + sun ahead-left, building cluster
- *  mid-right, ramp as built infrastructure, hills/skyline background. */
-export interface TrackPoint { x: number; z: number; y: number }
+ *  Indices 0–11 are the approved Phase-3 coastal slice (visual language frozen);
+ *  the appended points close the lap: industrial east leg → tunnel → elevated
+ *  deck over the north city → high-speed final sector → headland horseshoe →
+ *  east-bound finishing straight that rejoins the start.
+ *  `zone` tags drive every per-zone builder (edge assembly, dressing, terrain). */
+export type ZoneId = 'coastal' | 'industrial' | 'tunnel' | 'elevated' | 'final' | 'start'
+export interface TrackPoint { x: number; z: number; y: number; zone?: ZoneId }
 export const TRACK = {
   controlPoints: [
-    { x: -160, z: 24, y: 1.15 },
-    { x: -126, z: 27, y: 1.05 },
-    { x: -92, z: 24, y: 0.95 },
-    { x: -58, z: 17, y: 0.85 },
-    { x: -26, z: 7, y: 0.8 },
-    { x: 4, z: 0.5, y: 0.9 },
-    { x: 32, z: -1.5, y: 1.05 },
-    { x: 58, z: 0, y: 1.5 },
-    { x: 72, z: 0.5, y: 1.35 },
-    { x: 90, z: 5, y: 1.55 },
-    { x: 112, z: 15, y: 2.1 },
-    { x: 138, z: 29, y: 2.9 },
+    /* ---------------------------------------------------- coastal slice (0–11) */
+    { x: -160, z: 24, y: 1.15, zone: 'coastal' as ZoneId },
+    { x: -126, z: 27, y: 1.05, zone: 'coastal' as ZoneId },
+    { x: -92, z: 24, y: 0.95, zone: 'coastal' as ZoneId },
+    { x: -58, z: 17, y: 0.85, zone: 'coastal' as ZoneId },
+    { x: -26, z: 7, y: 0.8, zone: 'coastal' as ZoneId },
+    { x: 4, z: 0.5, y: 0.9, zone: 'coastal' as ZoneId },
+    { x: 32, z: -1.5, y: 1.05, zone: 'coastal' as ZoneId },
+    { x: 58, z: 0, y: 1.5, zone: 'coastal' as ZoneId },
+    { x: 72, z: 0.5, y: 1.35, zone: 'coastal' as ZoneId },
+    { x: 90, z: 5, y: 1.55, zone: 'coastal' as ZoneId },
+    { x: 112, z: 15, y: 2.1, zone: 'coastal' as ZoneId },
+    { x: 138, z: 29, y: 2.9, zone: 'coastal' as ZoneId },
+    /* --------------------------------------------- industrial east leg (12–22) */
+    { x: 202, z: 46, y: 3.3, zone: 'industrial' as ZoneId },
+    { x: 264, z: 70, y: 4.2, zone: 'industrial' as ZoneId },
+    { x: 320, z: 106, y: 5.3, zone: 'industrial' as ZoneId },
+    { x: 368, z: 152, y: 6.4, zone: 'industrial' as ZoneId },
+    { x: 408, z: 204, y: 7.4, zone: 'industrial' as ZoneId },
+    { x: 448, z: 256, y: 8.2, zone: 'industrial' as ZoneId },
+    { x: 472, z: 318, y: 9.0, zone: 'industrial' as ZoneId },
+    { x: 478, z: 382, y: 9.8, zone: 'industrial' as ZoneId },
+    { x: 488, z: 446, y: 10.5, zone: 'industrial' as ZoneId },
+    { x: 490, z: 510, y: 11.2, zone: 'industrial' as ZoneId },
+    { x: 482, z: 556, y: 11.9, zone: 'industrial' as ZoneId },
+    /* ------------------------------------------------ tunnel (23–26): straight bore */
+    { x: 476, z: 600, y: 12.7, zone: 'tunnel' as ZoneId },
+    { x: 468, z: 646, y: 13.5, zone: 'tunnel' as ZoneId },
+    { x: 460, z: 692, y: 14.4, zone: 'tunnel' as ZoneId },
+    { x: 450, z: 738, y: 15.4, zone: 'tunnel' as ZoneId },
+    /* ---------------------------------- elevated viaduct west over the north city */
+    { x: 436, z: 782, y: 16.4, zone: 'elevated' as ZoneId },
+    { x: 404, z: 818, y: 17.4, zone: 'elevated' as ZoneId },
+    { x: 360, z: 848, y: 18.3, zone: 'elevated' as ZoneId },
+    { x: 308, z: 872, y: 19.0, zone: 'elevated' as ZoneId },
+    { x: 250, z: 888, y: 19.6, zone: 'elevated' as ZoneId },
+    { x: 188, z: 896, y: 20.1, zone: 'elevated' as ZoneId },
+    { x: 126, z: 898, y: 20.4, zone: 'elevated' as ZoneId },
+    { x: 64, z: 894, y: 20.6, zone: 'elevated' as ZoneId },
+    { x: 2, z: 884, y: 20.6, zone: 'elevated' as ZoneId },
+    { x: -58, z: 870, y: 20.3, zone: 'elevated' as ZoneId },
+    { x: -116, z: 852, y: 19.7, zone: 'elevated' as ZoneId },
+    /* ------------------------- high-speed final sector descending the west ridge */
+    { x: -228, z: 836, y: 18.9, zone: 'final' as ZoneId },
+    { x: -286, z: 806, y: 18.1, zone: 'final' as ZoneId },
+    { x: -334, z: 768, y: 17.3, zone: 'final' as ZoneId },
+    { x: -374, z: 724, y: 16.5, zone: 'final' as ZoneId },
+    { x: -404, z: 674, y: 15.7, zone: 'final' as ZoneId },
+    { x: -426, z: 620, y: 14.9, zone: 'final' as ZoneId },
+    { x: -442, z: 564, y: 14.1, zone: 'final' as ZoneId },
+    { x: -452, z: 508, y: 13.4, zone: 'final' as ZoneId },
+    { x: -458, z: 450, y: 12.7, zone: 'final' as ZoneId },
+    { x: -458, z: 392, y: 12.0, zone: 'final' as ZoneId },
+    { x: -450, z: 338, y: 11.4, zone: 'final' as ZoneId },
+    /* ------------------- headland sweeper + east-bound finishing straight to cp0 */
+    { x: -438, z: 284, y: 10.7, zone: 'start' as ZoneId },
+    { x: -448, z: 232, y: 9.9, zone: 'start' as ZoneId },
+    { x: -464, z: 178, y: 9.1, zone: 'start' as ZoneId },
+    { x: -468, z: 124, y: 8.3, zone: 'start' as ZoneId },
+    { x: -454, z: 78, y: 7.5, zone: 'start' as ZoneId },
+    { x: -430, z: 40, y: 6.6, zone: 'start' as ZoneId },
+    { x: -394, z: 18, y: 5.7, zone: 'start' as ZoneId },
+    { x: -352, z: 20, y: 4.8, zone: 'start' as ZoneId },
+    { x: -302, z: 24, y: 3.9, zone: 'start' as ZoneId },
+    { x: -250, z: 22, y: 3.0, zone: 'start' as ZoneId },
+    { x: -204, z: 24, y: 2.2, zone: 'start' as ZoneId },
+    { x: -160, z: 24, y: 1.15, zone: 'start' as ZoneId },
   ] as TrackPoint[],
+
   halfWidth: 5.4,        // asphalt half-width (crown centre)
   crown: 0.055,          // drainage camber of the surface (edge fall)
   shoulderOuter: 8.0,    // engineered shoulder extent from centre

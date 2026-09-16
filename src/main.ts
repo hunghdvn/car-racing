@@ -348,6 +348,22 @@ function boot(): void {
   })
   const releaseOrig = Debug.releasePose.bind(Debug)
   Debug.releasePose = () => { simFrozen = false; releaseOrig() }
+  ;(window as unknown as { __tally?: () => object }).__tally = () => {
+    const byRoot: Record<string, { meshes: number; tris: number; names: Record<string, number> }> = {}
+    for (const root of view.scene.children) {
+      const key = root.name || root.type
+      const e = byRoot[key] ?? (byRoot[key] = { meshes: 0, tris: 0, names: {} })
+      root.traverse((o: unknown) => {
+        const m = o as THREE.Mesh
+        if (!m.isMesh || !m.visible) return
+        const g = m.geometry as THREE.BufferGeometry
+        const cnt = g.index ? g.index.count / 3 : (g.getAttribute('position')?.count ?? 0) / 3
+        e.meshes++; e.tris += cnt
+        e.names[m.name || '?'] = (e.names[m.name || '?'] ?? 0) + 1
+      })
+    }
+    return byRoot
+  }
   ;(window as unknown as { __probe?: () => object }).__probe = () => ({
     fps: Math.round(view.fps),
     frames: frameCount,
@@ -356,6 +372,9 @@ function boot(): void {
     loadingHidden: $('loading')?.classList.contains('hidden') ?? false,
     cam: `${view.camera.position.x.toFixed(1)},${view.camera.position.y.toFixed(1)},${view.camera.position.z.toFixed(1)} fov${Math.round(view.camera.fov)}`,
     children: view.scene.children.length,
+    calls: view.lastChain.calls,
+    tris: view.lastChain.tris,
+    geometries: view.gl.info.memory.geometries,
     glErr: view.gl.getContext().getError(),
     ctxLost: view.gl.getContext().isContextLost(),
   })

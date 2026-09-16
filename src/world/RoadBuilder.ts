@@ -56,15 +56,26 @@ export class RoadBuilder {
     this.group.name = 'road'
   }
 
+  /** Build the road over [sFrom,sTo] in ~150 m station chunks. Chunking keeps
+   *  every mesh's bounding volume local so both the camera and the sun's shadow
+   *  frustum can cull the ~3.1 km circuit (one merged mesh spanning the whole
+   *  loop is never culled and re-draws the entire track into the shadow map). */
   build(sFrom: number, sTo: number): THREE.Group {
     const g = this.group
-    g.add(this.buildAsphalt(sFrom, sTo))
-    g.add(this.buildShoulders(sFrom, sTo))
-    g.add(this.buildSkirts(sFrom, sTo))
+    const CHUNK = 150
+    for (let a = sFrom; a < sTo - 1; a += CHUNK) {
+      const b = Math.min(sTo, a + CHUNK)
+      const seg = new THREE.Group()
+      seg.name = `road-seg-${Math.round(a)}`
+      seg.add(this.buildAsphalt(a, b))
+      seg.add(this.buildShoulders(a, b))
+      seg.add(this.buildSkirts(a, b))
+      seg.add(this.buildMarkings(a, b))
+      seg.add(this.buildPatches(a, b))
+      g.add(seg)
+    }
     g.add(this.buildEdgeProfiles(sFrom, sTo))
     g.add(this.buildGuardrail())
-    g.add(this.buildMarkings(sFrom, sTo))
-    g.add(this.buildPatches(sFrom, sTo))
     g.add(this.buildDrains())
     g.add(this.buildKicker())
     return g
@@ -347,14 +358,27 @@ export class RoadBuilder {
     const hw = TRACK.halfWidth
     const white: THREE.BufferGeometry[] = []
     const faded: THREE.BufferGeometry[] = []
-    for (const side of [1, -1]) for (let s = sFrom + 2; s < sTo - 2; s += 4) white.push(this.bar(s, side * (hw - 0.42), 4.06, 0.15, 0.014))
-    for (let s = sFrom + 3; s < sTo - 3; s += 7) white.push(this.bar(s + 1.7, 0, 3.4, 0.15, 0.014))
-    for (let s = sFrom + 2; s < sTo - 2; s += 8) faded.push(this.bar(s + 2, hw * 0.45, 4, 0.14, 0.012))
+    // dash lattices are keyed to the GLOBAL station grid so chunk boundaries
+    // never drop or duplicate a bar (each chunk owns the lattice points in it)
+    const lattice = (from: number, step: number, pad: number, end: number): number[] => {
+      const out: number[] = []
+      for (let i = Math.ceil((from - pad) / step); ; i++) {
+        const s = pad + i * step
+        if (s >= end - pad) break
+        out.push(s)
+      }
+      return out
+    }
+    for (const side of [1, -1]) for (const s of lattice(sFrom, 4, 2, sTo)) white.push(this.bar(s, side * (hw - 0.42), 4.06, 0.15, 0.014))
+    for (const s of lattice(sFrom, 7, 3, sTo)) white.push(this.bar(s + 1.7, 0, 3.4, 0.15, 0.014))
+    for (const s of lattice(sFrom, 8, 2, sTo)) faded.push(this.bar(s + 2, hw * 0.45, 4, 0.14, 0.012))
     // landing-zone transverse bars after the lip (spec §7 landing zone)
     const r = TRACK.ramp
-    for (let k = 0; k < 3; k++) white.push(this.bar(r.landingS + 0.6 + k * 1.7, 0, 0.34, hw * 2 - 1.1, 0.013))
+    if (r.landingS >= sFrom && r.landingS < sTo) {
+      for (let k = 0; k < 3; k++) white.push(this.bar(r.landingS + 0.6 + k * 1.7, 0, 0.34, hw * 2 - 1.1, 0.013))
+    }
     // approach chevrons before the kicker
-    for (let k = 0; k < 3; k++) {
+    if (r.sStart >= sFrom && r.sStart < sTo) for (let k = 0; k < 3; k++) {
       const s0 = r.sStart - 5.4 - k * 2.3
       for (const dir of [-1, 1] as const) {
         const a = new THREE.Vector3(), b = new THREE.Vector3()
@@ -386,10 +410,11 @@ export class RoadBuilder {
 
   /* ------------------------------------------------- asphalt patch decals */
   buildPatches(sFrom: number, sTo: number): THREE.Mesh {
-    const rnd = new Rand(SEED ^ 0x7e2b)
+    const rnd = new Rand(SEED ^ 0x7e2b ^ Math.imul(0x9e3779b1, Math.round(sFrom * 7 + 13)))
     const parts: { geometry: THREE.BufferGeometry; matrix?: THREE.Matrix4 }[] = []
     const p = new THREE.Vector3()
-    for (let k = 0; k < 15; k++) {
+    const count = Math.max(2, Math.round((sTo - sFrom) / 22))
+    for (let k = 0; k < count; k++) {
       const s = rnd.range(sFrom + 4, sTo - 4)
       const lat = rnd.range(-4.4, 4.4)
       const sx = rnd.range(1.1, 2.6)

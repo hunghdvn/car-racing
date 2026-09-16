@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { TRACK } from '../config'
+import { TRACK, type ZoneId } from '../config'
 import { clamp, lerp, smoothstep } from '../util'
 
 /**
@@ -22,23 +22,41 @@ export interface RoadFrame {
 
 const DEG = Math.PI / 180
 
-interface LutRow { x: number; y: number; z: number; s: number; tx: number; ty: number; tz: number; curv: number }
+interface LutRow { x: number; y: number; z: number; s: number; tx: number; ty: number; tz: number; curv: number; zone: ZoneId }
+
+/** Per-control-point authored tags (the Phase-5 circuit profile, spec §7). */
+interface CpTag { zone: ZoneId }
 
 export class TrackSpline {
   readonly length: number
   private lut: LutRow[] = []
   private curve: THREE.CatmullRomCurve3
+  /** uniform-plan grid over the LUT: key = cellX + cellZ * cols (Phase-5 circuit
+   *  folds back over itself, so the old x-monotonic binary search is invalid). */
+  private grid: Map<number, number[]> = new Map()
+  private gridCols = 0
+  private gridX0 = 0
+  private gridZ0 = 0
+  private static readonly CELL = 24
 
   constructor() {
     const pts = TRACK.controlPoints.map((p) => new THREE.Vector3(p.x, p.y, p.z))
     this.curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal')
-    // dense arc-length LUT (chord-accumulated from a uniform t walk)
-    const raw = this.curve.getPoints(1500)
+    const tags: CpTag[] = TRACK.controlPoints.map((p) => ({ zone: p.zone ?? 'coastal' }))
+    // dense arc-length LUT, resolution scaled to the total chord so the ~3.9 km
+    // circuit keeps the Phase-3 slice's per-metre sampling density
+    let chord = 0
+    for (let i = 1; i < pts.length; i++) chord += pts[i].distanceTo(pts[i - 1])
+    const samples = clamp(Math.round(chord / 0.35), 1500, 14000)
+    const raw = this.curve.getPoints(samples)
     const lut: LutRow[] = []
     let s = 0
     for (let i = 0; i < raw.length; i++) {
       if (i > 0) s += raw[i].distanceTo(raw[i - 1])
-      lut.push({ x: raw[i].x, y: raw[i].y, z: raw[i].z, s, tx: 0, ty: 0, tz: 0, curv: 0 })
+      // zone of the LUT row = zone of the control-point segment it lives on
+      const seg = clamp(Math.floor((i / (raw.length - 1)) * (tags.length - 1)), 0, tags.length - 2)
+      const segT = (i / (raw.length - 1)) * (tags.length - 1) - seg
+      lut.push({ x: raw[i].x, y: raw[i].y, z: raw[i].z, s, tx: 0, ty: 0, tz: 0, curv: 0, zone: segT < 0.5 ? tags[seg].zone : tags[seg + 1].zone })
     }
     this.length = s
     for (let i = 0; i < lut.length; i++) {
@@ -56,6 +74,27 @@ export class TrackSpline {
       c.curv = -c.tz * ctx + c.tx * ctz
     }
     this.lut = lut
+    this.buildGrid()
+  }
+
+  /** Bucket the LUT into a uniform plan grid so nearest() is O(1) for the loop. */
+  private buildGrid(): void {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+    for (const r of this.lut) {
+      if (r.x < minX) minX = r.x; if (r.x > maxX) maxX = r.x
+      if (r.z < minZ) minZ = r.z; if (r.z > maxZ) maxZ = r.z
+    }
+    const C = TrackSpline.CELL
+    this.gridX0 = minX - C; this.gridZ0 = minZ - C
+    this.gridCols = Math.ceil((maxX - minX + C * 2) / C) + 1
+    const rows = Math.ceil((maxZ - minZ + C * 2) / C) + 1
+    for (let i = 0; i < this.lut.length; i++) {
+      const r = this.lut[i]
+      const cx = clamp(Math.floor((r.x - this.gridX0) / C), 0, this.gridCols - 1)
+      const cz = clamp(Math.floor((r.z - this.gridZ0) / C), 0, rows - 1)
+      const k = cz * this.gridCols + cx
+      const b = this.grid.get(k); if (b) b.push(i); else this.grid.set(k, [i])
+    }
   }
 
   /** Index of the last LUT row with s <= query (binary search). */
@@ -125,43 +164,63 @@ export class TrackSpline {
   }
   private _tmp = new THREE.Vector3()
 
-  /** Nearest arc-length station to a world XZ point (coarse x-accelerated). */
+  /** Zone tag of the section at arc-length s (drives per-zone builders). */
+  zoneAt(s: number): ZoneId { return this.lut[this.rowAt(s)].zone }
+
+  /** First/last arc-length of a zone (used to scope per-zone builders). */
+  zoneRange(zone: ZoneId): { s0: number; s1: number } {
+    let s0 = 0, s1 = this.length
+    for (let i = 0; i < this.lut.length; i++) if (this.lut[i].zone === zone) { s0 = this.lut[i].s; break }
+    for (let i = this.lut.length - 1; i >= 0; i--) if (this.lut[i].zone === zone) { s1 = this.lut[i].s; break }
+    return { s0, s1 }
+  }
+
+  /** Nearest arc-length station to a world XZ point (uniform-grid accelerated). */
   nearest(x: number, z: number): { s: number; lat: number; d2: number } {
+    const C = TrackSpline.CELL
+    const cx = Math.floor((x - this.gridX0) / C), cz = Math.floor((z - this.gridZ0) / C)
     let best = { s: 0, lat: 0, d2: Infinity }
-    const lut = this.lut
-    // x is monotonic enough along the slice; binary search the x axis then scan
-    let lo = 0, hi = lut.length - 1
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1
-      if (lut[mid].x < x) lo = mid + 1; else hi = mid
+    for (let r = 0; r < 3 && best.d2 > C * C; r++) {
+      for (let oz = -r; oz <= r; oz++) for (let ox = -r; ox <= r; ox++) {
+        if (r > 0 && Math.abs(ox) !== r && Math.abs(oz) !== r) continue
+        const b = this.grid.get((cz + oz) * this.gridCols + (cx + ox))
+        if (!b) continue
+        for (const i of b) {
+          const row = this.lut[i]
+          const d2 = (row.x - x) * (row.x - x) + (row.z - z) * (row.z - z)
+          if (d2 < best.d2) best = { s: row.s, lat: 0, d2 }
+        }
+      }
     }
-    const step = 6
-    for (let i = Math.max(0, lo - 160); i < Math.min(lut.length, lo + 160); i += step) {
-      const r = lut[i]
-      const d2 = (r.x - x) * (r.x - x) + (r.z - z) * (r.z - z)
-      if (d2 < best.d2) best = { s: r.s, lat: 0, d2 }
-    }
+    // refine over a local window of LUT rows for a sub-metre station
     const i = this.rowAt(best.s)
-    const fineFrom = Math.max(0, i - step * 2), fineTo = Math.min(lut.length - 1, i + step * 2)
-    for (let q = fineFrom; q <= fineTo; q++) {
-      const r = lut[q]
-      const d2 = (r.x - x) * (r.x - x) + (r.z - z) * (r.z - z)
-      if (d2 < best.d2) best = { s: r.s, lat: 0, d2 }
+    for (let q = Math.max(0, i - 6); q <= Math.min(this.lut.length - 1, i + 6); q++) {
+      const row = this.lut[q]
+      const d2 = (row.x - x) * (row.x - x) + (row.z - z) * (row.z - z)
+      if (d2 < best.d2) best = { s: row.s, lat: 0, d2 }
     }
     const f = this.frame(best.s)
     const lat = (x - f.pos.x) * f.side.x + (z - f.pos.z) * f.side.z
     return { s: best.s, lat, d2: best.d2 }
   }
 
-  /** Arc-length station whose centreline x is closest to target x. */
-  sFromX(target: number): number {
-    let lo = 0, hi = this.lut.length - 1
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1
-      if (this.lut[mid].x < target) lo = mid + 1; else hi = mid
+  /** Arc-length station whose centreline x is closest to target.
+   *  Defaults to the COASTAL zone window so the Phase-3 authored anchors
+   *  (props/vegetation/harness) keep their meaning now that the plan view of
+   *  the full circuit crosses the same x values again in other zones.
+   *  Pass an explicit window for stations outside the slice. */
+  sFromX(target: number, sMin?: number, sMax?: number): number {
+    if (sMin === undefined && sMax === undefined) { const w = this.zoneRange('coastal'); sMin = w.s0; sMax = w.s1 }
+    const a = sMin ?? 0, b = sMax ?? this.length
+    let bestI = 0, bestD = Infinity
+    let lo = this.rowAt(a), hi = this.rowAt(b)
+    // x is monotonic inside any authored zone window, so bisect then refine
+    while (hi - lo > 4) {
+      const m1 = lo + Math.floor((hi - lo) / 3), m2 = hi - Math.floor((hi - lo) / 3)
+      if (Math.abs(this.lut[m1].x - target) <= Math.abs(this.lut[m2].x - target)) hi = m2; else lo = m1
     }
-    const a = this.lut[Math.max(0, lo - 1)], b = this.lut[lo]
-    return Math.abs(a.x - target) <= Math.abs(b.x - target) ? a.s : b.s
+    for (let i = lo; i <= hi; i++) { const d = Math.abs(this.lut[i].x - target); if (d < bestD) { bestD = d; bestI = i } }
+    return this.lut[bestI].s
   }
 
   /** Plan curvature magnitude at s (props/dressing can read corner intensity). */
