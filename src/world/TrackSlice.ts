@@ -4,9 +4,9 @@ import { TrackSpline } from './TrackSpline'
 import { CoastField } from './Terrain'
 import { RoadBuilder, rampLiftAt, rampSlopeAt } from './RoadBuilder'
 import { buildWater, animateWater, type ShoreMap } from './Water'
-import { buildCluster } from './Buildings'
+import { dressSlice } from './ComposeKit'
 import { placeVegetation } from './VegetationKit'
-import { placeProps } from './Props'
+import { placeProps } from './PropKit'
 import { grassTuftTexture } from '../assets/Textures'
 
 /* ------------------------------------------------------------------------- *
@@ -42,9 +42,9 @@ export function buildTrackSlice(): Slice {
   const road = new RoadBuilder(spline, field)
   group.add(road.build(2, spline.length - 2))
 
-  group.add(buildCluster(spline, field))
   placeVegetation(group, spline, field, grassTuftTexture())
   placeProps(group, spline, field)
+  group.add(dressSlice({ spline, field }))
 
   return {
     group, spline, field, water,
