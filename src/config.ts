@@ -252,6 +252,20 @@ export const TRACK = {
     landingS: 228.6, landingLen: 6.2, sideTrim: 0.55, // asphalt inset each side
   },
   /** Coastal terrain field (spec §4.4/§8/§9). */
+  /** Full-circuit terrain shaping (spec §8). The coastal field is frozen; the
+   *  appended zones each get a designed profile blended in along the arc. */
+  terrain: {
+    cell: 2.6,            // height-field sample spacing (m)
+    tile: 150,            // culling tile size (m) — one mesh per tile
+    margin: 170,          // field extent beyond the circuit bbox
+    blend: 55,            // arc-length ramp between neighbouring zone profiles
+    farFade: [96, 190],   // |lat| where a zone profile relaxes to the far field
+    farRelief: 15,        // relief of the world outside the corridor
+    tunnelRise: 8.0,      // ridge height above the crown that buries the bore
+    tunnelCross: 0.34,    // ridge shoulder gain per metre of |lat|
+    cityFloor: -12.8,     // north-city ground under the viaduct, relative to crown
+    deckRise: 130,        // metres of deck end where the ground climbs to meet it
+  },
   coast: {
     seaLevel: -6.5,
     shelfAmp: 1.0,       // cliff-top shelf relief (blends into dune field)
@@ -266,4 +280,50 @@ export const TRACK = {
   },
   /** Building-cluster pad anchor (world XZ) — Phase 3: one authored cluster. */
   cluster: { x: 48, z: 24, padR: 30 },
+  /** Authored terrain pads (spec §8): flatten a zone's build sites so clusters
+   *  sit on formed ground instead of noise. cp = control-point index, lat =
+   *  driver-right offset, dy = target height relative to the crown there. */
+  pads: [
+    { cp: 14, lat: -34, r: 30, dy: -1.4 },   // container yard, works south
+    { cp: 16, lat: 30, r: 26, dy: -1.2 },     // warehouse apron east
+    { cp: 19, lat: -32, r: 24, dy: -1.3 },    // pipe/steel yard
+    { cp: 21, lat: 33, r: 26, dy: -1.1 },     // plant apron below the bore
+    { cp: 28, lat: 0, r: 40, dy: -12.6 },     // north city under the deck (east)
+    { cp: 31, lat: 0, r: 46, dy: -12.8 },     // north city under the deck (mid)
+    { cp: 34, lat: 0, r: 44, dy: -12.9 },     // north city under the deck (west)
+    { cp: 41, lat: 36, r: 22, dy: 2.8 },      // ridge overlook terrace cut, final sector
+    { cp: 44, lat: -30, r: 20, dy: -3.2 },    // quarry yard on the valley bench
+    { cp: 52, lat: -28, r: 20, dy: -1.0 },     // team-caravan apron, back straight inside
+    { cp: 57, lat: -26, r: 24, dy: -1.2 },    // pit / grandstand apron, inside the straight
+  ] as const,
+  /** Tunnel bore (spec §7): terrain passes OVER the tube; portals mask the ends. */
+  tunnel: {
+    crownRise: 8.0,      // authored ridge height above the crown along the bore
+    tubeHalf: 5.55,      // inner half-width of the bore
+    tubeRise: 5.35,      // inner clear height at the crown
+    apron: 15,           // carved-cut length each side where the tube emerges
+    lightEvery: 12.5,    // fitting spacing along the bore
+    portalDepth: 2.6,    // portal frame projection out of the rock
+  },
+  /** Elevated viaduct (spec §5 Tier 1): deck, parapets, pylons, soffit. */
+  bridge: {
+    deckUnder: 1.35,     // structural depth below the asphalt plane
+    parapetH: 1.08,
+    pylonEvery: 25,
+    pylonW: 2.3,
+    abutment: 22,        // earthwork transition at each deck end
+    deckEdge: 0.72,      // kerb reveal outboard of the asphalt
+  },
+  /** Guarded shortcut (spec §7/§20): an infield lane that skips the dock bulge. */
+  /** Guarded shortcut (spec §7/§20): an infield lane that skims the headland
+   *  sweeper and re-joins before the line. ~55 m real saving, its own loft. */
+  /** Guarded shortcut (spec §7/§20): an infield lane that skips the whole
+   *  headland sweeper and re-joins the finishing straight before the line.
+   *  ~100 m real saving (verified offline), its own lofted surface. */
+  shortcut: {
+    half: 3.9,
+    pts: [
+      [-448, 232, 9.9], [-424, 168, 8.4], [-392, 104, 6.7], [-352, 54, 5.2], [-302, 24, 3.9],
+    ] as const,
+  },
 } as const

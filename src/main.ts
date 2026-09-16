@@ -39,7 +39,9 @@ function boot(): void {
   view.attachSky(sky)
 
   // Phase 3 — the representative slice replaces the Phase-2 placeholder disc
+  const tBuild = performance.now()
   const slice = buildTrackSlice()
+  ;(globalThis as unknown as { __buildMs?: number }).__buildMs = Math.round(performance.now() - tBuild)
   view.scene.add(slice.group)
 
   const car: CarModel = buildCar(PAINTS[1].color)
@@ -365,6 +367,7 @@ function boot(): void {
     return byRoot
   }
   ;(window as unknown as { __probe?: () => object }).__probe = () => ({
+    buildMs: (globalThis as unknown as { __buildMs?: number }).__buildMs ?? null,
     fps: Math.round(view.fps),
     frames: frameCount,
     title: document.title,

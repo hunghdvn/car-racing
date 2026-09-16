@@ -34,6 +34,11 @@ export class TrackSpline {
   /** uniform-plan grid over the LUT: key = cellX + cellZ * cols (Phase-5 circuit
    *  folds back over itself, so the old x-monotonic binary search is invalid). */
   private grid: Map<number, number[]> = new Map()
+  private box = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 }
+  /** arc-length station of each authored control point (level-design anchors) */
+  private cpS: number[] = []
+  /** station of control point i — how the per-zone layouts address the circuit */
+  sAtControl(i: number): number { return this.cpS[clamp(Math.round(i), 0, this.cpS.length - 1)] }
   private gridCols = 0
   private gridX0 = 0
   private gridZ0 = 0
@@ -51,6 +56,8 @@ export class TrackSpline {
     const raw = this.curve.getPoints(samples)
     const lut: LutRow[] = []
     let s = 0
+    const cpStation: number[] = tags.map((_, i) => Math.round((i / (tags.length - 1)) * (raw.length - 1)))
+    this.cpS = cpStation.map((idx) => 0)
     for (let i = 0; i < raw.length; i++) {
       if (i > 0) s += raw[i].distanceTo(raw[i - 1])
       // zone of the LUT row = zone of the control-point segment it lives on
@@ -59,6 +66,7 @@ export class TrackSpline {
       lut.push({ x: raw[i].x, y: raw[i].y, z: raw[i].z, s, tx: 0, ty: 0, tz: 0, curv: 0, zone: segT < 0.5 ? tags[seg].zone : tags[seg + 1].zone })
     }
     this.length = s
+    for (let i = 0; i < this.cpS.length; i++) this.cpS[i] = lut[clamp(cpStation[i], 0, lut.length - 1)].s
     for (let i = 0; i < lut.length; i++) {
       const a = lut[Math.max(0, i - 1)], b = lut[Math.min(lut.length - 1, i + 1)]
       const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
@@ -78,12 +86,26 @@ export class TrackSpline {
   }
 
   /** Bucket the LUT into a uniform plan grid so nearest() is O(1) for the loop. */
+  private zones: Map<ZoneId, { s0: number; s1: number }> = new Map()
+
+  /** First/last arc-length of a zone (used to scope per-zone builders). */
+  zoneRange(zone: ZoneId): { s0: number; s1: number } {
+    const hit = this.zones.get(zone)
+    if (hit) return hit
+    let s0 = 0, s1 = this.length
+    for (let i = 0; i < this.lut.length; i++) if (this.lut[i].zone === zone) { s0 = this.lut[i].s; break }
+    for (let i = this.lut.length - 1; i >= 0; i--) if (this.lut[i].zone === zone) { s1 = this.lut[i].s; break }
+    this.zones.set(zone, { s0, s1 })
+    return { s0, s1 }
+  }
+
   private buildGrid(): void {
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
     for (const r of this.lut) {
       if (r.x < minX) minX = r.x; if (r.x > maxX) maxX = r.x
       if (r.z < minZ) minZ = r.z; if (r.z > maxZ) maxZ = r.z
     }
+    this.box = { minX, maxX, minZ, maxZ }
     const C = TrackSpline.CELL
     this.gridX0 = minX - C; this.gridZ0 = minZ - C
     this.gridCols = Math.ceil((maxX - minX + C * 2) / C) + 1
@@ -96,6 +118,9 @@ export class TrackSpline {
       const b = this.grid.get(k); if (b) b.push(i); else this.grid.set(k, [i])
     }
   }
+
+  /** Plan-view extent of the centre line (terrain/water bounds derive from it). */
+  bounds(): { minX: number; maxX: number; minZ: number; maxZ: number } { return this.box }
 
   /** Index of the last LUT row with s <= query (binary search). */
   private rowAt(s: number): number {
@@ -167,14 +192,6 @@ export class TrackSpline {
   /** Zone tag of the section at arc-length s (drives per-zone builders). */
   zoneAt(s: number): ZoneId { return this.lut[this.rowAt(s)].zone }
 
-  /** First/last arc-length of a zone (used to scope per-zone builders). */
-  zoneRange(zone: ZoneId): { s0: number; s1: number } {
-    let s0 = 0, s1 = this.length
-    for (let i = 0; i < this.lut.length; i++) if (this.lut[i].zone === zone) { s0 = this.lut[i].s; break }
-    for (let i = this.lut.length - 1; i >= 0; i--) if (this.lut[i].zone === zone) { s1 = this.lut[i].s; break }
-    return { s0, s1 }
-  }
-
   /** Nearest arc-length station to a world XZ point (uniform-grid accelerated). */
   nearest(x: number, z: number): { s: number; lat: number; d2: number } {
     const C = TrackSpline.CELL
@@ -193,15 +210,18 @@ export class TrackSpline {
       }
     }
     // refine over a local window of LUT rows for a sub-metre station
-    const i = this.rowAt(best.s)
-    for (let q = Math.max(0, i - 6); q <= Math.min(this.lut.length - 1, i + 6); q++) {
+    let bi = this.rowAt(best.s)
+    for (let q = Math.max(0, bi - 6); q <= Math.min(this.lut.length - 1, bi + 6); q++) {
       const row = this.lut[q]
       const d2 = (row.x - x) * (row.x - x) + (row.z - z) * (row.z - z)
-      if (d2 < best.d2) best = { s: row.s, lat: 0, d2 }
+      if (d2 < best.d2) { best = { s: row.s, lat: 0, d2 }; bi = q }
     }
-    const f = this.frame(best.s)
-    const lat = (x - f.pos.x) * f.side.x + (z - f.pos.z) * f.side.z
-    return { s: best.s, lat, d2: best.d2 }
+    // planar driver-right from the LUT tangent — no RoadFrame/Vector3 allocation
+    // (nearest() runs once per height-field vertex and per shore-bake texel)
+    const row = this.lut[bi]
+    const tl = Math.hypot(row.tx, row.tz) || 1
+    const lat = (x - row.x) * (row.tz / tl) + (z - row.z) * (-row.tx / tl)
+    return { s: row.s, lat, d2: best.d2 }
   }
 
   /** Arc-length station whose centreline x is closest to target.
