@@ -153,13 +153,33 @@ export class Renderer {
     this.resize()
   }
 
+  /** dev-only (Gate A debug): raw pipeline handles for pixel-level bisect probes. */
+  get debugPipeline(): { composer: EffectComposer; bloom: UnrealBloomPass; vignette: ShaderPass } {
+    return { composer: this.composer, bloom: this.bloom, vignette: this.vignette }
+  }
   render(mode = 0): void {
     if (mode === 1) this.gl.render(this.scene, this.camera)
     else if (mode === 2) { this.bloom.enabled = false; this.composer.render(); this.bloom.enabled = true }
     else if (mode === 3) { const s = this.bloom.strength; this.bloom.strength = 0; this.composer.render(); this.bloom.strength = s }
     else if (mode === 4) { this.sun.castShadow = false; const sm = this.sun.shadow.map as any; if (sm) { sm.dispose() }
       this.gl.shadowMap.needsUpdate = true; this.composer.render(); this.sun.castShadow = true }
-    else this.composer.render()
+    else this.composerRenderSafe()
+  }
+
+  /**
+   * Freeze shadow-map auto-update for the duration of the composer chain.
+   * The RenderPass inside the composer triggers exactly one shadow-map refresh
+   * (via needsUpdate=true). UnrealBloomPass's many internal renderer.render()
+   * calls would otherwise re-enter WebGLShadowMap.render() and corrupt the
+   * WebGL state machine (blending, depth-test, render-target binding) that
+   * the subsequent post-processing passes rely on — producing a black canvas
+   * when standard/physical car meshes are present.
+   */
+  private composerRenderSafe(): void {
+    this.gl.shadowMap.autoUpdate = false
+    this.gl.shadowMap.needsUpdate = true
+    this.composer.render()
+    this.gl.shadowMap.autoUpdate = true
   }
 
   private updateShadowFor(p: THREE.Vector3): void {
