@@ -5,7 +5,12 @@ import { Debug } from './core/Debug'
 import type { ShotPose } from './core/Debug'
 import { buildCar, type CarModel } from './assets/CarModel'
 import { ChaseCamera, type CarView } from './camera/ChaseCamera'
-import { PAINTS, VEHICLE } from './config'
+import { PAINTS, VEHICLE, KIT } from './config'
+import { Rand } from './util'
+import { buildBuilding, BUILDING_DESIGNS } from './world/BuildingKit'
+import { composePrefab } from './world/ComposeKit'
+import { makeBollard, makeCones, makeDrum, makePallet, makeCrates, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeSign, makeTrafficLight, makeUtilityPole, makeStreetlight, makeMastLight, makeContainer, makeBarrierUnit, makePipeStack, makeVan, makeSignGantry, makeBillboard, makeRadioMast, makeWaterTower, makeGantryCrane } from './world/PropKit'
+import { palmGeometry, pineGeometry, bushGeometry, rockGeometry, broadleafGeometry, treeLOD } from './world/VegetationKit'
 import { buildTrackSlice, roadPose, heroShot } from './world/TrackSlice'
 
 const $ = (id: string): HTMLElement | null => document.getElementById(id)
@@ -110,6 +115,172 @@ function boot(): void {
       freezeSim: true, tag: 'coastal',
     })
   }
+
+  /* ---------------- Phase 4 Gate C1/M — kit boards (dev-only showcases) ----
+   * Deterministic display rows far outside the playable slice (x ≥ 1600)
+   * so the hero frames never see them; poses park the player there so the
+   * shadow frustum tracks the assets being judged. */
+  {
+    const BX = 1600
+    const pad = (cx: number, cz: number, w = 170, d = 44): void => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.24, d), new THREE.MeshStandardMaterial({ color: 0x2e3033, roughness: 0.95, metalness: 0.02 }))
+      m.position.set(cx, -0.12, cz)
+      m.receiveShadow = true
+      view.scene.add(m)
+    }
+    const kitRand = (): Rand => new Rand(20260917)
+    // buildings: one row per design, full detail, fronted to the row cam
+    {
+      const row = new THREE.Group()
+      row.name = 'board-buildings'
+      let x = -84
+      for (const id of BUILDING_DESIGNS) {
+        const b = buildBuilding(id, kitRand(), false)
+        b.position.set(x, 0, 10)
+        row.add(b)
+        x += 17
+      }
+      row.position.set(BX, 0, 0)
+      view.scene.add(row)
+      pad(BX, 10, 200, 40)
+      Debug.registerPose('kit_buildings', {
+        camera: [BX, 4.6, -52], look: [BX, 5.5, 10], fov: 52,
+        player: { pos: [BX, 0, -64], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+    }
+    // props: three depth rows (small / medium / landmarks)
+    {
+      const row = new THREE.Group()
+      row.name = 'board-props'
+      const smalls = [
+        () => makeBollard(), () => makeCones(new Rand(3)), () => makeDrum(), () => makePallet(2), () => makeCrates(new Rand(5)),
+        () => makeTyreStack(4), () => makeBin(), () => makeHydrant(), () => makeBench(), () => makePlanter(1.9),
+      ]
+      smalls.forEach((f, i) => { const o = f(); o.position.set(i * 4.6 - 21, 0, 6); row.add(o) })
+      const mids = [
+        () => makeSign('jump', 2.4, 1.2), () => makeSign('speed', 1.4, 1.4, false), () => makeTrafficLight(new Rand(2)),
+        () => makeUtilityPole(new Rand(3)), () => makeStreetlight(new Rand(4), 6.4), () => makeMastLight(new Rand(5)),
+        () => makeContainer(0x2e6470, 7), () => makeBarrierUnit(3), () => makePipeStack(new Rand(6)), () => makeVan(0x7a8288, new Rand(8)),
+      ]
+      mids.forEach((f, i) => { const o = f(); o.position.set(i * 7.2 - 32, 0, 17); row.add(o) })
+      const bigs = [
+        () => makeSignGantry('jump', 8), () => makeBillboard('rush'), () => makeBillboard('tyreking'),
+        () => makeRadioMast(20), () => makeWaterTower(), () => makeGantryCrane(new Rand(11)),
+      ]
+      bigs.forEach((f, i) => { const o = f(); o.position.set(i * 17 - 42, 0, 40); row.add(o) })
+      row.position.set(BX, 0, 240)
+      view.scene.add(row)
+      pad(BX, 262, 210, 90)
+      Debug.registerPose('kit_props', {
+        camera: [BX, 4.0, 218], look: [BX, 3.2, 250], fov: 52,
+        player: { pos: [BX, 0, 210], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+    }
+    // vegetation: species × scale variants near, decimated LOD copies far
+    {
+      const row = new THREE.Group()
+      row.name = 'board-vegetation'
+      const r1 = new Rand(9)
+      const species: { near: () => THREE.BufferGeometry; far: () => THREE.BufferGeometry }[] = [
+        { near: () => palmGeometry(r1, 1), far: () => palmGeometry(r1, 0) },
+        { near: () => palmGeometry(r1, 1), far: () => palmGeometry(r1, 0) },
+        { near: () => pineGeometry(r1, 1), far: () => pineGeometry(r1, 0) },
+        { near: () => pineGeometry(r1, 1), far: () => pineGeometry(r1, 0) },
+        { near: () => broadleafGeometry(r1, 1), far: () => broadleafGeometry(r1, 0) },
+        { near: () => broadleafGeometry(r1, 1), far: () => broadleafGeometry(r1, 0) },
+      ]
+      species.forEach((sp, i) => {
+        const t = treeLOD(sp.near(), sp.far(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0, side: THREE.DoubleSide }))
+        t.position.set(i * 6.4 - 16, 0, 6)
+        t.scale.setScalar(0.85 + (i % 3) * 0.18)
+        t.rotation.y = (i * 0.7) % 6.28
+        row.add(t)
+      })
+      const rb = new Rand(21)
+      for (let i = 0; i < 4; i++) {
+        const bm = new THREE.Mesh(bushGeometry(rb), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, side: THREE.DoubleSide }))
+        bm.position.set(i * 3.4 + 26, 0, 6.5)
+        bm.scale.setScalar(0.7 + (i % 2) * 0.5)
+        bm.castShadow = true
+        row.add(bm)
+      }
+      const rr = new Rand(31)
+      for (let i = 0; i < 3; i++) {
+        const rk = new THREE.Mesh(rockGeometry(rr, 10 + i), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }))
+        rk.position.set(i * 3.6 + 40, 0, 6.5)
+        rk.scale.setScalar(1.1 + (i % 2) * 1.1)
+        rk.castShadow = true
+        row.add(rk)
+      }
+      // far row = the LOD1 silhouettes at judgment distance
+      const r2 = new Rand(9)
+      species.forEach((sp, i) => {
+        const m = new THREE.Mesh(sp.far(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, side: THREE.DoubleSide }))
+        m.position.set(i * 6.4 - 16, 0, 26)
+        m.scale.setScalar(0.85 + (i % 3) * 0.18)
+        row.add(m)
+      })
+      row.position.set(BX, 0, 480)
+      view.scene.add(row)
+      pad(BX, 496, 160, 60)
+      Debug.registerPose('kit_vegetation', {
+        camera: [BX, 3.6, 466], look: [BX, 2.6, 488], fov: 50,
+        player: { pos: [BX, 0, 458], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+    }
+    // cluster prefabs: two boards of two, camera down the avenue
+    {
+      const mk = (id: Parameters<typeof composePrefab>[0], x: number, z: number, seed: number): void => {
+        const pre = composePrefab(id, { seed, field: () => 0 })
+        pre.position.set(x, 0, z)
+        view.scene.add(pre)
+        pad(x, z, 120, 120)
+      }
+      const CITY = 1000
+      mk('CityBlock_Street', BX - 62, CITY, 0xc1)
+      mk('CityBlock_Corner', BX + 60, CITY, 0xc2)
+      Debug.registerPose('kit_clusters', {
+        camera: [BX, 6.5, CITY - 64], look: [BX, 5, CITY + 8], fov: 56,
+        player: { pos: [BX, 0, CITY - 80], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+      const IND = 1300
+      mk('IndustrialCluster_Yard', BX - 62, IND, 0xc3)
+      mk('IndustrialCluster_Plant', BX + 62, IND, 0xc4)
+      Debug.registerPose('kit_industrial', {
+        camera: [BX, 7.5, IND - 68], look: [BX, 6, IND + 8], fov: 55,
+        player: { pos: [BX, 0, IND - 84], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+      const INF = 1600
+      mk('TunnelApproach_Portal', BX - 55, INF, 0xc5)
+      mk('BridgeSegment_Deck', BX + 60, INF, 0xc6)
+      mk('CoastalCliff_Dune', BX, INF + 95, 0xc7)
+      Debug.registerPose('kit_infra', {
+        camera: [BX, 5.0, INF - 58], look: [BX, 4, INF + 26], fov: 54,
+        player: { pos: [BX, 0, INF - 74], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+      const SKY = 1850
+      mk('Skyline_Backdrop', BX, SKY - KIT.skyline.bandZ, 0xc8)
+      Debug.registerPose('kit_skyline', {
+        camera: [BX, 7, SKY + 24], look: [BX, 9, SKY - 4], fov: 52,
+        player: { pos: [BX, 0, SKY + 40], yaw: 0, speed: 0 }, freezeSim: true, tag: 'kit',
+      })
+    }
+    // Gate M material matrix: paint/glass/rubber/metal/asphalt/concrete/
+    // vegetation/water in one gameplay-camera frame, car rolling
+    {
+      const sM = slice.spline.sFromX(66)
+      const rp = roadPose(slice.spline, sM, 2.6)
+      const f = slice.spline.frame(sM)
+      Debug.registerPose('materials_matrix', {
+        camera: [f.pos.x + 16, f.pos.y + 3.3, f.pos.z - 26],
+        look: [f.pos.x - 26, f.pos.y + 0.4, f.pos.z + 6],
+        fov: 55,
+        player: { pos: rp.pos, yaw: rp.yaw, pitch: rp.pitch, bank: rp.bank, speed: 22 },
+        freezeSim: true, tag: 'gate-m',
+      })
+    }
+  }
+
 
   const carView: CarView = { pos, yaw: 0, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 }
   let simFrozen = false

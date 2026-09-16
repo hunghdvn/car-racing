@@ -70,6 +70,8 @@ void main() {
   float depth = max(uSeaLevel - shoreH, 0.0);
   float dT = clamp(depth / 5.2, 0.0, 1.0);
   vec3 body = mix(uShallow, uDeep, dT);
+  // shallows lean brighter/clearer than the deep body (readable depth tint)
+  body = mix(body, uShallow * 1.16 + vec3(0.012, 0.02, 0.018), smoothstep(1.5, 0.25, depth) * 0.45);
   // distance haze shift toward the horizon colour far out
   float camD = length(uCam - vWorld);
   body = mix(body, uHorizonCol * 0.72, smoothstep(120.0, 620.0, camD) * 0.55);
@@ -82,6 +84,14 @@ void main() {
               + pow(max(dot(n, hv), 0.0), 26.0) * 0.24;
   col += uSunCol * spec * smoothstep(0.0, 0.25, uSunDir.y);
 
+  // caustics shimmer in the shallows (spec §4.5/§9): two counter-scrolled
+  // cellular ridges brighten the bed-facing water near the shore, gated by
+  // sun elevation so dusk reads, noon sparkles
+  float ca1 = noise2(p * 0.62 + vec2(t * 0.21, -t * 0.13));
+  float ca2 = noise2(p * 0.58 - vec2(t * 0.16, t * 0.23) + 4.7);
+  float ca = pow(1.0 - abs(ca1 * 2.0 - 1.0), 3.0) * pow(1.0 - abs(ca2 * 2.0 - 1.0), 3.0);
+  float caGate = smoothstep(1.7, 0.3, depth) * smoothstep(0.02, 0.22, uSunDir.y);
+  col += uSunCol * ca * caGate * 0.5;
   // shoreline foam: narrow wobbled band hugging the waterline only
   float wob = (noise2(p * 0.35 + vec2(t * 0.22)) - 0.5) * 0.3;
   float foam = smoothstep(0.42 + wob, 0.05, depth);
