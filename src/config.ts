@@ -130,10 +130,10 @@ export const RACE = { laps: 1, cars: 6, totalProgressCheckpoints: 24 } as const
 
 export const PAINTS: PaintDef[] = [
   { name: 'Solar Flare', color: 0xf27a1e },
-  { name: 'Velocity Blue', color: 0x1f8fe0 },
+  { name: 'Velocity Red', color: 0xd8232e },
   { name: 'Night Shift', color: 0x14181f, roughness: 0.34 },
   { name: 'Viper Green', color: 0x39c06a },
-  { name: 'Candy Pink', color: 0xf04d8f },
+  { name: 'Velocity Blue', color: 0x1f8fe0 },
   { name: 'Plasma Gold', color: 0xe8b62e },
 ]
 

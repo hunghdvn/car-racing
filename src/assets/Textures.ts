@@ -93,6 +93,49 @@ export function roundedRectShape(w: number, h: number, r: number): THREE.Shape {
   return s
 }
 
+
+/**
+ * ExtrudeGeometry leaves zero-length normals on some bevel/side seams 
+ * those poison the PBR fragment path (NaN out) and bloom spreads it across
+ * the frame. Replace any invalid normal with the position-welded average
+ * of its incident face normals.
+ */
+function repairExtrudeNormals(g: THREE.BufferGeometry): void {
+  const pos = g.getAttribute("position") as THREE.BufferAttribute
+  const idx = g.getIndex() as THREE.BufferAttribute | null
+  const n = pos.count
+  const faceAcc = new Map<string, number[]>()
+  const key = (i: number): string => `${Math.round(pos.getX(i) * 1e4)}|${Math.round(pos.getY(i) * 1e4)}|${Math.round(pos.getZ(i) * 1e4)}`
+  const add = (ia: number, ib: number, ic: number): void => {
+    const ux = pos.getX(ib) - pos.getX(ia), uy = pos.getY(ib) - pos.getY(ia), uz = pos.getZ(ib) - pos.getZ(ia)
+    const vx = pos.getX(ic) - pos.getX(ia), vy = pos.getY(ic) - pos.getY(ia), vz = pos.getZ(ic) - pos.getZ(ia)
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+    if (!Number.isFinite(fx + fy + fz) || fx * fx + fy * fy + fz * fz < 1e-12) return
+    for (const vi of [ia, ib, ic]) {
+      const k = key(vi)
+      let a = faceAcc.get(k)
+      if (!a) { a = [0, 0, 0]; faceAcc.set(k, a) }
+      a[0] += fx; a[1] += fy; a[2] += fz
+    }
+  }
+  if (idx) for (let f = 0; f < idx.count; f += 3) add(idx.getX(f), idx.getX(f + 1), idx.getX(f + 2))
+  else for (let f = 0; f + 2 < n; f += 3) add(f, f + 1, f + 2)
+  const cur = g.getAttribute("normal") as THREE.BufferAttribute | null
+  const arr = new Float32Array(n * 3)
+  for (let i = 0; i < n; i++) {
+    let x = cur ? cur.getX(i) : 0, y = cur ? cur.getY(i) : 0, z = cur ? cur.getZ(i) : 0
+    let len = Number.isFinite(x + y + z) ? Math.sqrt(x * x + y * y + z * z) : 0
+    if (len < 1e-4) {
+      const a = faceAcc.get(key(i))
+      if (a) { x = a[0]; y = a[1]; z = a[2] } else { x = 0; y = 0; z = 1 }
+      len = Math.sqrt(x * x + y * y + z * z)
+      if (!Number.isFinite(len) || len < 1e-6) { x = 0; y = 0; z = 1; len = 1 }
+    }
+    arr[i * 3] = x / len; arr[i * 3 + 1] = y / len; arr[i * 3 + 2] = z / len
+  }
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(arr, 3))
+}
+
 /** Beveled rounded box substitute — plates, bumpers, spoilers, panels. */
 export function roundedPlateGeo(w: number, h: number, t: number, r: number, bevel = 0.015): THREE.BufferGeometry {
   const g = new THREE.ExtrudeGeometry(roundedRectShape(w, h, Math.min(r, w / 2 - 0.001, h / 2 - 0.001)), {
@@ -104,6 +147,7 @@ export function roundedPlateGeo(w: number, h: number, t: number, r: number, beve
     curveSegments: 4,
   })
   g.translate(0, 0, -(t - bevel * 2) / 2)
+  repairExtrudeNormals(g)
   return g
 }
 
