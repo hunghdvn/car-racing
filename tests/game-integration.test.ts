@@ -33,6 +33,7 @@ interface StandingsEntry {
 interface TestRace {
   vehicles: Map<string, VehicleState>;
   configs: Map<string, { baseSpeed: number }>;
+  profiles: Map<string, { id: string }>;
   model: AITrackProbe;
   track: { obstacles: ObstacleConfig[] };
   director: { phase: string; time: number; countdown: number };
@@ -199,6 +200,25 @@ it('starts a quick race with the track selected in the menu', () => {
   expect(started).toEqual(['city', 'coast']);
   ui.destroy();
   document.body.textContent = '';
+});
+
+it('seeds the career AI field from the event loadout instead of the fixed ladder', () => {
+  seedCompletedEvents(['cup-1-event-1', 'cup-1-event-2', 'cup-1-event-3', 'cup-1-event-4']);
+  const game = freshGame();
+  game.startCareerEvent('cup-1', 'cup-1-event-5');
+  expect(game.phase).toBe('countdown');
+  const profileIds = [...game.race!.profiles.values()].map((profile) => profile.id);
+  expect(profileIds).toEqual(['cadet', 'rider', 'rider', 'veteran', 'ace']);
+  expect(game.race!.vehicles.size).toBe(6);
+  game.dispose();
+});
+
+it('quick races fall back to the full AI profile ladder', () => {
+  const game = freshGame();
+  game.startQuickRace('city', 'starter');
+  const profileIds = [...game.race!.profiles.values()].map((profile) => profile.id);
+  expect(profileIds).toEqual(['cadet', 'rider', 'veteran', 'ace', 'phantom']);
+  game.dispose();
 });
 
 it('falls back to the selected owned vehicle when a quick race asks for an unowned one', () => {

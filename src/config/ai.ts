@@ -9,3 +9,11 @@ export const aiProfiles: AIProfile[] = [
   { id: 'ace', targetSpeed: 48, aggression: 0.8, laneBias: -0.2, reactionTime: 0.16 },
   { id: 'phantom', targetSpeed: 50, aggression: 0.95, laneBias: 0.1, reactionTime: 0.12 },
 ];
+
+export const aiProfileIds: readonly string[] = aiProfiles.map((profile) => profile.id);
+
+export function resolveAiField(loadout: readonly string[] | undefined): AIProfile[] {
+  if (!loadout || loadout.length !== aiProfiles.length) return [...aiProfiles];
+  const field = loadout.map((id) => aiProfiles.find((profile) => profile.id === id));
+  return field.every((profile): profile is AIProfile => profile !== undefined) ? field : [...aiProfiles];
+}

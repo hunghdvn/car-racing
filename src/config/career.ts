@@ -7,6 +7,16 @@ export interface CareerCup {
   events: EventConfig[];
 }
 
+// AI fields are data, not code: each event names the five aiProfiles ids that
+// line up against the player. Rookie races sit at the back of the field, the
+// cup finals ramp toward the head of the grid.
+const fieldRookie = ['cadet', 'cadet', 'rider', 'rider', 'veteran'] as const;
+const fieldRookieFinal = ['cadet', 'rider', 'rider', 'veteran', 'ace'] as const;
+const fieldStreet = ['rider', 'rider', 'veteran', 'veteran', 'ace'] as const;
+const fieldStreetFinal = ['rider', 'veteran', 'veteran', 'ace', 'ace'] as const;
+const fieldNeon = ['veteran', 'veteran', 'ace', 'ace', 'phantom'] as const;
+const fieldNeonFinal = ['veteran', 'ace', 'ace', 'phantom', 'phantom'] as const;
+
 export const careerCups: CareerCup[] = [
   {
     id: 'cup-1',
@@ -20,6 +30,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 75,
         targetScore: 75,
+        aiLoadout: fieldRookie,
         reward: { currency: 100, xp: 10 },
       },
       {
@@ -29,6 +40,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 30,
         targetScore: 100,
+        aiLoadout: fieldRookie,
         reward: { currency: 100, xp: 10 },
       },
       {
@@ -38,6 +50,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 45,
         targetScore: 200,
+        aiLoadout: fieldRookie,
         reward: { currency: 120, xp: 12, unlock: 'swift' },
       },
       {
@@ -47,6 +60,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 40,
         targetScore: 70,
+        aiLoadout: fieldRookie,
         reward: { currency: 120, xp: 12 },
       },
       {
@@ -56,6 +70,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 70,
         targetScore: 75,
+        aiLoadout: fieldRookieFinal,
         reward: { currency: 150, xp: 15, unlock: 'vector' },
       },
     ],
@@ -72,6 +87,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 40,
         targetScore: 100,
+        aiLoadout: fieldStreet,
         reward: { currency: 150, xp: 15 },
       },
       {
@@ -81,6 +97,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 110,
         targetScore: 75,
+        aiLoadout: fieldStreet,
         reward: { currency: 150, xp: 15 },
       },
       {
@@ -90,6 +107,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 45,
         targetScore: 220,
+        aiLoadout: fieldStreet,
         reward: { currency: 180, xp: 18, unlock: 'tempest' },
       },
       {
@@ -99,6 +117,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 60,
         targetScore: 75,
+        aiLoadout: fieldStreet,
         reward: { currency: 180, xp: 18 },
       },
       {
@@ -108,6 +127,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 95,
         targetScore: 75,
+        aiLoadout: fieldStreetFinal,
         reward: { currency: 200, xp: 20, unlock: 'phantom' },
       },
     ],
@@ -124,6 +144,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 110,
         targetScore: 75,
+        aiLoadout: fieldNeon,
         reward: { currency: 200, xp: 20 },
       },
       {
@@ -133,6 +154,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 28,
         targetScore: 100,
+        aiLoadout: fieldNeon,
         reward: { currency: 220, xp: 22 },
       },
       {
@@ -142,6 +164,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 60,
         targetScore: 320,
+        aiLoadout: fieldNeon,
         reward: { currency: 250, xp: 25 },
       },
       {
@@ -151,6 +174,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 1,
         targetTime: 40,
         targetScore: 80,
+        aiLoadout: fieldNeon,
         reward: { currency: 250, xp: 25, unlock: 'apex' },
       },
       {
@@ -160,6 +184,7 @@ export const careerCups: CareerCup[] = [
         requiredLaps: 3,
         targetTime: 100,
         targetScore: 75,
+        aiLoadout: fieldNeonFinal,
         reward: { currency: 300, xp: 30 },
       },
     ],

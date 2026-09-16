@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AudioEngine } from '../audio/AudioEngine';
-import { aiProfiles } from '../config/ai';
+import { resolveAiField } from '../config/ai';
 import { tracks } from '../config/tracks';
 import { applyUpgrades, cosmeticValues, upgradeDefinitions, vehicleById, vehicles } from '../config/vehicles';
 import { CareerService } from '../progression/CareerService';
@@ -417,11 +417,12 @@ class GameImpl {
     const hints = new Map<string, number>();
     const initialNitro = new Map<string, number>();
     const maxSpeed = new Map<string, number>();
+    const field = resolveAiField(params.eventConfig?.aiLoadout);
     const width = track.width;
     const cells: Array<{ distance: number; lateral: number }> = [
       { distance: 0, lateral: -width * 0.22 },
     ];
-    aiProfiles.forEach((_profile, index) => {
+    field.forEach((_profile, index) => {
       cells.push({
         distance: -(7 + index * 8),
         lateral: index % 2 === 0 ? width * 0.22 : -width * 0.22,
@@ -449,7 +450,7 @@ class GameImpl {
       configs.set(id, config);
       initialNitro.set(id, config.nitroCapacity);
       maxSpeed.set(id, 0);
-      if (index > 0) profiles.set(id, aiProfiles[index - 1]!);
+      if (index > 0) profiles.set(id, field[index - 1]!);
       index += 1;
     }
     const participants: RaceParticipant[] = [];

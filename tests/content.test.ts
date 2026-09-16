@@ -46,4 +46,20 @@ describe('game content', () => {
     expect(vehicles.every((vehicle) => vehicle.cosmeticOptions.length > 0)).toBe(true);
     expect(vehicles.every((vehicle) => vehicle.nitroCapacity > 0 && vehicle.nitroPower > 0)).toBe(true);
   });
+
+  it('names a valid five-car AI field for every career event that ramps across cups', () => {
+    const profileIds = new Set(aiProfiles.map((profile) => profile.id));
+    const targetSpeed = (id: string): number => aiProfiles.find((profile) => profile.id === id)!.targetSpeed;
+    const events = careerCups.flatMap((cup) => cup.events);
+    expect(events.every((event) => event.aiLoadout !== undefined)).toBe(true);
+    expect(events.every((event) => event.aiLoadout!.length === 5)).toBe(true);
+    expect(events.every((event) => event.aiLoadout!.every((id) => profileIds.has(id)))).toBe(true);
+    const averageSpeed = (cupId: string): number => {
+      const cup = careerCups.find((candidate) => candidate.id === cupId)!;
+      const ids = cup.events.flatMap((event) => [...event.aiLoadout!]);
+      return ids.reduce((sum, id) => sum + targetSpeed(id), 0) / ids.length;
+    };
+    expect(averageSpeed('cup-2')).toBeGreaterThan(averageSpeed('cup-1'));
+    expect(averageSpeed('cup-3')).toBeGreaterThan(averageSpeed('cup-2'));
+  });
 });

@@ -40,6 +40,9 @@ export interface EventConfig {
   requiredLaps: number;
   targetTime: number;
   targetScore: number;
+  // Career events name their five AI field ids; quick races synthesize no
+  // loadout and fall back to the full profile ladder.
+  aiLoadout?: readonly string[];
   reward: { currency: number; xp: number; unlock?: string };
 }
 export interface EventInstance {
