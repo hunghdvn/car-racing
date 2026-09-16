@@ -507,6 +507,292 @@ export function grassTuftTexture(): THREE.Texture {
   })
 }
 
+/* ---------------------------------------------------------------------------
+ * Phase 4 — building/prop kit families (spec §4.2/§5): facade styles with
+ * normal + roughness relief, ballasted membrane roofs, corrugated cladding,
+ * riveted plant metal, original billboard artwork, timber grain.
+ * ------------------------------------------------------------------------- */
+
+export type FacadeStyle = 'brick' | 'panel' | 'plaster'
+
+/** Building facade families: real relief (mortar/reveal), staining, roughness. */
+export function facadeMaps(style: FacadeStyle, tone = 0xb9b2a4, seed = 11): { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture } {
+  return cached(`facade${style}${tone}_${seed}`, () => {
+    const rnd = new Rand(seed * 7 + style.length)
+    const hex = `#${tone.toString(16).padStart(6, '0')}`
+    const S = 512
+    const map = canvasTexture(S, S, (ctx, w, h) => {
+      ctx.fillStyle = hex
+      ctx.fillRect(0, 0, w, h)
+      if (style === 'brick') {
+        const bh = 22, bw = 46
+        for (let y = 0, row = 0; y < h; y += bh, row++) {
+          for (let x = -bw / (row % 2 ? 2 : 1); x < w; x += bw) {
+            const v = 0.86 + rnd.next() * 0.3
+            const rr = Math.floor(clamp01(((tone >> 16) & 255) / 255 * v) * 255)
+            const gg = Math.floor(clamp01(((tone >> 8) & 255) / 255 * v) * 255)
+            const bb = Math.floor(clamp01(((tone >> 0) & 255) / 255 * v) * 255)
+            ctx.fillStyle = `rgb(${rr},${gg},${bb})`
+            ctx.fillRect(x + 2, y + 2, bw - 4, bh - 4)
+          }
+        }
+        ctx.fillStyle = 'rgba(58,52,44,0.30)'
+        ctx.fillRect(0, 0, w, 46)
+      } else if (style === 'panel') {
+        const pw = 128, ph = 96
+        for (let y = 0; y < h; y += ph) for (let x = 0; x < w; x += pw) {
+          const v = 0.9 + rnd.next() * 0.2
+          ctx.fillStyle = `rgba(${Math.floor(255 * ((tone >> 16) & 255) / 255 * v)},${Math.floor(255 * ((tone >> 8) & 255) / 255 * v)},${Math.floor(255 * ((tone >> 0) & 255) / 255 * v)},0.9)`
+          ctx.fillRect(x + 3, y + 3, pw - 6, ph - 6)
+          ctx.fillStyle = 'rgba(30,30,34,0.4)'
+          ctx.fillRect(x + pw - 4, y, 4, ph)
+          ctx.fillRect(x, y + ph - 4, pw, 4)
+        }
+      } else {
+        const img = ctx.getImageData(0, 0, w, h)
+        for (let i = 0; i < w * h; i++) {
+          const n = (rnd.next() - 0.5) * 20
+          const i4 = i * 4
+          img.data[i4] = clamp01((img.data[i4] + n) / 255) * 255
+          img.data[i4 + 1] = clamp01((img.data[i4 + 1] + n) / 255) * 255
+          img.data[i4 + 2] = clamp01((img.data[i4 + 2] + n * 0.9) / 255) * 255
+        }
+        ctx.putImageData(img, 0, 0)
+      }
+      // water staining + grime streaks from the crown
+      for (let k = 0; k < 9; k++) {
+        const x = rnd.next() * w
+        const g = ctx.createLinearGradient(0, 0, 0, h)
+        g.addColorStop(0, `rgba(42,40,34,${0.1 + rnd.next() * 0.14})`)
+        g.addColorStop(0.4 + rnd.next() * 0.4, 'rgba(42,40,34,0)')
+        ctx.fillStyle = g
+        ctx.fillRect(x, 0, 3 + rnd.next() * 8, h)
+      }
+      // damp corner darkening
+      ctx.fillStyle = 'rgba(40,44,40,0.12)'
+      ctx.fillRect(0, h * 0.86, w, h * 0.14)
+    }, { srgb: true })
+    const height = heightCanvasFrom((x, y, w, h) => {
+      if (style === 'brick') {
+        const bh = 22, bw = 46
+        const mx = ((x % bw) + bw) % bw, my = ((y % bh) + bh) % bh
+        const seam = mx < 2.5 || my < 2.5 ? -0.55 : 0
+        return clamp01(0.55 + seam + (rnd.next() - 0.5) * 0.1)
+      }
+      if (style === 'panel') {
+        const mx = x % 128, my = y % 96
+        const seam = mx > 124 || my > 92 ? -0.6 : 0
+        return clamp01(0.55 + seam + (rnd.next() - 0.5) * 0.08)
+      }
+      return clamp01(0.5 + (rnd.next() - 0.5) * 0.4 + Math.sin(x / 9) * 0.02 + Math.sin(y / 11) * 0.02)
+    }, S / 2, S / 2)
+    const normal = new THREE.CanvasTexture(normalFromHeightCanvas(height, style === 'plaster' ? 0.9 : 2.0))
+    normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+    normal.needsUpdate = true
+    const rough = canvasTexture(128, 128, (ctx, w, h) => {
+      const img = ctx.createImageData(w, h)
+      for (let i = 0; i < w * h; i++) {
+        const v = clamp01(0.8 + (rnd.next() - 0.5) * (style === 'panel' ? 0.18 : 0.3)) * 255
+        const i4 = i * 4
+        img.data[i4] = img.data[i4 + 1] = img.data[i4 + 2] = v
+        img.data[i4 + 3] = 255
+      }
+      ctx.putImageData(img, 0, 0)
+    })
+    return { map, normalMap: normal, roughnessMap: rough }
+  })
+}
+
+/** Ballasted flat roof: membrane seams, grit, puddle darkening (roofDeck). */
+export function roofMembraneMaps(): { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture } {
+  return cached('roofMem', () => {
+    const rnd = new Rand(771)
+    const map = canvasTexture(256, 256, (ctx, w, h) => {
+      ctx.fillStyle = '#585a58'
+      ctx.fillRect(0, 0, w, h)
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let i = 0; i < w * h; i++) {
+        const n = (rnd.next() - 0.5) * 30
+        const i4 = i * 4
+        img.data[i4] = clamp01((img.data[i4] + n) / 255) * 255
+        img.data[i4 + 1] = clamp01((img.data[i4 + 1] + n) / 255) * 255
+        img.data[i4 + 2] = clamp01((img.data[i4 + 2] + n * 0.9) / 255) * 255
+      }
+      ctx.putImageData(img, 0, 0)
+      ctx.strokeStyle = 'rgba(28,29,28,0.65)'
+      ctx.lineWidth = 2.4
+      for (const p of [0.25, 0.5, 0.75]) { ctx.beginPath(); ctx.moveTo(0, p * h); ctx.lineTo(w, p * h); ctx.stroke() }
+      for (let k = 0; k < 4; k++) {
+        const x = rnd.next() * w, y = rnd.next() * h, r = 10 + rnd.next() * 26
+        const g = ctx.createRadialGradient(x, y, 1, x, y, r)
+        g.addColorStop(0, 'rgba(24,28,32,0.5)')
+        g.addColorStop(1, 'rgba(24,28,32,0)')
+        ctx.fillStyle = g
+        ctx.fillRect(x - r, y - r, r * 2, r * 2)
+      }
+      for (let k = 0; k < 900; k++) {
+        ctx.fillStyle = rnd.chance(0.5) ? 'rgba(150,146,132,0.35)' : 'rgba(30,31,29,0.4)'
+        ctx.fillRect(rnd.next() * w, rnd.next() * h, 1.4, 1.4)
+      }
+    }, { srgb: true })
+    const height = heightCanvasFrom(() => clamp01(0.5 + (rnd.next() - 0.5) * 0.7), 128, 128)
+    const normal = new THREE.CanvasTexture(normalFromHeightCanvas(height, 2.2))
+    normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+    normal.needsUpdate = true
+    const rough = canvasTexture(128, 128, (ctx, w, h) => {
+      const img = ctx.createImageData(w, h)
+      for (let i = 0; i < w * h; i++) {
+        const v = clamp01(0.85 + (rnd.next() - 0.5) * 0.2) * 255
+        const i4 = i * 4
+        img.data[i4] = img.data[i4 + 1] = img.data[i4 + 2] = v
+        img.data[i4 + 3] = 255
+      }
+      ctx.putImageData(img, 0, 0)
+    })
+    return { map, normalMap: normal, roughnessMap: rough }
+  })
+}
+
+/** Corrugated metal cladding: rib normal, paint fade, rust bleed (warehouses). */
+export function corrugatedMaps(tone = 0x7f8a92, seed = 33): { map: THREE.Texture; normalMap: THREE.Texture } {
+  return cached(`corr${tone}_${seed}`, () => {
+    const rnd = new Rand(seed)
+    const hex = `#${tone.toString(16).padStart(6, '0')}`
+    const map = canvasTexture(256, 256, (ctx, w, h) => {
+      ctx.fillStyle = hex
+      ctx.fillRect(0, 0, w, h)
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let y = 0; y < h; y++) {
+        const fade = 0.86 + Math.sin(y * 0.05) * 0.05
+        for (let x = 0; x < w; x++) {
+          const rib = 0.88 + 0.12 * Math.abs(Math.sin((x / w) * Math.PI * 2 * 16))
+          const n = (rnd.next() - 0.5) * 18
+          const i4 = (y * w + x) * 4
+          img.data[i4] = clamp01((img.data[i4] * rib * fade + n) / 255) * 255
+          img.data[i4 + 1] = clamp01((img.data[i4 + 1] * rib * fade + n) / 255) * 255
+          img.data[i4 + 2] = clamp01((img.data[i4 + 2] * rib * fade + n * 0.8) / 255) * 255
+        }
+      }
+      ctx.putImageData(img, 0, 0)
+      for (let k = 0; k < 6; k++) {
+        const x = rnd.next() * w
+        ctx.fillStyle = `rgba(${112 + rnd.next() * 40 | 0},${52 + rnd.next() * 24 | 0},26,${0.16 + rnd.next() * 0.22})`
+        ctx.fillRect(x, rnd.next() * h * 0.5, 4 + rnd.next() * 10, h * (0.2 + rnd.next() * 0.6))
+      }
+    }, { srgb: true })
+    const height = heightCanvasFrom((x) => clamp01(0.25 + Math.abs(Math.sin((x / 128) * Math.PI * 2 * 16)) * 0.6), 128, 64)
+    const normal = new THREE.CanvasTexture(normalFromHeightCanvas(height, 2.6))
+    normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+    normal.needsUpdate = true
+    return { map, normalMap: normal }
+  })
+}
+
+/** Riveted plant metal: tank plates, seams, paint band, rust (water towers/silos). */
+export function rivetMetalMaps(tone = 0x8f9aa4, seed = 55): { map: THREE.Texture; normalMap: THREE.Texture } {
+  return cached(`rivet${tone}_${seed}`, () => {
+    const rnd = new Rand(seed)
+    const hex = `#${tone.toString(16).padStart(6, '0')}`
+    const map = canvasTexture(256, 256, (ctx, w, h) => {
+      ctx.fillStyle = hex
+      ctx.fillRect(0, 0, w, h)
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let i = 0; i < w * h; i++) {
+        const n = (rnd.next() - 0.5) * 22
+        const i4 = i * 4
+        img.data[i4] = clamp01((img.data[i4] + n) / 255) * 255
+        img.data[i4 + 1] = clamp01((img.data[i4 + 1] + n) / 255) * 255
+        img.data[i4 + 2] = clamp01((img.data[i4 + 2] + n * 0.9) / 255) * 255
+      }
+      ctx.putImageData(img, 0, 0)
+      ctx.fillStyle = 'rgba(52,58,64,0.5)'
+      for (const p of [64, 128, 192]) ctx.fillRect(0, p, w, 2)
+      for (let y = 20; y < h; y += 44) for (let x = 8; x < w; x += 16) {
+        ctx.fillStyle = 'rgba(38,42,48,0.55)'
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill()
+      }
+      for (let k = 0; k < 5; k++) {
+        ctx.fillStyle = `rgba(${118 + rnd.next() * 30 | 0},60,30,${0.1 + rnd.next() * 0.16})`
+        ctx.fillRect(rnd.next() * w, 0, 3 + rnd.next() * 7, h)
+      }
+    }, { srgb: true })
+    const height = heightCanvasFrom((x, y) => {
+      const rivet = (x % 16 < 4 && y % 44 < 6) ? 0.8 : 0.4
+      return clamp01(rivet + (rnd.next() - 0.5) * 0.1)
+    }, 128, 128)
+    const normal = new THREE.CanvasTexture(normalFromHeightCanvas(height, 1.6))
+    normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+    normal.needsUpdate = true
+    return { map, normalMap: normal }
+  })
+}
+
+/** Original billboard artwork for masted signage / gantries. */
+export function billboardFaceTexture(kind: 'rush' | 'octane' | 'tyreking' | 'harbour'): THREE.Texture {
+  return cached(`bill${kind}`, () =>
+    canvasTexture(512, 288, (ctx, w, h) => {
+      const rnd = new Rand(kind.length * 977 + 3)
+      const bg: Record<string, [string, string]> = {
+        rush: ['#12304e', '#f2b23c'], octane: ['#471322', '#e8e6de'], tyreking: ['#17301c', '#d9e04a'], harbour: ['#0e3c44', '#7fd4e0'],
+      }
+      const [b, ink] = bg[kind]
+      ctx.fillStyle = b
+      ctx.fillRect(0, 0, w, h)
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let i = 0; i < w * h; i += 3) {
+        if (rnd.next() < 0.05) { const i4 = i * 4; img.data[i4 + 3] = 210 }
+      }
+      ctx.putImageData(img, 0, 0)
+      ctx.textAlign = 'center'
+      const titles: Record<string, [string, string]> = {
+        rush: ['VELOCITY RUSH', 'SUNDAY CIRCUIT — COAST SECTOR'],
+        octane: ['OCTANE 98', 'FUEL · COFFEE · QUIET NERVES'],
+        tyreking: ['TYRE KING', 'DRIFT SET · ROAD · RALLY'],
+        harbour: ['HARBOUR MOTO', 'MARINE PARTS · ANTI-FOUL'],
+      }
+      const [t1, t2] = titles[kind]
+      ctx.fillStyle = ink
+      ctx.font = 'bold 74px sans-serif'
+      ctx.fillText(t1, w / 2, h * 0.52)
+      ctx.font = 'bold 30px sans-serif'
+      ctx.fillStyle = 'rgba(240,236,220,0.85)'
+      ctx.fillText(t2, w / 2, h * 0.78)
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'
+      ctx.lineWidth = 10
+      ctx.strokeRect(5, 5, w - 10, h - 10)
+    }, { srgb: true, clamp: true }),
+  )
+}
+
+/** Timber grain for crates/pallets/benches. */
+export function woodMaps(tone = 0x8a7250, seed = 66): { map: THREE.Texture; normalMap: THREE.Texture } {
+  return cached(`wood${tone}_${seed}`, () => {
+    const rnd = new Rand(seed)
+    const hex = `#${tone.toString(16).padStart(6, '0')}`
+    const map = canvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = hex
+      ctx.fillRect(0, 0, w, h)
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let y = 0; y < h; y++) {
+        const grain = Math.sin(y * 0.55 + Math.sin(y * 0.13) * 2.2) * 12
+        for (let x = 0; x < w; x++) {
+          const n = grain + (rnd.next() - 0.5) * 16 + Math.sin(x * 0.02 + y * 0.4) * 5
+          const i4 = (y * w + x) * 4
+          img.data[i4] = clamp01((img.data[i4] + n) / 255) * 255
+          img.data[i4 + 1] = clamp01((img.data[i4 + 1] + n * 0.9) / 255) * 255
+          img.data[i4 + 2] = clamp01((img.data[i4 + 2] + n * 0.72) / 255) * 255
+        }
+      }
+      ctx.putImageData(img, 0, 0)
+    }, { srgb: true })
+    const height = heightCanvasFrom((x, y) => clamp01(0.5 + Math.sin(y * 0.55 + Math.sin(y * 0.13) * 2.2) * 0.18 + (rnd.next() - 0.5) * 0.08 + (x % 64 < 2 ? -0.4 : 0)), 64, 64)
+    const normal = new THREE.CanvasTexture(normalFromHeightCanvas(height, 1.4))
+    normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+    normal.needsUpdate = true
+    return { map, normalMap: normal }
+  })
+}
+
 /** Fine grain overlay for vertex-coloured terrain (kills flat colour). */
 export function groundDetailTexture(): THREE.Texture {
   return cached('groundDetail', () => {

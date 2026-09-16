@@ -12,10 +12,10 @@ export const THEME = {
   skyMid: 0x8fbce4,
   skyHorizon: 0xf2d3a2,
   skySunTint: 0xfff0d8,
-  groundHemi: 0x58534a,
+  groundHemi: 0x5b5740,
   hemiIntensity: 0.78,
   envIntensity: 1.02,
-  fogColor: 0xcfd6da,
+  fogColor: 0xd3d2c4,
   fogDensity: 0.00128,
   water: { deep: 0x0a2f47, shallow: 0x115468, foam: 0xcfe4e8, spec: 0xffd9a8 },
 } as const
@@ -139,6 +139,25 @@ export const PAINTS: PaintDef[] = [
 
 /** Determinism: master seed for all seeded placement (spec §22). */
 export const SEED = 20260916
+
+/** Asset kits (Phase 4, spec §4.2/§4.3/§4.7/§10). LOD switches in metres. */
+export const KIT = {
+  /** near / baked-silhouette mid / low-poly far (spec §4.7: ≥2 LOD levels). */
+  lodNear: 0,
+  lodMid: 48,
+  lodFar: 130,
+  vegLodMid: 52,
+  vegLodFar: 150,
+  /** variation rules (§10): rotation noise, ±15 % scale, colour variants. */
+  scaleJitter: 0.15,
+  yawJitter: 0.16,
+  colourVariants: 3,
+  /** composition rhythm: metres between cluster anchors (tight→loose). */
+  clusterGapMin: 14,
+  clusterGapMax: 27,
+  /** skyline kit (depth layer 3) */
+  skyline: { bandZ: 122, depth: 46, modules: 7 },
+} as const
 
 /** Track profile — Phase 3 representative coastal slice (~300 m, spec §7/§8/§20).
  *  Control points are (x, z, y): road centreline crown elevation above sea datum.
