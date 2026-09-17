@@ -43,6 +43,7 @@ function boot(): void {
   const slice = buildTrackSlice()
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = Math.round(performance.now() - tBuild)
   view.scene.add(slice.group)
+  ;(globalThis as unknown as { __dbg?: unknown }).__dbg = { scene: view.scene, cam: view.camera, slice, THREE }
 
   const car: CarModel = buildCar(PAINTS[1].color)
   view.scene.add(car.group)
@@ -134,33 +135,37 @@ function boot(): void {
   }
 
   /* ---------------- Phase 5 Gate C — one frame per circuit section ---------
-   * Driver's-eye (and one structural) vantage per authored section, on the
-   * racing line at section speed, so what is judged is what a player sees. */
+   * Driver's-eye (plus one structural) vantage per authored section, on the
+   * racing line at section speed, so what is judged is what a player sees.
+   * The rig trails the car along the travel direction (matching heroShot: the
+   * heading vector for yaw is (-sin yaw, 0, -cos yaw)) and looks ahead. */
   {
-    const sec = (name: string, s: number, lat: number, fov: number, speed: number, opt: { back?: number, rise?: number, side?: number, lookRise?: number, lookSide?: number, tag?: string } = {}): void => {
+    const sec = (name: string, s: number, lat: number, fov: number, speed: number, opt: { back?: number, rise?: number, side?: number, lead?: number, lookRise?: number, lookSide?: number, tag?: string } = {}): void => {
       const rp = roadPose(slice.spline, s, lat)
-      const fx = Math.sin(rp.yaw), fz = Math.cos(rp.yaw)
-      const sx = Math.cos(rp.yaw), sz = -Math.sin(rp.yaw)
+      const fx = -Math.sin(rp.yaw), fz = -Math.cos(rp.yaw)      // travel direction
+      const sx = Math.cos(rp.yaw), sz = -Math.sin(rp.yaw)       // driver-right
       const back = opt.back ?? 7.4, rise = opt.rise ?? 2.05, side = opt.side ?? 0
-      const lookRise = opt.lookRise ?? 1.1, lookSide = opt.lookSide ?? 0
+      const lead = opt.lead ?? 26, lookRise = opt.lookRise ?? 1.1, lookSide = opt.lookSide ?? 0
       const px = rp.pos[0], py = rp.pos[1], pz = rp.pos[2]
       Debug.registerPose(name, {
         camera: [px - fx * back + sx * side, py + rise, pz - fz * back + sz * side],
-        look: [px + fx * 26 + sx * lookSide, py + lookRise, pz + fz * 26 + sz * lookSide],
+        look: [px + fx * lead + sx * lookSide, py + lookRise, pz + fz * lead + sz * lookSide],
         fov,
         player: { pos: rp.pos, yaw: rp.yaw, pitch: rp.pitch, bank: rp.bank, speed },
         freezeSim: true, tag: opt.tag ?? 'circuit',
       })
     }
-    sec('city_outskirts', 2700, 0, 62, 38, { tag: 'start' })                 // pit wall frontage, city verge
-    sec('works_yard', 560, 0, 62, 32, { tag: 'industrial' })                   // yards, gantries, hazard kerbs
-    sec('tunnel_portal', 1024, 0, 60, 42, { tag: 'tunnel' })                   // looking into the bore mouth
-    sec('tunnel_bore', 1150, 0, 68, 44, { back: 5.6, rise: 1.85, tag: 'tunnel' }) // inside, light pools + ribs
-    sec('deck_city', 1520, 0, 62, 46, { tag: 'elevated' })                     // over the north city
+    sec('section_coastal', 150, 0, 62, 44, { tag: 'coastal' })              // dune verge + CAPE MARLO ahead
+    sec('section_city', 2700, 0, 62, 38, { tag: 'start' })                   // pit wall frontage, city outskirts
+    sec('section_industrial', 560, 0, 62, 32, { tag: 'industrial' })          // yards, gantries, hazard kerbs
+    sec('section_tunnel', 1005, 0, 60, 42, { lead: 30, tag: 'tunnel' })       // looking into the portal face
+    sec('tunnel_contrast', 1150, 0, 68, 44, { back: 5.6, rise: 1.85, lead: 34, tag: 'tunnel' }) // inside → exit
+    sec('section_elevated', 1520, 0, 62, 46, { lead: 30, tag: 'elevated' })   // deck flying over the north city
     sec('deck_structure', 1600, 0, 55, 0, { back: 3, rise: -3.4, side: 26, lookSide: -8, tag: 'elevated' }) // parapets, pylons, soffit
-    sec('ridge_esses', 2250, 0, 63, 50, { tag: 'final' })                       // high-speed esses on the ridge
-    sec('shortcut_mouth', 2628, 0, 62, 40, { tag: 'shortcut' })                 // the guarded spur taking off
-    sec('finish_gantry', 3088, 0, 62, 44, { tag: 'finish' })                     // gantry + chequered line over the seam
+    sec('section_final', 2250, 0, 63, 50, { tag: 'final' })                   // high-speed esses on the ridge
+    sec('section_shortcut', 2628, 0, 62, 40, { lead: 30, tag: 'shortcut' })   // the guarded spur taking off
+    sec('section_finish', 3088, 0, 62, 44, { lead: 34, tag: 'finish' })        // gantry + chequered line over the seam
+    sec('finish_line', 3096, 0, 50, 40, { back: 7.5, lead: 15, rise: 1.7, tag: 'finish' }) // close read of the chequered grid under the gantry
   }
 
   /* ---------------- Phase 4 Gate C1/M — kit boards (dev-only showcases) ----
