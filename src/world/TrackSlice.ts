@@ -1,10 +1,11 @@
 import * as THREE from 'three'
-import { TRACK } from '../config'
+import { TRACK, SEED } from '../config'
+import { Rand } from '../util'
 import { TrackSpline } from './TrackSpline'
 import { CoastField } from './Terrain'
 import { RoadBuilder, rampLiftAt, rampSlopeAt } from './RoadBuilder'
 import { buildWater, animateWater, type ShoreMap } from './Water'
-import { dressSlice } from './ComposeKit'
+import { dressSlice, composePrefab, type PrefabId } from './ComposeKit'
 import { placeVegetation } from './VegetationKit'
 import { placeProps } from './PropKit'
 import { grassTuftTexture } from '../assets/Textures'
@@ -45,6 +46,7 @@ export function buildTrackSlice(): Slice {
   placeVegetation(group, spline, field, grassTuftTexture())
   placeProps(group, spline, field)
   group.add(dressSlice({ spline, field }))
+  group.add(buildNorthCity(spline, field))
 
   return {
     group, spline, field, water,
@@ -52,6 +54,39 @@ export function buildTrackSlice(): Slice {
       animateWater(water, t, camPos)
     },
   }
+}
+
+/* --------------------------------------------------- north-city underpass -- */
+
+/** The city the viaduct flies over (spec §7/§8): low retail runs at the deck
+ *  base under the span, scaled street blocks with their office focals in the
+ *  flanks outside the deck so no tower touches the soffit. */
+function buildNorthCity(spline: TrackSpline, field: CoastField): THREE.Group {
+  const g = new THREE.Group()
+  g.name = 'north-city'
+  const rng = spline.zoneRange('elevated')
+  const rnd = new Rand(SEED ^ 0x51de71)
+  let i = 0
+  for (let s = rng.s0 + 112; s < rng.s1 - 100; s += 50, i++) {
+    const f = spline.frame(s)
+    const drop = (id: PrefabId, lat: number, sc: number, salt: number): void => {
+      const pre = composePrefab(id, { seed: (SEED ^ ((salt * 0x9e37) >>> 0)) >>> 0, field: (x: number, z: number) => field.height(x, z) })
+      const x = f.pos.x + f.side.x * lat, z = f.pos.z + f.side.z * lat
+      pre.position.set(x, field.height(x, z) - 0.1, z)
+      pre.scale.setScalar(sc)
+      pre.rotation.y = f.yaw + (lat > 0 ? Math.PI / 2 : -Math.PI / 2)
+      g.add(pre)
+    }
+    const flip = i % 2 ? 1 : -1
+    // low street under the deck base (retail/cafe clear the soffit with margin)
+    drop('CityBlock_Corner', flip * rnd.range(11, 16), 1, i * 3 + 1)
+    // scaled street block in the flank, its office focal standing clear of the span
+    drop('CityBlock_Street', -flip * rnd.range(27, 39), 0.6, i * 5 + 2)
+    // a second run tight to the deck so the driver sees the city THROUGH the
+    // railing, running under the deck line — that is what sells the flight
+    drop(i % 2 ? 'CityBlock_Corner' : 'CityBlock_Street', -flip * rnd.range(13, 17), i % 2 ? 0.85 : 0.55, i * 11 + 5)
+  }
+  return g
 }
 
 /* ------------------------------------------------------ pose helpers ------ */

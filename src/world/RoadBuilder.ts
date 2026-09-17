@@ -1099,21 +1099,43 @@ export class RoadBuilder {
     const conc = this.concMat(0xb0aba1, 171, 0.86)
     const darkConc = this.concMat(0x6f6c68, 191, 0.9)
 
-    // parapets: inside face, cap, outside face down to the deck edge
+    // parapet: a LOW jersey plus an open steel railing, so the driver looks
+    // through the posts to the city and pylons 13 m below — the deck must read
+    // as flying, which a solid slab parapet prevents
     const para: [number, number][] = [
-      [hw + 0.34, -0.05], [hw + 0.34, 0.66], [hw + 0.46, 1.02], [hw + 0.78, 1.06], [hw + 0.86, 0.9], [hw + 0.86, -0.92],
+      [hw + 0.34, -0.05], [hw + 0.34, 0.5], [hw + 0.52, 0.62], [hw + 0.66, 0.6], [hw + 0.66, -0.92],
     ]
+    const steelR = this.steelMat(0x8d949c, 0.72, 0.5)
+    const m4b = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e4 = new THREE.Euler()
     for (const side of [1, -1] as const) {
-      const m = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.6, para, 0.3), conc)
+      const m = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.5, para, 0.3), conc)
       m.castShadow = true
       m.receiveShadow = true
       m.name = 'deck-parapet'
       g.add(m)
-      // a steel hand-rail reveal on the inside of the parapet
-      const rail: [number, number][] = [[hw + 0.3, 0.72], [hw + 0.42, 0.78], [hw + 0.42, 0.86], [hw + 0.3, 0.8]]
-      const rm = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.36, rail, 0.4), this.steelMat(0x8d949c, 0.75, 0.45))
-      rm.name = 'deck-rail'
-      g.add(rm)
+      // twin rails across the railing line
+      for (const [lo, hi] of [[0.72, 0.8], [0.92, 1.02]] as const) {
+        const prof: [number, number][] = [[hw + 0.46, lo], [hw + 0.8, lo], [hw + 0.8, hi], [hw + 0.46, hi]]
+        const rm = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.6, prof, 0.4), steelR)
+        rm.name = 'deck-rail'
+        g.add(rm)
+      }
+      // railing posts every 3 m
+      const pn = Math.max(2, Math.round((s1 - s0) / 3))
+      const postGeo = new THREE.BoxGeometry(0.09, 0.54, 0.09)
+      postGeo.translate(0, 0.27, 0)
+      const posts = new THREE.InstancedMesh(postGeo, steelR, pn)
+      posts.castShadow = true
+      for (let i = 0; i < pn; i++) {
+        const s = s0 + (i + 0.5) * (s1 - s0) / pn
+        const f = this.spline.frame(s)
+        const lat = side * (hw + 0.64)
+        m4b.compose(new THREE.Vector3(f.pos.x + f.side.x * lat, this.spline.bedY(s, 0) + 0.58, f.pos.z + f.side.z * lat), q4.setFromEuler(e4.set(0, f.yaw, 0)), new THREE.Vector3(1, 1, 1))
+        posts.setMatrixAt(i, m4b)
+      }
+      posts.instanceMatrix.needsUpdate = true
+      posts.name = 'deck-rail-posts'
+      g.add(posts)
     }
 
     // structural depth: two girders plus the soffit panel
@@ -1124,11 +1146,21 @@ export class RoadBuilder {
       gm.receiveShadow = true
       g.add(gm)
     }
-    const soft = new THREE.Mesh(this.loft(s0, s1, 2.4, [-hw - 0.9, 0, hw + 0.9],
+    const soft = new THREE.Mesh(this.loft(s0, s1, 2.4, [-hw - 1.05, 0, hw + 1.05],
       (s, lat, out) => this.absPoint(s, lat, this.spline.bedY(s, clamp(lat, -so, so)) - B.deckUnder, out),
       0.2, undefined, false, new THREE.Vector3(0, -1, 0)), darkConc)
     soft.name = 'deck-soffit'
     g.add(soft)
+    // fascia: the deck's outer face — with the skirt suppressed under the fly
+    // the deck edge must close itself (shoulder underside across, down, back)
+    for (const side of [1, -1] as const) {
+      const fprof: [number, number][] = [[hw + 0.95, -0.5], [so + 0.16, -0.5], [so + 0.16, -1.42], [hw + 0.95, -1.42]]
+      const fm = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 1.1, fprof, 0.3), conc)
+      fm.castShadow = true
+      fm.receiveShadow = true
+      fm.name = 'deck-fascia'
+      g.add(fm)
+    }
 
     // pylons: columns to the ground plus a pier cap under the soffit
     const n = Math.max(1, Math.round((s1 - s0) / B.pylonEvery))

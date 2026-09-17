@@ -160,7 +160,7 @@ function boot(): void {
     sec('section_industrial', 560, 0, 62, 32, { tag: 'industrial' })          // yards, gantries, hazard kerbs
     sec('section_tunnel', 1005, 0, 60, 42, { lead: 30, tag: 'tunnel' })       // looking into the portal face
     sec('tunnel_contrast', 1150, 0, 68, 44, { back: 5.6, rise: 1.85, lead: 34, tag: 'tunnel' }) // inside → exit
-    sec('section_elevated', 1520, 0, 62, 46, { lead: 30, tag: 'elevated' })   // deck flying over the north city
+    sec('section_elevated', 1520, 0, 62, 46, { lead: 30, rise: 2.35, lookRise: 0.7, tag: 'elevated' }) // deck flying over the north city
     sec('deck_structure', 1600, 0, 55, 0, { back: 3, rise: -3.4, side: 26, lookSide: -8, tag: 'elevated' }) // parapets, pylons, soffit
     sec('section_final', 2250, 0, 63, 50, { tag: 'final' })                   // high-speed esses on the ridge
     sec('section_shortcut', 2628, 0, 62, 40, { lead: 30, tag: 'shortcut' })   // the guarded spur taking off

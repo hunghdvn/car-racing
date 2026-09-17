@@ -329,9 +329,10 @@ export class CoastField {
         lerp(c.b, gritv * 0.82, (zt.industrial * 0.72 + zt.tunnel * 0.9)))
     }
     if (zt.elevated > 0) {
-      // the north-city floor reads as packed dirt and concrete dust between blocks
+      // the north-city floor reads as packed dirt and CONCRETE dust between
+      // blocks — cool grey, so the dusk light does not turn it magenta
       const dust = smoothstep(0.42, 0.72, fbm2(x * 0.02 + 5.5, z * 0.02 + 1.1, 3))
-      c.setRGB(lerp(c.r, lerp(0.34, 0.42, dust), 0.62), lerp(c.g, lerp(0.33, 0.4, dust), 0.62), lerp(c.b, lerp(0.27, 0.35, dust), 0.62))
+      c.setRGB(lerp(c.r, lerp(0.39, 0.45, dust), 0.7), lerp(c.g, lerp(0.39, 0.44, dust), 0.7), lerp(c.b, lerp(0.4, 0.45, dust), 0.7))
     }
     if (zt.final > 0) {
       const scrub = smoothstep(0.46, 0.76, fbm2(x * 0.026 + 7.7, z * 0.026 + 3.3, 3))
