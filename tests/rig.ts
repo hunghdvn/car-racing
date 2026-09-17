@@ -39,6 +39,7 @@ export class FlatProbe implements TrackProbe {
   }
   surface(): Surf { return { y: 0, onRoad: this.onRoad, rough: this.onRoad ? 0 : 0.6 } }
   centerPose(s: number): CenterPose { return { x: 0, y: 0, z: this.s0 - s, yaw: 0 } }
+  lanePose(s: number, lat: number): CenterPose { return { x: lat, y: 0, z: this.s0 - s, yaw: 0 } }
 }
 
 export function flatCar(): { pv: PlayerVehicle; probe: FlatProbe } {
