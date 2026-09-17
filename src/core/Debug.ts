@@ -44,6 +44,8 @@ export interface DebugHost {
   applyPose(pose: ShotPose): void
   render(renderMode?: number): void
   getCanvas(): HTMLCanvasElement
+  /** clear the host's frozen-pose hold (releases the rAF loop back to the live sim) */
+  releasePose?(): void
 }
 
 class DebugApi {
@@ -71,7 +73,10 @@ class DebugApi {
     if (pose.camera) this.cameraFrozen = true
   }
 
-  releasePose(): void { this.cameraFrozen = false }
+  releasePose(): void {
+    this.cameraFrozen = false
+    this.host?.releasePose?.()
+  }
 
   async captureShot(name: string): Promise<string> { return this.shot(name) }
 

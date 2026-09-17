@@ -4,8 +4,9 @@
  * frame-chain evidence: per-frame dt, draw calls/triangles (gl.info over the
  * full composer chain), station/zone/phase tags, tier, JS heap, plus scene
  * census and a RE_RENDER_MODE-style render-cost bisect. Production paths are
- * untouched — sampling rides the dev __perf* probes in src/main.ts (same
- * dev-harness class as __probe/__tally) and the stats/bucketing math is the
+ * untouched — the harness boots the dev-gated build (build/harness, __VR_
+ * HARNESS__ on) and samples via the dev __perf* probes in src/dev/harness.ts
+ * (same dev-harness class as __probe/__tally); the stats/bucketing math is the
  * bundled src/core/PerfPolicy.ts (single source of the Gate-P windows).
  *
  * Usage:
@@ -17,9 +18,10 @@
  * Raw evidence: shots/perf_<label>.json
  */
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
-import { spawn, spawnSync, execSync } from 'node:child_process'
+import { spawnSync, execSync } from 'node:child_process'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { buildHarness, startPreview } from './_harness.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT = resolve(ROOT, 'shots')
@@ -85,13 +87,15 @@ if (!chromium) {
   chromium = (await import('playwright')).chromium
 }
 
-// ---- serve dist -------------------------------------------------------------
-const PORT = 4519
-const server = spawn('npx', ['--yes', 'vite', 'preview', '--port', String(PORT), '--strictPort'], { cwd: ROOT, stdio: 'ignore' })
-const url = `http://localhost:${PORT}/?` + (process.env.SHOT_QUERY ?? '')
-let up = false
-for (let i = 0; i < 80; i++) { try { const res = await fetch(url); if (res.ok) { up = true; break } } catch { /* retry */ } await wait(300) }
-if (!up) { console.error('[perf] preview server did not come up'); server.kill(); process.exit(1) }
+// ---- serve the dev-harness build (the shipped dist/ has the harness stripped) --
+const BASE_PORT = 4519
+const OUTDIR = buildHarness(ROOT)
+const prev = startPreview(ROOT, OUTDIR, BASE_PORT)
+const probeUp = async () => { for (let i = 0; i < 80; i++) { try { const res = await fetch(prev.url); if (res.ok) return true } catch { /* retry */ } await wait(300) } return false }
+let up = await probeUp()
+if (!up) { await prev.restartOnBusy(); up = await probeUp() }
+if (!up) { console.error('[perf] preview server did not come up'); prev.close(); process.exit(1) }
+const url = `${prev.url}/?` + (process.env.SHOT_QUERY ?? '')
 
 // --gpu switches to the headed ANGLE/Metal configuration (Playwright's
 // headless shell is locked to SwiftShader CPU rasterization — proven via CDP
@@ -499,6 +503,6 @@ try {
   const file = join(OUT, `perf_${LABEL}.json`)
   writeFileSync(file, JSON.stringify(report, null, 1))
   console.log(`[perf] wrote ${file}`)
-  await browser.close()
-  server.kill()
+  if (browser) { try { await browser.close() } catch { /* best effort */ } }
+  prev.close()
 }

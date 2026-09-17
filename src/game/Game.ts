@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { Renderer } from '../core/Renderer'
 import { Sky } from '../core/SkyEnv'
-import { Debug, type ShotPose } from '../core/Debug'
+import type { ShotPose } from '../core/Debug'
 import { Input, type InputAction, type InputState } from '../core/Input'
 import { ParticleManager } from '../core/ParticleManager'
 import { SkidMarks } from '../core/SkidMarks'
@@ -56,6 +56,8 @@ export class Game {
   simTime = 0
   paused = false
   private simFrozen = false
+  /** the authored shot pose held by the dev harness (frozen capture); null in play */
+  private frozenPose: ShotPose | null = null
   private clock = new THREE.Clock()
   private acc = 0
   private loadingHidden = false
@@ -92,9 +94,7 @@ export class Game {
     this.view = new Renderer(canvas)
     this.sky = new Sky()
     this.view.attachSky(this.sky)
-    const t0 = performance.now()
     this.slice = buildTrackSlice()
-    ;(globalThis as unknown as { __buildMs?: number }).__buildMs = Math.round(performance.now() - t0)
     this.slice.group.name = 'track-slice'
     this.view.scene.add(this.slice.group)
     this.probe = new RoadSurfaceProbe(this.slice.spline, this.slice.field)
@@ -144,13 +144,12 @@ export class Game {
     for (let i = 0; i < AI.count; i++) this.mapAi.push({ x: 0, z: 0 })
     this.shortcutXs = new Float32Array(TRACK.shortcut.pts.map((p) => p[0]))
     this.shortcutZs = new Float32Array(TRACK.shortcut.pts.map((p) => p[2]))
-    Debug.bind({
-      applyPose: (p) => this.applyPose(p),
-      render: (m) => this.view.render(m),
-      getCanvas: () => canvas,
-    })
-    const releaseOrig = Debug.releasePose.bind(Debug)
-    Debug.releasePose = () => { this.simFrozen = false; releaseOrig() }
+  }
+
+  /** Release a frozen shot pose held by the dev harness (see core/Debug host). */
+  releasePose(): void {
+    this.simFrozen = false
+    this.frozenPose = null
   }
 
   /** put the car on the centreline at station s and put the camera behind it */
@@ -467,6 +466,7 @@ export class Game {
   /** frozen Debug-shot binding: car via the explicit pose visual, camera direct */
   applyPose(p: ShotPose): void {
     this.simFrozen = !!p.freezeSim
+    this.frozenPose = p.freezeSim ? p : null
     // approved frames are pose-driven: transient effects never leak into a
     // frozen capture (and pose-capture clearing doubles as the restart hook)
     this.fx.clearAll()
@@ -530,8 +530,8 @@ export class Game {
     const frame = (): void => {
       const dt = Math.min(this.clock.getDelta(), 0.05)
       this.frameCount++
-      if (this.simFrozen && Debug.lastPose) {
-        this.applyPose(Debug.lastPose)
+      if (this.simFrozen && this.frozenPose) {
+        this.applyPose(this.frozenPose)
       } else if (!this.paused) {
         this.simTime += dt
         const inp = this.input.poll(dt)

@@ -4,8 +4,8 @@
  * Serves dist/ via vite preview; writes shots/<name>.png.
  */
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
-import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
+import { buildHarness, startPreview } from './_harness.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT = resolve(ROOT, 'shots')
@@ -39,16 +39,21 @@ if (!browserType) {
 }
 const { chromium } = await import('playwright')
 
-// ---- serve dist --------------------------------------------------------------
-const PORT = 4517
-const server = spawn('npx', ['--yes', 'vite', 'preview', '--port', String(PORT), '--strictPort'], { cwd: ROOT, stdio: 'ignore' })
-const url = "http://localhost:" + String(PORT) + "/" + (process.env.SHOT_QUERY ? "?" + process.env.SHOT_QUERY : "")
+// ---- serve the dev-harness build (the shipped dist/ has the harness stripped) --
+const BASE_PORT = 4517
+const OUTDIR = buildHarness(ROOT)
+const prev = startPreview(ROOT, OUTDIR, BASE_PORT)
+const query = process.env.SHOT_QUERY ? `?${process.env.SHOT_QUERY}` : ''
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-let up = false
-for (let i = 0; i < 60; i++) { try { const res = await fetch(url); if (res.ok) { up = true; break } } catch { /* retry */ } await wait(300) }
-if (!up) { console.error('[shots] preview server did not come up'); server.kill(); process.exit(1) }
+const probeUp = async () => { for (let i = 0; i < 60; i++) { try { const res = await fetch(prev.url); if (res.ok) return true } catch { /* retry */ } await wait(300) } return false }
+let up = await probeUp()
+if (!up) { await prev.restartOnBusy(); up = await probeUp() } // base port was an orphan → rebound
+if (!up) { console.error('[shots] preview server did not come up'); prev.close(); process.exit(1) }
+const url = `${prev.url}${query}`
+let browser = null
+try {
 
-const browser = await chromium.launch({ headless: true, args: ['--use-angle=1', '--enable-unsafe-experimental-webgpu-discard'] })
+browser = await chromium.launch({ headless: true, args: ['--use-angle=1', '--enable-unsafe-experimental-webgpu-discard'] })
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
 page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 500)))
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log(`[console ${m.type()}]`, m.text().slice(0, 400)) })
@@ -81,5 +86,7 @@ for (const name of list) {
     if (t) for (const [k, v] of Object.entries(t)) if (v.meshes) console.log(`  [${k}] meshes=${v.meshes} tris=${v.tris} ${JSON.stringify(Object.entries(v.names).sort((a, b) => b[1] - a[1]).slice(0, 8))}`)
   }
 }
-await browser.close()
-server.kill()
+} finally {
+  if (browser) { try { await browser.close() } catch { /* best effort */ } }
+  prev.close()
+}

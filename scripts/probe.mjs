@@ -1,18 +1,22 @@
-/** Structural probe: inspects the built scene through window.__dbg. */
-import { spawn } from 'node:child_process'
+/** Structural probe: inspects the built scene through window.__dbg (harness build). */
 import { resolve } from 'node:path'
+import { buildHarness, startPreview } from './_harness.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const PORT = 4519
-const server = spawn('npx', ['--yes', 'vite', 'preview', '--port', String(PORT), '--strictPort'], { cwd: ROOT, stdio: 'ignore' })
-const url = `http://localhost:${PORT}/?` + (process.env.SHOT_QUERY ?? '')
+const BASE_PORT = 4519
+const OUTDIR = buildHarness(ROOT)
+const prev = startPreview(ROOT, OUTDIR, BASE_PORT)
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-let up = false
-for (let i = 0; i < 60; i++) { try { const res = await fetch(url); if (res.ok) { up = true; break } } catch { /* */ } await wait(300) }
-if (!up) { console.error('no server'); server.kill(); process.exit(1) }
+const probeUp = async () => { for (let i = 0; i < 60; i++) { try { const res = await fetch(prev.url); if (res.ok) return true } catch { /* */ } await wait(300) } return false }
+let up = await probeUp()
+if (!up) { await prev.restartOnBusy(); up = await probeUp() }
+if (!up) { console.error('no server'); prev.close(); process.exit(1) }
+const url = `${prev.url}/?` + (process.env.SHOT_QUERY ?? '')
 
 const { chromium } = await import('playwright')
-const browser = await chromium.launch({ headless: true, args: ['--use-angle=1'] })
+let browser = null
+try {
+browser = await chromium.launch({ headless: true, args: ['--use-angle=1'] })
 const page = await browser.newPage({ viewport: { width: 640, height: 360 } })
 page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 300)))
 await page.goto(url, { waitUntil: 'load' })
@@ -71,5 +75,7 @@ const out = await page.evaluate(() => {
   }
 })
 console.log(JSON.stringify(out, null, 1))
-await browser.close()
-server.kill()
+} finally {
+  if (browser) { try { await browser.close() } catch { /* best effort */ } }
+  prev.close()
+}

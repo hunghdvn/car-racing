@@ -7,9 +7,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:harness": "tsc --noEmit && VR_HARNESS=1 vite build --outDir build/harness --emptyOutDir",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/tests.mjs"
+    "test": "node scripts/tests.mjs",
+    "shots": "node scripts/shots.mjs",
+    "probe": "node scripts/probe.mjs",
+    "noleak": "node scripts/noleak.mjs",
+    "functional": "node scripts/functional.mjs",
+    "audit": "node scripts/audit-shots.mjs"
   },
   "dependencies": {
     "three": "^0.168.0"
