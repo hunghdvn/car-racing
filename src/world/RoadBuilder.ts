@@ -3,7 +3,7 @@ import { TRACK, SEED, type ZoneId } from '../config'
 import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry, crNormals, sweepProfile, ensureOutwardWinding, forceUpWinding, type SweepFrame } from '../util'
 
 const UP = new THREE.Vector3(0, 1, 0)
-import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture, finishBannerTexture, billboardFaceTexture } from '../assets/Textures'
+import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture, finishBannerTexture, billboardFaceTexture, signFaceTexture } from '../assets/Textures'
 import { rockGeometry } from './VegetationKit'
 import type { TrackSpline } from './TrackSpline'
 
@@ -1354,6 +1354,7 @@ export class RoadBuilder {
     const acc: number[] = [0]
     for (let i = 1; i < raw.length; i++) acc.push(acc[i - 1] + raw[i].distanceTo(raw[i - 1]))
     const total = acc[acc.length - 1]
+    const gap = 15
     const at = (s: number): { p: THREE.Vector3; tx: number; tz: number; yaw: number } => {
       let i = 1
       while (i < acc.length - 1 && acc[i] < s) i++
@@ -1363,6 +1364,13 @@ export class RoadBuilder {
       return { p: raw[i], tx: tx / l, tz: tz / l, yaw: Math.atan2(-tx, -tz) }
     }
     const crown = (lat: number): number => -0.055 * Math.min(1, Math.abs(lat) / half) * Math.min(1, Math.abs(lat) / half)
+    // the lane flares into an apron at each mouth so it reads as engineered,
+    // not as a strip laid on the field
+    const flare = (s: number): number => {
+      const fIn = 1 - smoothstep(gap * 0.6, gap * 2.6, s)
+      const fOut = smoothstep(total - gap * 2.6, total - gap * 0.6, s)
+      return 1 + 3.4 * Math.max(fIn, fOut)
+    }
     const cols = [-half, -half * 0.42, half * 0.42, half, half + 1.5]
     const rows = Math.max(2, Math.round(total / 1.1))
     const pos: number[] = [], uv: number[] = [], col: number[] = [], idx: number[] = []
@@ -1370,7 +1378,9 @@ export class RoadBuilder {
     for (let i = 0; i <= rows; i++) {
       const s = (i / rows) * total
       const fr = at(s)
-      for (const lat of cols) {
+      const fw = flare(s)
+      for (let cj = 0; cj < cols.length; cj++) {
+        const lat = cj === cols.length - 1 ? cols[cj] * fw : cols[cj]
         const sx = -fr.tz, sz = fr.tx // planar driver-right
         const x = fr.p.x + sx * lat, z = fr.p.z + sz * lat
         const edgeOut = Math.abs(lat) > half
@@ -1380,8 +1390,9 @@ export class RoadBuilder {
         pos.push(x, y, z)
         uv.push(lat * 0.24, s * 0.24)
         roadVertexColor(s, lat * 1.4, c)
-        // the lane reads a shade lighter and older than the racing line
-        c.setRGB(c.r * 1.06, c.g * 1.05, c.b * 1.04)
+        // the spur reads as OLD patched asphalt — a shade darker and grayer
+        // than the racing line, so it never looks like a pale smear
+        c.setRGB(c.r * 0.88, c.g * 0.87, c.b * 0.85)
         col.push(c.r, c.g, c.b)
       }
     }
@@ -1421,7 +1432,6 @@ export class RoadBuilder {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
     const v = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
     let np = 0, nr = 0
-    const gap = 15
     for (const side of [-1, 1] as const) for (let i = 0; i < postN / 2; i++) {
       const s = ((i + 0.5) / (postN / 2)) * total
       if (s < gap || s > total - gap) continue
@@ -1464,6 +1474,69 @@ export class RoadBuilder {
     cones.instanceMatrix.needsUpdate = true
     cones.name = 'shortcut-cones'
     g.add(cones)
+
+    // chicane through the mid-lane: alternating painted boards with a cone at
+    // the gate, so the spur forces a real lane change instead of being open tarmac
+    const boardGeo = new THREE.BoxGeometry(1.7, 0.66, 0.1)
+    boardGeo.translate(0, 0.33, 0)
+    const boards = new THREE.InstancedMesh(boardGeo, this.mat('spurChicane', () => new THREE.MeshStandardMaterial({ color: 0xe9e7df, roughness: 0.62 })) as THREE.Material, 5)
+    boards.castShadow = true
+    for (let k = 0; k < 5; k++) {
+      const sC = total * (0.3 + k * 0.1)
+      const lat = (k % 2 ? 1 : -1) * half * 0.55
+      const fr = at(sC)
+      const sx = -fr.tz, sz = fr.tx
+      e.set(0, fr.yaw + (k % 2 ? 0.55 : -0.55), 0)
+      q.setFromEuler(e)
+      m4.compose(new THREE.Vector3(fr.p.x + sx * lat, fr.p.y + 0.03, fr.p.z + sz * lat), q, sc)
+      boards.setMatrixAt(k, m4)
+      if (nc < 10) {
+        const gl = lat + (k % 2 ? half * 0.5 : -half * 0.5)
+        const cx = fr.p.x + sx * gl, cz = fr.p.z + sz * gl
+        e.set(0, fr.yaw, 0)
+        q.setFromEuler(e)
+        m4.compose(new THREE.Vector3(cx, fr.p.y + 0.02, cz), q, sc)
+        cones.setMatrixAt(nc++, m4)
+      }
+    }
+    boards.count = 5
+    boards.instanceMatrix.needsUpdate = true
+    boards.name = 'shortcut-chicane'
+    cones.count = nc
+    cones.instanceMatrix.needsUpdate = true
+    g.add(boards)
+
+    // mouth gates: twin posts, a lintel with hazard collars and the route sign,
+    // so the spur reads as gated, signed infrastructure at both junctions
+    const inkG = this.mat('spurGateInk', () => new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.7 })) as THREE.Material
+    const haz = this.mat('spurGateHaz', () => new THREE.MeshStandardMaterial({ color: 0xf2b23c, roughness: 0.6 })) as THREE.Material
+    const gateSign = this.mat('spurGateSign', () => new THREE.MeshStandardMaterial({ map: signFaceTexture('shortcut'), roughness: 0.55, side: THREE.DoubleSide })) as THREE.Material
+    for (const sG of [gap * 0.5, total - gap * 0.5] as const) {
+      const fr = at(sG)
+      const sx = -fr.tz, sz = fr.tx
+      const gy = fr.p.y
+      const gput = (geo: THREE.BufferGeometry, mat: THREE.Material, lat: number, y: number, along = 0): void => {
+        const m = new THREE.Mesh(geo, mat)
+        m.position.set(fr.p.x + sx * lat + fr.tx * along, gy + y, fr.p.z + sz * lat + fr.tz * along)
+        m.rotation.set(0, fr.yaw + Math.PI, 0)
+        m.castShadow = true
+        m.receiveShadow = true
+        g.add(m)
+      }
+      for (const side of [-1, 1] as const) {
+        gput(new THREE.BoxGeometry(0.18, 4.0, 0.18), inkG, side * (half + 1.15), 2.0)
+        gput(new THREE.BoxGeometry(0.22, 0.5, 0.22), haz, side * (half + 1.15), 0.55)
+        gput(new THREE.BoxGeometry(0.22, 0.5, 0.22), haz, side * (half + 1.15), 3.6)
+      }
+      gput(new THREE.BoxGeometry(2 * (half + 1.15) + 0.5, 0.34, 0.3), inkG, 0, 4.02)
+      gput(new THREE.BoxGeometry(2 * (half + 1.15) + 0.5, 0.14, 0.34), haz, 0, 3.78)
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(3.3, 1.65, 0.07), gateSign)
+      sign.position.set(fr.p.x, gy + 2.95, fr.p.z)
+      sign.rotation.set(0, fr.yaw + Math.PI, 0)
+      sign.castShadow = true
+      sign.name = 'shortcut-sign'
+      g.add(sign)
+    }
 
     const arrow = this.shortcutArrow(at(gap * 1.35), half * 0.62)
     arrow.name = 'shortcut-arrow'

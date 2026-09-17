@@ -366,11 +366,29 @@ export function patchDecalTexture(): THREE.Texture {
 }
 
 /** Painted warning/venue signage faces (original artwork, canvas-drawn). */
-export function signFaceTexture(kind: 'jump' | 'speed' | 'store' | 'cafe' | 'tyres'): THREE.Texture {
+export function signFaceTexture(kind: 'jump' | 'speed' | 'store' | 'cafe' | 'tyres' | 'shortcut'): THREE.Texture {
   return cached(`sign${kind}`, () =>
     canvasTexture(512, 256, (ctx, w, h) => {
       const rnd = new Rand(kind.length * 131 + 7)
-      if (kind === 'jump') {
+      if (kind === 'shortcut') {
+        ctx.fillStyle = '#14432c'
+        ctx.fillRect(0, 0, w, h)
+        ctx.strokeStyle = '#e9e7df'
+        ctx.lineWidth = 10
+        ctx.strokeRect(10, 10, w - 20, h - 20)
+        ctx.fillStyle = '#f4f1e4'
+        ctx.textAlign = 'center'
+        ctx.font = 'bold 58px sans-serif'
+        ctx.fillText('SHORTCUT', w / 2, 92)
+        ctx.font = 'bold 34px sans-serif'
+        ctx.fillStyle = '#e8c83e'
+        ctx.fillText('-100 m  CAPE MARLO LINE', w / 2, 150)
+        ctx.fillStyle = '#f4f1e4'
+        ctx.beginPath()
+        ctx.moveTo(w / 2 - 64, 216); ctx.lineTo(w / 2, 176); ctx.lineTo(w / 2 + 64, 216)
+        ctx.lineTo(w / 2 + 38, 216); ctx.lineTo(w / 2, 192); ctx.lineTo(w / 2 - 38, 216)
+        ctx.closePath(); ctx.fill()
+      } else if (kind === 'jump') {
         ctx.fillStyle = '#e8e6de'
         ctx.fillRect(0, 0, w, h)
         ctx.strokeStyle = '#1b1d21'
