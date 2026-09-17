@@ -50,13 +50,14 @@ export const VEHICLE = {
   wheelRadius: 0.36, wheelWidth: 0.30, wheelbase: 2.72, trackWidth: 1.64,
   rideHeight: 0.30, wheelbaseFront: 1.4,
   engineAccel: 11.2, // m/s² at v=0 (before curve)
+  engineFloor: 0.06, // residual throttle fraction of the curve at v->top (keeps the car pressed to the cap)
   topSpeed: 57,       // ~205 km/h
   nitroTopSpeed: 72,  // ~259 km/h
   nitroAccelMul: 1.62,
   brakeForce: 24,
   reverseMaxSpeed: 14,
   reverseAccel: 8,
-  drag: 0.0034,       // quadratic air drag coeff (1/m)
+  drag: 0.00055,      // quadratic air drag coeff (1/m) — tuned so the engine curve asymptotes just above 0.9 topSpeed
   rollResist: 0.35,   // m/s² rolling friction
   grassRollResist: 3.4,
   gripMax: 14.2,      // max lateral accel on asphalt m/s²
@@ -78,6 +79,33 @@ export const VEHICLE = {
   collisionBounce: 0.36,
   carPushRadius: 2.25,
   carPushForce: 10.5,
+  /* --- Phase 6: drive-mode tuning (arcade feel, spec §14) --- */
+  /** per-wheel suspension travel (m): jounce limit / droop extension / static preload */
+  suspTravel: 0.13, suspDroop: 0.078, suspPreload: 0.045,
+  /** wheel-speed (m/s) transferred into suspension load transfer (pitch/roll feel) */
+  loadPitchK: 0.0042, loadRollK: 0.0034,
+  /** body pitch/roll visual gains (rad per m/s²) and clamp */
+  bodyPitchK: 0.0055, bodyRollK: 0.011, bodyLeanK: 0.1, bodyTiltMax: 0.16,
+  /** geometric ramp launch: vy = speed * (grade + slopeAtLip * launchPop); gates */
+  launchPop: 1.18, launchMinSpeed: 17, launchMinSlope: 0.04,
+  /** airborne pitch toward velocity vector (rad/s pursuit) */
+  airPitchK: 4.5,
+  /** landing: vertical impact scrub (per m/s of impact speed) */
+  landScrubK: 0.008,
+  /** collision: wall sits barrierInset beyond the asphalt edge; post-hit scrub/cooldown */
+  barrierInset: 0.62, collideScrub: 0.9, collideCd: 0.22, vehicleHalf: 0.92,
+  /** off-road: beyond roadEdge+offPad the surface is loose */
+  offPad: 0.42,
+  /** respawn: blackout duration and out-of-corridor trigger distance */
+  respawnTime: 0.8, respawnLat: 85, respawnSeaPad: 0.35,
+  /** stuck (throttle pinned, no progress) auto-respawn gate */
+  stuckTime: 3.5, stuckSpeed: 1.6,
+  /** steering visual: max front-wheel angle (rad); derived from yaw rate (auto counter-steer) */
+  steerMaxRad: 0.62, steerSpeedGate: 5,
+  /** drift economy gate: slip must exceed driftMinSlip; chain bonus after driftChainHold s */
+  driftMinSlip: 0.2, driftChainHold: 0.85, driftEndGrace: 0.45,
+  /** nitro release flicker guard (s) */
+  nitroOffCool: 0.3,
 } as const
 
 /** Nitro system (spec §14). */
