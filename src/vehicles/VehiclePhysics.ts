@@ -1,5 +1,6 @@
 import { TRACK, VEHICLE, type ZoneId } from '../config'
 import { clamp, clamp01, damp, Rand, wrapPi } from '../util'
+import { rampSlopeAt } from '../world/RoadBuilder'
 import type { TrackProbe, Corridor } from './TrackProbe'
 
 /* ------------------------------------------------------------------------- *
@@ -213,7 +214,7 @@ export class VehiclePhysics {
     if (this.grounded) {
       const crossedLip = c.zone !== 'elevated' && prevS < TRACK.ramp.sLip && this.s >= TRACK.ramp.sLip && Math.abs(this.lat) <= RAMP_LAT
       if (crossedLip && speed >= V.launchMinSpeed) {
-        const slope = lipSlope()
+        const slope = rampSlopeAt(TRACK.ramp.sLip - TRACK.ramp.launchProbe)
         if (slope > V.launchMinSlope) {
           this.grounded = false
           this.vy = speed * (Math.max(0, c.grade) + slope * V.launchPop)
@@ -387,14 +388,3 @@ export class VehiclePhysics {
   }
 }
 
-/** d(lift)/ds over the loaded section of the kicker — the face the car
- *  leaves the ground from (the smoothstep crest flattens into the lip) */
-let _lipSlope = Number.NaN
-function lipSlope(): number {
-  if (!Number.isFinite(_lipSlope)) {
-    const r = TRACK.ramp
-    const u = (r.sLip - 1.2 - r.sStart) / (r.sLip - r.sStart)
-    _lipSlope = (1.5 * r.height * 4 * u * (1 - u)) / (r.sLip - r.sStart)
-  }
-  return _lipSlope
-}

@@ -1,4 +1,4 @@
-import { TRACK, type ZoneId } from '../config'
+import { TRACK, VEHICLE, type ZoneId } from '../config'
 import { clamp, smoothstep } from '../util'
 import { TrackSpline } from '../world/TrackSpline'
 import { CoastField } from '../world/Terrain'
@@ -118,7 +118,7 @@ export class RoadSurfaceProbe implements TrackProbe {
     void absLat
     if (zone === 'tunnel') return TRACK.tunnel.tubeHalf - 0.35
     if (zone === 'elevated') return HW + TRACK.bridge.deckEdge + 0.05
-    for (const w of this.walls) if (s >= w.s0 && s <= w.s1) return HW + 0.62
+    for (const w of this.walls) if (s >= w.s0 && s <= w.s1) return HW + VEHICLE.barrierInset
     return Infinity
   }
 

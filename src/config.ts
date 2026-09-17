@@ -278,6 +278,8 @@ export const TRACK = {
   ramp: {
     sStart: 213, sLip: 224.6, height: 1.26, lipThick: 0.2,
     landingS: 228.6, landingLen: 6.2, sideTrim: 0.55, // asphalt inset each side
+    /** m before the lip where the built kicker's launch slope is sampled (VehiclePhysics) */
+    launchProbe: 1.2,
   },
   /** Coastal terrain field (spec §4.4/§8/§9). */
   /** Full-circuit terrain shaping (spec §8). The coastal field is frozen; the
