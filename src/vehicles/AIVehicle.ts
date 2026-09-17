@@ -74,6 +74,11 @@ const HW = TRACK.halfWidth
 const CURV_EPS = 1e-4
 /** commanded lane may not aim past the barrier clamp envelope */
 const LANE_CAP = HW - 1.2
+/* Curvature-scan sample fractions across each look-ahead window. Hoisted to
+ * module scope and iterated by index so the 120 Hz decision path stays truly
+ * allocation-free (no per-call array literal or iterator object). */
+const CURV_SCAN_K = [0, 0.34, 0.67, 1]
+const STEER_SCAN_K = [0, 0.5]
 
 /** deterministic frozen state of one AI car (shot + replay verification) */
 export interface AIStaticSnapshot {
@@ -226,15 +231,15 @@ export class AIVehicle {
     /* --- curvature scan over the braking window (allocation-free) --- */
     const w = Math.max(AI.minLookaheadDist, p.speed * AI.brakeLookaheadTime)
     let kAbs = 0, kSigned = 0
-    for (const k of [0, 0.34, 0.67, 1]) {
-      const c = this.spline.curvAt(p.s + k * w)
+    for (let ki = 0; ki < CURV_SCAN_K.length; ki++) {
+      const c = this.spline.curvAt(p.s + CURV_SCAN_K[ki] * w)
       const a = Math.abs(c)
       if (a > kAbs) { kAbs = a; kSigned = c }
     }
     // steering-window peak (signed) drives the apex cut
     let sAbs = Math.abs(f.curv), sSigned = f.curv
-    for (const k of [0, 0.5]) {
-      const c = this.spline.curvAt(p.s + k * look)
+    for (let ki = 0; ki < STEER_SCAN_K.length; ki++) {
+      const c = this.spline.curvAt(p.s + STEER_SCAN_K[ki] * look)
       const a = Math.abs(c)
       if (a > sAbs) { sAbs = a; sSigned = c }
     }
