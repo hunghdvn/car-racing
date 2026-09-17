@@ -19,6 +19,17 @@ export interface ShotPose {
     nitro?: boolean
     air?: boolean
     wheelsSpin?: number
+    /* --- Phase 6 explicit state visuals (frozen poses render these) --- */
+    /** nitro flame intensity 0..1 (overrides `nitro` flag) */
+    nitroLevel?: number
+    /** brake-light glow 0..1 (overrides the speed-derived default) */
+    brakeGlow?: number
+    /** front-wheel angle (rad, + = left as for yaw) — counter-steer in drifts */
+    wheelSteer?: number
+    /** uniform suspension travel (m; - compressed, + drooped); `air` extends */
+    susp?: number
+    /** extra body roll beyond `bank` (rad) — drift skid lean */
+    lean?: number
   }
   freezeSim?: boolean
   parkAi?: boolean

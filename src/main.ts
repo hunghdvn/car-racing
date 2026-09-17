@@ -1,17 +1,14 @@
 import * as THREE from 'three'
-import { Renderer } from './core/Renderer'
-import { Sky } from './core/SkyEnv'
 import { Debug } from './core/Debug'
 import type { ShotPose } from './core/Debug'
-import { buildCar, type CarModel } from './assets/CarModel'
-import { ChaseCamera, type CarView } from './camera/ChaseCamera'
-import { PAINTS, VEHICLE, KIT, GRAPHICS } from './config'
+import { KIT, PAINTS } from './config'
 import { Rand } from './util'
 import { buildBuilding, BUILDING_DESIGNS, type BuildingDesignId } from './world/BuildingKit'
 import { composePrefab } from './world/ComposeKit'
 import { makeBollard, makeCones, makeDrum, makePallet, makeCrates, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeSign, makeTrafficLight, makeUtilityPole, makeStreetlight, makeMastLight, makeContainer, makeBarrierUnit, makePipeStack, makeVan, makeSignGantry, makeBillboard, makeRadioMast, makeWaterTower, makeGantryCrane } from './world/PropKit'
 import { palmGeometry, pineGeometry, bushGeometry, rockGeometry, broadleafGeometry, treeLOD } from './world/VegetationKit'
-import { buildTrackSlice, roadPose, heroShot } from './world/TrackSlice'
+import { roadPose, heroShot } from './world/TrackSlice'
+import { Game } from './game/Game'
 
 const $ = (id: string): HTMLElement | null => document.getElementById(id)
 
@@ -28,25 +25,18 @@ window.addEventListener('error', (ev) => fatal(ev.error ?? ev.message))
 window.addEventListener('unhandledrejection', (ev) => fatal(ev.reason))
 
 /* ---------------------------------------------------------------------------
- * Phase 1-2 DEV HARNESS (Gate A0/A). Replaced by Game.boot() in Phase 5-6.
- * Not shipped content (spec §23.4 placeholder audit will remove this file's
- * harness body entirely).
+ * Phase 1-6 DEV HARNESS (Gate A0/A/B/C). The real application lives in
+ * game/Game.ts; this file only wires boot + dev probes + the shot registry.
+ * DRIVE mode is the default (WASD/arrows, Space handbrake, Shift nitro, R
+ * respawn, P pause); frozen POSE mode is driven through window.__vr.
+ * Not shipped content (spec §23.4 — this whole harness goes in Phase 10).
  * ------------------------------------------------------------------------- */
 function boot(): void {
   const canvas = document.getElementById('scene') as HTMLCanvasElement
-  const view = new Renderer(canvas)
-  const sky = new Sky()
-  view.attachSky(sky)
+  const game = new Game(canvas, PAINTS[1].color)
+  const { view, car, slice } = game
+  ;(globalThis as unknown as { __dbg?: unknown }).__dbg = { scene: view.scene, cam: view.camera, slice, THREE, game }
 
-  // Phase 3 — the representative slice replaces the Phase-2 placeholder disc
-  const tBuild = performance.now()
-  const slice = buildTrackSlice()
-  ;(globalThis as unknown as { __buildMs?: number }).__buildMs = Math.round(performance.now() - tBuild)
-  view.scene.add(slice.group)
-  ;(globalThis as unknown as { __dbg?: unknown }).__dbg = { scene: view.scene, cam: view.camera, slice, THREE }
-
-  const car: CarModel = buildCar(PAINTS[1].color)
-  view.scene.add(car.group)
   const qp: Record<string, string> = {}
   for (const kv of location.search.slice(1).split('&')) { const i = kv.indexOf('='); if (i > 0) qp[kv.slice(0, i)] = kv.slice(i + 1) }
   if (qp['nocar']) car.group.visible = false
@@ -72,15 +62,10 @@ function boot(): void {
       mm.material = std
     }
   })
+  // POSE mode: the harness boots camera-still (no drive input authority)
+  if (qp['mode'] === 'pose' || qp['pose']) game.input.enabled = false
 
-  const pos = new THREE.Vector3(0, 0, 0)
-  let yaw = 0.0
-  const chase = new ChaseCamera(view.camera.aspect, view.camera)
-  chase.snapTo({ pos, yaw, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 } as CarView)
-
-  const spinners: { spin: THREE.Group; steer: THREE.Group | null }[] = car.wheels.map((w) => ({ spin: w.spin, steer: w.steer }))
-
-  // ---- deterministic validation poses (Gate A on the road + Gate C0 hero) ----
+  /* ---------------- deterministic validation poses (Gate A/C batteries) ---- */
   const anchor = roadPose(slice.spline, slice.spline.sFromX(30), 0)
   const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean } = {}): ShotPose => {
     const cy = Math.cos(anchor.yaw), sy = Math.sin(anchor.yaw)
@@ -104,6 +89,60 @@ function boot(): void {
     ['car_drift', onRoad([2.6, 1.35, 2.6], [0, 0.6, 0], 62, { speed: 40, drift: true })],
     ['car_nitro', onRoad([2.7, 1.25, 2.7], [0, 0.62, 0], 62, { speed: 50, nitro: true })],
   ])
+
+  /* ---------- Phase 6 drive-state shots: the vehicle systems, frozen -----
+   * Each pose is an explicit visual state through the Vehicle binding (the
+   * same path the sim feeds live), so it doubles as the Phase-2 gate check
+   * on the moving car: mid-drift, airtime over the kicker, nitro burn,
+   * collision recovery. */
+  {
+    const rp = roadPose(slice.spline, slice.spline.sFromX(30), 0)
+    const rotAt = (yaw: number, v: [number, number, number], base: [number, number, number]): [number, number, number] => {
+      const cy = Math.cos(yaw), sy = Math.sin(yaw)
+      return [base[0] + v[0] * cy + v[2] * sy, base[1] + v[1], base[2] - v[0] * sy + v[2] * cy]
+    }
+    const SLIP = 0.5 // readable mid-drift slide angle
+    Debug.registerPose('state_drift', {
+      camera: rotAt(rp.yaw + SLIP, [4.35, 1.62, 3.75], rp.pos),
+      look: rotAt(rp.yaw + SLIP, [0, 0.6, 0.4], rp.pos), fov: 58,
+      player: {
+        pos: rp.pos, yaw: rp.yaw + SLIP, pitch: rp.pitch - 0.025, bank: rp.bank,
+        speed: 42, wheelSteer: -0.5, lean: 0.09, susp: -0.055, brakeGlow: 0.22,
+      },
+      freezeSim: true, tag: 'drive-state',
+    })
+    {
+      const rpA = roadPose(slice.spline, slice.spline.sFromX(30), 0)
+      Debug.registerPose('state_air', {
+        camera: rotAt(rpA.yaw, [2.9, 3.0, 7.6], [rpA.pos[0], rpA.pos[1] + 0.85, rpA.pos[2]]),
+        look: rotAt(rpA.yaw, [0, 0.55, 1.2], [rpA.pos[0], rpA.pos[1] + 0.85, rpA.pos[2]]), fov: 55,
+        player: {
+          pos: [rpA.pos[0], rpA.pos[1] + 0.85, rpA.pos[2]], yaw: rpA.yaw, pitch: rpA.pitch + 0.17, bank: rpA.bank,
+          speed: 45, air: true, wheelSteer: 0.05,
+        },
+        freezeSim: true, tag: 'drive-state',
+      })
+    }
+    Debug.registerPose('state_nitro', {
+      camera: rotAt(rp.yaw, [3.5, 1.1, 4.6], rp.pos),
+      look: rotAt(rp.yaw, [0, 0.45, 1.1], rp.pos), fov: 58,
+      player: {
+        pos: rp.pos, yaw: rp.yaw, pitch: rp.pitch + 0.02, bank: rp.bank,
+        speed: 52, nitroLevel: 1, brakeGlow: 0,
+      },
+      freezeSim: true, tag: 'drive-state',
+    })
+    Debug.registerPose('state_recovery', {
+      camera: rotAt(rp.yaw - 0.42, [-4.5, 1.25, 4.35], rp.pos),
+      look: rotAt(rp.yaw - 0.42, [0, 0.55, 0.5], rp.pos), fov: 58,
+      player: {
+        pos: rp.pos, yaw: rp.yaw - 0.42, pitch: rp.pitch - 0.05, bank: rp.bank,
+        speed: 14, wheelSteer: 0.44, lean: -0.075, susp: -0.09, brakeGlow: 0.95,
+      },
+      freezeSim: true, tag: 'drive-state',
+    })
+  }
+
   if (qp['kick']) {
     const hero = heroShot(slice.spline)
     const cx = hero.car.pos[0], cz = hero.car.pos[2]
@@ -173,8 +212,6 @@ function boot(): void {
    * horizon contamination; boards render FULL detail (lod:false) — the LOD
    * silhouettes are judged on the dedicated far rows / slice frames. */
   {
-    // boards live on a flat concrete raft at datum y=0, clear of the far
-    // terrain (which drops below sea level out here). Sky-fog veils the rim.
     const pad = (cx: number, cz: number, w = 220, d = 130, col = 0x6b6155): void => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 8, d), new THREE.MeshStandardMaterial({ color: col, roughness: 0.9, metalness: 0.02, emissive: new THREE.Color(col).multiplyScalar(0.72) }))
       m.position.set(cx, -4, cz)
@@ -182,7 +219,6 @@ function boot(): void {
       m.castShadow = false
       view.scene.add(m)
     }
-    const groundY = (): number => 0
     const kitRand = (): Rand => new Rand(20260917)
     // --- buildings: two curated rows, front-to-camera, tight hero framing ---
     {
@@ -354,48 +390,8 @@ function boot(): void {
     }
   }
 
-  const carView: CarView = { pos, yaw: 0, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 }
-  let simFrozen = false
-  let shotSpeed = 0, shotNitro = false, shotDrift = false
-
-  const poseFocus = new THREE.Vector3()
-  function applyPose(p: ShotPose): void {
-      simFrozen = !!p.freezeSim
-      shotSpeed = p.player?.speed ?? 0
-      shotNitro = !!p.player?.nitro
-      shotDrift = !!p.player?.drift
-      if (p.player?.pos) { pos.set(...p.player.pos); yaw = p.player.yaw ?? 0 }
-      car.group.position.copy(pos)
-      car.group.rotation.order = 'YXZ'
-      car.group.rotation.set(p.player?.pitch ?? 0, yaw, p.player?.bank ?? 0)
-      const spinA = -shotSpeed * 0.09
-      for (const s of spinners) s.spin.rotation.x = spinA
-      carView.speed = shotSpeed
-      carView.yaw = yaw
-      carView.nitro = shotNitro
-      carView.drift = shotDrift ? 0.55 : 0
-      car.setNitro(shotNitro ? 1 : 0)
-      car.setBrake(shotSpeed > 30 ? Math.min(0.32, shotSpeed / 160 + 0.08) : 0)
-      car.group.updateMatrixWorld(true)
-      view.camera.position.fromArray(p.camera)
-      view.camera.lookAt(p.look ? new THREE.Vector3(...p.look) : new THREE.Vector3(0, 0.6, 0))
-      if (p.fov) { view.camera.fov = p.fov; view.camera.updateProjectionMatrix() }
-      // capture renders synchronously from applyPose — the shadow frustum
-      // must follow HERE, not only in the rAF loop, or frozen poses show the
-      // previous frame's shadow box and the subject renders unshadowed
-      const look = p.look ?? p.camera
-      view.setShadowExtent(p.shadowSpan ?? GRAPHICS.shadowExtent)
-      view.setShadowFocus(poseFocus.set(look[0], Math.max(0, look[1] - 3), look[2]))
-  }
-
-  Debug.bind({
-    applyPose,
-    render(m) { view.render(m) },
-    getCanvas() { return canvas },
-  })
-  const releaseOrig = Debug.releasePose.bind(Debug)
-  Debug.releasePose = () => { simFrozen = false; releaseOrig() }
-  ;(window as unknown as { __tally?: () => object }).__tally = () => {
+  /* ---------------- dev probes (removed with the harness, spec §23.4) ------ */
+  ;(globalThis as unknown as { __tally?: () => object }).__tally = () => {
     const byRoot: Record<string, { meshes: number; tris: number; names: Record<string, number> }> = {}
     for (const root of view.scene.children) {
       const key = root.name || root.type
@@ -411,10 +407,10 @@ function boot(): void {
     }
     return byRoot
   }
-  ;(window as unknown as { __probe?: () => object }).__probe = () => ({
+  ;(globalThis as unknown as { __probe?: () => object }).__probe = () => ({
     buildMs: (globalThis as unknown as { __buildMs?: number }).__buildMs ?? null,
     fps: Math.round(view.fps),
-    frames: frameCount,
+    frames: game.frameCount,
     title: document.title,
     err: !($('error-screen') as HTMLElement)?.classList.contains('hidden') ? (($('error-body') as HTMLElement)?.textContent ?? '').slice(0, 600) : null,
     loadingHidden: $('loading')?.classList.contains('hidden') ?? false,
@@ -426,35 +422,26 @@ function boot(): void {
     glErr: view.gl.getContext().getError(),
     ctxLost: view.gl.getContext().isContextLost(),
   })
+  ;(globalThis as unknown as { __carState?: () => object }).__carState = () => ({
+    x: Math.round(game.player.phys.x * 100) / 100,
+    y: Math.round(game.player.phys.y * 100) / 100,
+    z: Math.round(game.player.phys.z * 100) / 100,
+    speed: Math.round(game.player.phys.speed * 100) / 100,
+    drift: Math.round(game.player.phys.drift * 100) / 100,
+    grounded: game.player.phys.grounded,
+    nitro: Math.round(game.player.nitroVal),
+    respawning: game.player.respawning,
+    simTime: Math.round(game.simTime * 10) / 10,
+  })
 
-  // ---- dev-only Gate A probes (removed with the harness, spec �23.4) ----------------
+  // ---- dev-only Gate A probes ------------------------------------------------
   function halfBits(h: number): number {
     const s = (h & 0x8000) >> 15, e = (h & 0x7c00) >> 10, f = h & 0x3ff
     if (e === 0x1f) return f !== 0 ? NaN : s === 0 ? Infinity : -Infinity
     if (e === 0) return (s === 0 ? 1 : -1) * f * Math.pow(2, -24)
     return (s === 0 ? 1 : -1) * Math.pow(2, e - 15) * (1 + f / 1024)
   }
-  interface BufStat { nan: number; inf: number; max: number; p95: number; samples: number }
-  function statRT(rt: THREE.WebGLRenderTarget | null | undefined): BufStat | null {
-    if (!rt) return null
-    const w = rt.width, h = rt.height
-    const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 24000)))
-    const buf = new Uint16Array(w * h * 4)
-    try { view.gl.readRenderTargetPixels(rt, 0, 0, w, h, buf) } catch { return null }
-    let nan = 0, inf = 0, max = 0
-    const vals: number[] = []
-    for (let i = 0; i < buf.length; i += 4 * step) {
-      for (let c = 0; c < 3; c++) {
-        const v = halfBits(buf[i + c])
-        if (Number.isNaN(v)) nan++
-        else if (!Number.isFinite(v)) inf++
-        else { if (v > max) max = v; vals.push(v) }
-      }
-    }
-    vals.sort((a, b) => a - b)
-    return { nan, inf, max: Math.round(max * 100) / 100, p95: vals.length ? Math.round(vals[Math.floor(vals.length * 0.95)] * 100) / 100 : 0, samples: vals.length }
-  }
-  ;(window as unknown as { __bisect?: () => Record<string, unknown> }).__bisect = () => {
+  ;(globalThis as unknown as { __bisect?: () => Record<string, unknown> }).__bisect = () => {
     const dp = view.debugPipeline as unknown as Record<string, any>
     const c = dp.composer as Record<string, any>
     const passes = c.passes as Record<string, any>[]
@@ -533,10 +520,10 @@ function boot(): void {
       }
     }
     return { nan, inf, finite, max: Math.round(max * 100) / 100, nanBox: bx1 < 0 ? null : [bx0, by0, bx1, by1], size: [w, h] }
-  }  ;(window as unknown as { __tireDbg?: () => unknown }).__tireDbg = () => {
+  }
+  ;(globalThis as unknown as { __tireDbg?: () => unknown }).__tireDbg = () => {
     const w = car.wheels[1]
     const holder = w.steer ?? w.spin
-    const tire = holder.children.length ? holder : holder
     let mesh: THREE.Mesh | null = null
     holder.traverse((o: unknown) => { const m = o as THREE.Mesh; if (m.isMesh && m.name === "tire") mesh = m })
     const tm = mesh as unknown as THREE.Mesh
@@ -559,7 +546,7 @@ function boot(): void {
     }
   }
 
-  ;(window as unknown as { __wheelScan?: () => unknown }).__wheelScan = () => {
+  ;(globalThis as unknown as { __wheelScan?: () => unknown }).__wheelScan = () => {
     const out: unknown[] = []
     for (const w of car.wheels) {
       const holder = w.steer ?? w.spin.parent ?? w.spin
@@ -574,10 +561,10 @@ function boot(): void {
     return out
   }
 
-  ;(window as unknown as { __carInfo?: () => Record<string, unknown> }).__carInfo = () => {
+  ;(globalThis as unknown as { __carInfo?: () => Record<string, unknown> }).__carInfo = () => {
     const box = new THREE.Box3().setFromObject(car.group)
     const wheels = car.wheels.map((w) => {
-      const wb2 = new THREE.Box3().setFromObject(w.steer ?? w.spin)
+      const wb2 = new THREE.Box3().setFromObject(w.steer ?? w.spin.parent ?? w.spin)
       return { front: w.front, min: wb2.min.toArray().map((v) => Math.round(v * 100) / 100), max: wb2.max.toArray().map((v) => Math.round(v * 100) / 100) }
     })
     const parts: { name: string; vis: boolean }[] = []
@@ -587,57 +574,10 @@ function boot(): void {
       wheels, parts,
     }
   }
-  const clock = new THREE.Clock()
-  let t = 0
-  let dist = 0
-  let loadingHidden = false
-  let wheelAngle = 0
-  const shadowFocus = new THREE.Vector3()
-  let frameCount = 0
 
-  function frame(): void {
-    const dt = Math.min(clock.getDelta(), 0.05)
-    frameCount++
-    if (!simFrozen) {
-      t += dt
-      const speed = 17 + Math.sin(t * 0.35) * 9
-      dist += speed * dt
-      const sDrive = 170 + (dist % 142)
-      const rp = roadPose(slice.spline, sDrive, Math.sin(t * 0.18) * 1.6)
-      pos.set(rp.pos[0], rp.pos[1], rp.pos[2])
-      yaw = rp.yaw
-      car.group.position.copy(pos)
-      car.group.rotation.order = 'YXZ'
-      car.group.rotation.set(rp.pitch - speed * 0.0004, rp.yaw, rp.bank + Math.sin(t * 0.4) * 0.014)
-      const steerA = Math.sin(t * 0.21) * 0.3
-      carView.speed = speed
-      carView.yaw = yaw
-      carView.nitro = Math.sin(t * 0.4) > 0.75
-      carView.drift = Math.sin(t * 0.4) > 0.75 ? 0.4 : 0
-      car.setBrake(Math.sin(t * 1.4) > 0.7 ? 1 : 0)
-      car.setNitro(carView.nitro ? 1 : 0)
-      wheelAngle += (speed / VEHICLE.wheelRadius) * dt
-      for (const s of spinners) {
-        s.spin.rotation.x = -wheelAngle
-        if (s.steer) s.steer.rotation.y = steerA
-      }
-      chase.mode = 'chase'
-      chase.setOrbitFocus(pos)
-      chase.update(dt, carView, window.innerWidth / window.innerHeight)
-    } else if (Debug.lastPose) {
-      applyPose(Debug.lastPose)
-    }
-    const pose = Debug.lastPose
-    view.setShadowExtent(pose?.shadowSpan ?? GRAPHICS.shadowExtent)
-    const fc = pose?.freezeSim && (pose.look ?? pose.camera) ? (pose.look ?? pose.camera!) : null
-    view.update(dt, fc ? shadowFocus.set(fc[0], Math.max(0, fc[1] - 3), fc[2]) : car.group.position)
-    slice.update(t, view.camera.position)
-    view.render()
-    if (!loadingHidden && t > 0.5) { loadingHidden = true; $('loading')?.classList.add('hidden') }
-    document.title = `Velocity Rush — ${Math.round(view.fps)} fps — ${view.tier}`
-    requestAnimationFrame(frame)
-  }
-  requestAnimationFrame(frame)
+// spawn the hero on the coastal straight and run the real drive loop
+game.spawnAt(150)
+game.start()
 }
 
 try { boot() } catch (e) { fatal(e) }
