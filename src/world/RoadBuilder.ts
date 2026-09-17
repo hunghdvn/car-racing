@@ -101,13 +101,19 @@ export class RoadBuilder {
         seg.add(this.zoneEdgeRun(a, b, zone))
       }
       if (inDeck && inTunnel) seg.add(this.deckRun(a, b))
+      coverEnd = Math.max(coverEnd, b)
       g.add(seg)
     }
+    let coverEnd = sFrom
     for (let a = sFrom; a < sTo - 1; a += CHUNK) emit(a, Math.min(sTo, a + CHUNK), `road-seg-${Math.round(a)}`)
     // The circuit closes on itself: the finish line sits exactly on the seam at
-    // s = 0 = length, so the stubs either side of it are paved too.
+    // s = 0 = length, so the stubs either side of it are paved too. The tail
+    // starts EXACTLY where the chunk coverage ended — never before it: an
+    // overlap would lay a second coplanar sheet of asphalt/shoulder/skirt over
+    // the last chunk (z-fighting at the most-watched patch of the circuit),
+    // and the loop's 1 m exit slack could otherwise leave the stub short.
     if (sFrom > 0.05) emit(0, Math.min(sFrom, 4), 'road-seam-head')
-    if (sTo < this.spline.length - 0.05) emit(Math.max(sTo, this.spline.length - 4), this.spline.length, 'road-seam-tail')
+    if (coverEnd < this.spline.length - 0.05) emit(coverEnd, this.spline.length, 'road-seam-tail')
     // The frozen Phase-3 coastal edge stack is authored once, over its own
     // windows, and stays byte-identical to the approved slice.
     g.add(this.buildEdgeProfiles(0, this.spline.length))

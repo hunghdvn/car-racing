@@ -2,8 +2,8 @@ import * as THREE from 'three'
 import { SEED, TRACK } from '../config'
 import { Rand } from '../util'
 import { composePrefab, type PrefabId, type HeightReader } from './ComposeKit'
-import { buildBuilding } from './BuildingKit'
-import { makeGantryCrane, makeWaterTower, makeRadioMast, makeUtilityPole, makeMastLight, makeContainer, makeDrum, makePipeStack, makeTyreStack, makeVan, makeCones, makeSign, makeBillboard, makeBarrierUnit, makeBench } from './PropKit'
+import { buildBuilding, type BuildingDesignId } from './BuildingKit'
+import { makeGantryCrane, makeWaterTower, makeRadioMast, makeUtilityPole, makeMastLight, makeContainer, makeDrum, makePipeStack, makeTyreStack, makeVan, makeCones, makeSign, makeBillboard, makeBarrierUnit, makeBench, makeBollard } from './PropKit'
 import { rockGeometry, bushGeometry, pineGeometry, treeLOD, foliageVariants } from './VegetationKit'
 import type { TrackSpline } from './TrackSpline'
 
@@ -190,9 +190,14 @@ function dressIndustrial(c: DressCtx): void {
     put(c, grp, s, side * rnd.range(11.5, 13.5), true, -0.04)
     side = -side
   }
-  // utility-pole runs follow the road like service infrastructure would
+  // utility-pole runs follow the road like service infrastructure would —
+  // clamped short of the tunnel-apron carve: embedWeight pulls the corridor
+  // floor down through the apron fade window, and a pole seated out there
+  // stands over the cut void = floating furniture against open sky
+  const tz = c.spline.zoneRange('tunnel')
+  const poleStop = Math.min(rng.s1 - 8, tz.s0 - (TRACK.tunnel.apron + 16))
   for (const sgn of [1, -1] as const) {
-    for (let s = rng.s0 + 10; s < rng.s1 - 8; s += rnd.range(26, 34)) {
+    for (let s = rng.s0 + 10; s < poleStop; s += rnd.range(26, 34)) {
       const up = makeUtilityPole(rnd)
       put(c, up, s, sgn * rnd.range(9.4, 10.4), false).rotation.y = c.spline.frame(s).yaw + Math.PI / 2
     }
@@ -412,7 +417,81 @@ function dressStartFinish(c: DressCtx): void {
       put(c, ml, m, sgn * rnd.range(9.6, 10.8), false).rotation.y = c.spline.frame(m).yaw + Math.PI / 2
     }
   }
-  /* Finishing-straight infield: two blocks + bollard pairs toward the seam */
+  /* Finishing-straight infield (s≈3050-3126 — section_finish's left third was
+   * a bare apron carried only by the gantry): three depth layers between the
+   * pit lane and the far skyline — pit/garage frontage, a hospitality row with
+   * a marquee focal, and a mid-rise sponsor-wall back. Starts clear of the
+   * shortcut's re-entry corridor (spur mouth at s≈3018). */
+  {
+    const TEAM = [0xb0182a, 0x1f4a8a, 0xd4a017, 0x2f7a46] as const
+    const steel = new THREE.MeshStandardMaterial({ color: 0x707880, metalness: 0.7, roughness: 0.5 })
+    const bay = (id: BuildingDesignId, s: number, lat: number, sy: number, sxz: number, salt: number): void => {
+      const b = buildBuilding(id, new Rand(SEED ^ salt), true)
+      b.scale.set(sxz, sy, sxz)
+      put(c, b, s, lat, true)
+    }
+    // near layer: pit/garage frontage on the apron behind the pit lane —
+    // low bays with tyre stacks, cones and bollards as lane-side detail
+    for (let s = 3074, k = 0; s < 3122; s += rnd.range(24, 30), k++) {
+      bay(k % 2 ? 'civic' : 'retail', s, -13.8 + rnd.range(-0.8, 0.8), 0.52, 1.22, 0x9a1 + k)
+      if (k % 2 === 0) put(c, makeTyreStack(rnd.int(3, 5)), s + 5.5, -11.3, false)
+      put(c, makeCones(rnd), s - 6.5, -11.6, false)
+      if (rnd.chance(0.55)) put(c, makeBollard(rnd.pick([0xd8d3c6, 0xb9b2a4])), s + 1.5, -10.9, false)
+    }
+    for (const [bs, bk] of [[3072, 'octane'], [3120, 'rush']] as const) put(c, makeBillboard(bk), bs, -14.6, true)
+    // middle layer: hospitality row — blocks, team motorhomes, bench frontage,
+    // the marquee focal opposite the gantry, gate signage at the row heads
+    for (let s = 3070; s < 3120; s += rnd.range(32, 44)) {
+      drop(c, rnd.chance(0.5) ? 'CityBlock_Street' : 'CityBlock_Corner', s, -24 + rnd.range(-2, 2.5), 700 + Math.round(s))
+    }
+    {
+      const grp = new THREE.Group()
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.3, 7.0), new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.62 }))
+      canopy.position.y = 3.9
+      grp.add(canopy)
+      for (const [px, pz] of [[-3.9, -3.0], [3.9, -3.0], [-3.9, 3.0], [3.9, 3.0]] as const) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.34, 3.9, 0.34), steel)
+        post.position.set(px, 1.95, pz)
+        grp.add(post)
+      }
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.6, 0.16), new THREE.MeshStandardMaterial({ color: TEAM[1], roughness: 0.7 }))
+      skirt.position.set(0, 4.1, -3.4)
+      grp.add(skirt)
+      for (const dx of [-5.9, 5.9]) {
+        const v = makeVan(rnd.pick([0x7a8288, 0x4f6a7d, 0xb4ab9b]), rnd)
+        v.position.set(dx, 0, 2.0)
+        v.rotation.y = 1.57 + YAWJ(rnd)
+        grp.add(v)
+      }
+      put(c, grp, 3116, -23.5, false, -0.06)
+    }
+    for (let s = 3074; s < 3116; s += rnd.range(15, 21)) put(c, makeBench(), s, -18.2, true)
+    put(c, makeSign('cafe', 2.2, 1.1), 3078, -16.8, true, 0)
+    put(c, makeSign('store', 2.0, 1.0), 3106, -16.8, true, 0)
+    // far layer: mid-rise sponsor-wall back with focal silhouettes and the
+    // infield flood rhythm; flagpoles bridge near and middle layers
+    for (let s = 3068, k = 0; s < 3126; s += rnd.range(38, 52), k++) {
+      bay(k % 2 ? 'apartment' : 'office', s, -35 + rnd.range(-3.5, 3.5), rnd.range(0.85, 1.15), 1.05, 0x9b7 + k)
+    }
+    put(c, makeWaterTower(), 3116, -42, false)
+    put(c, makeRadioMast(18), 3068, -44, false)
+    for (let m = 3070; m < 3122; m += rnd.range(22, 28)) {
+      put(c, makeMastLight(rnd), m, -28.5, false).rotation.y = c.spline.frame(m).yaw + Math.PI / 2
+    }
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0xd8d3c6, roughness: 0.6 })
+    const flagMats = TEAM.map((t) => new THREE.MeshStandardMaterial({ color: t, roughness: 0.72, side: THREE.DoubleSide }))
+    for (let f = 3078, k = 0; f < 3126; f += 10.5, k++) {
+      const pole = new THREE.Group()
+      const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 8.6, 0.12), poleMat)
+      shaft.position.y = 4.3
+      const flag = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.95, 0.06), flagMats[k % 4])
+      flag.position.set(0.8, 7.6, 0)
+      flag.rotation.z = -0.12
+      pole.add(shaft, flag)
+      put(c, pole, f, -16.2, false)
+    }
+  }
+  // right-hand (mountain-side) balance + entry-gate signage at the straight's head
   drop(c, 'CityBlock_Corner', 3044, 27, 611)
   drop(c, 'CityBlock_Street', 3102, 33, 612, 0.8)
   // entry-gate signage at the straight's head
