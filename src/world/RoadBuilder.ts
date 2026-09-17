@@ -3,7 +3,7 @@ import { TRACK, SEED, type ZoneId } from '../config'
 import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry, crNormals, sweepProfile, ensureOutwardWinding, forceUpWinding, type SweepFrame } from '../util'
 
 const UP = new THREE.Vector3(0, 1, 0)
-import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture } from '../assets/Textures'
+import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture, finishBannerTexture, billboardFaceTexture } from '../assets/Textures'
 import { rockGeometry } from './VegetationKit'
 import type { TrackSpline } from './TrackSpline'
 
@@ -1191,69 +1191,81 @@ export class RoadBuilder {
       g.add(m)
       return m
     }
-    const legH = 8.4, span = 2 * (so + 2.4)
+    const legH = 9.6, span = 2 * (so + 2.6)
     for (const side of [-1, 1] as const) {
-      put(new THREE.BoxGeometry(0.62, legH, 0.62), steel, side * (so + 2.4), legH * 0.5)
-      put(new THREE.BoxGeometry(1.5, 0.34, 1.5), this.concMat(0x9d988f, 231, 0.9), side * (so + 2.4), 0.17)
-      // lattice bracing up the leg
-      put(new THREE.BoxGeometry(0.12, 3.2, 0.12), steel, side * (so + 2.0), 2.4, side * 0.62)
+      const lat = side * (so + 2.6)
+      put(new THREE.BoxGeometry(0.84, legH, 0.74), steel, lat, legH * 0.5)
+      put(new THREE.BoxGeometry(1.8, 0.42, 1.8), this.concMat(0x9d988f, 231, 0.9), lat, 0.21)
+      // crossed lattice up the leg + a service ladder on the inner face
+      put(new THREE.BoxGeometry(0.13, 3.7, 0.13), steel, lat - side * 0.52, 2.7, side * 0.55)
+      put(new THREE.BoxGeometry(0.13, 3.7, 0.13), steel, lat + side * 0.52, 6.6, -side * 0.55)
+      put(new THREE.BoxGeometry(0.12, legH - 0.9, 0.12), steel, lat - side * 0.66, legH * 0.5 + 0.45)
+      // leg-mounted sponsor board, turned in toward the oncoming driver
+      const board = new THREE.Mesh(
+        new THREE.BoxGeometry(1.15, 2.3, 0.12),
+        this.mat(`finishSponsor${side}`, () => new THREE.MeshStandardMaterial({ map: billboardFaceTexture(side < 0 ? 'octane' : 'tyreking'), roughness: 0.7, metalness: 0.02 })) as THREE.Material,
+      )
+      board.position.copy(f.pos).addScaledVector(f.side, lat - side * 0.8)
+      board.position.y = bed0 + 3.3
+      board.rotation.set(0, f.yaw + side * 1.15, 0)
+      board.castShadow = true
+      board.receiveShadow = true
+      board.name = 'finish-sponsor'
+      g.add(board)
     }
-    // the truss: two chords + diagonals, so it reads as a rig and not a slab
-    put(new THREE.BoxGeometry(span, 0.26, 0.42), steel, 0, legH)
-    put(new THREE.BoxGeometry(span, 0.26, 0.42), steel, 0, legH + 1.5)
-    const bays = 11
-    for (let i = 0; i < bays; i++) {
-      const lat = -span / 2 + (i + 0.5) * (span / bays)
-      const d = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.85, 0.11), steel)
-      d.position.set(f.pos.x + f.side.x * lat, bed0 + legH + 0.75, f.pos.z + f.side.z * lat)
-      d.rotation.set(0, f.yaw + (i % 2 ? 0.62 : -0.62), 0)
+    // the truss: deep chords, handrail and a full lattice, so it reads as a
+    // rig at distance and not a slab
+    const bandW = span * 0.88, bandH = bandW / 7.8, trussH = bandH + 0.55
+    put(new THREE.BoxGeometry(span, 0.34, 0.6), steel, 0, legH)
+    put(new THREE.BoxGeometry(span, 0.34, 0.6), steel, 0, legH + trussH)
+    put(new THREE.BoxGeometry(span, 0.11, 0.11), steel, 0, legH + trussH + 0.24)
+    for (let i = 0; i <= 15; i++) put(new THREE.BoxGeometry(0.11, trussH, 0.11), steel, -span / 2 + i * (span / 15), legH + trussH * 0.5)
+    for (let i = 0; i < 15; i++) {
+      const lat = -span / 2 + (i + 0.5) * (span / 15)
+      const d = new THREE.Mesh(new THREE.BoxGeometry(0.11, trussH * 1.18, 0.11), steel)
+      d.position.set(f.pos.x + f.side.x * lat, bed0 + legH + trussH * 0.5, f.pos.z + f.side.z * lat)
+      d.rotation.set(0, f.yaw + (i % 2 ? 0.5 : -0.5), 0)
       d.castShadow = true
       g.add(d)
     }
-    // banner board across the truss with a chequered end band
-    put(new THREE.BoxGeometry(span * 0.62, 1.24, 0.14), this.mat('finishBanner', () => new THREE.MeshStandardMaterial({ color: 0x8f2a24, roughness: 0.72, metalness: 0.05 })) as THREE.Material, 0, legH + 0.76)
-    {
-      const sq = new THREE.BoxGeometry(0.31, 0.31, 0.16)
-      const n = 16
-      const inst = new THREE.InstancedMesh(sq, ink, n * 4)
-      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
-      const v = new THREE.Vector3(), s1 = new THREE.Vector3(1, 1, 1)
-      let k = 0
-      for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) {
-        if ((i + j) % 2 === 0) continue
-        for (const sgn of [1, -1] as const) {
-          const lat = sgn * (span * 0.32 + i * 0.32)
-          v.copy(f.pos).addScaledVector(f.side, lat)
-          e.set(0, f.yaw, 0)
-          q.setFromEuler(e)
-          m4.compose(new THREE.Vector3(v.x, bed0 + legH + 0.3 + j * 0.32, v.z), q, s1)
-          inst.setMatrixAt(k++, m4)
-        }
-      }
-      inst.count = k
-      inst.instanceMatrix.needsUpdate = true
-      inst.name = 'finish-chequers'
-      g.add(inst)
-    }
-    // start-light pods over each lane
-    for (const lat of [-3.4, -1.2, 1.2, 3.4]) {
-      const pod = put(new THREE.BoxGeometry(0.5, 0.34, 0.28), ink, lat, legH - 0.5)
+    // sponsor band across the truss on a red backing board, so the gantry
+    // carries signage and reads from both directions
+    put(new THREE.BoxGeometry(bandW + 0.34, bandH + 0.24, 0.1), this.mat('finishBanner', () => new THREE.MeshStandardMaterial({ color: 0x8f2a24, roughness: 0.72, metalness: 0.05 })) as THREE.Material, 0, legH + trussH * 0.5 - 0.06)
+    put(new THREE.BoxGeometry(bandW, bandH, 0.14), this.mat('finishBand', () => new THREE.MeshStandardMaterial({ map: finishBannerTexture(), roughness: 0.62, metalness: 0.02 })) as THREE.Material, 0, legH + trussH * 0.5)
+    // start-light pods over each lane, with a lamp grid so the line reads at
+    // distance instead of vanishing into a dot
+    const red = this.mat('finishLamp', () => new THREE.MeshStandardMaterial({ color: 0xb0182a, emissive: 0xff2a3a, emissiveIntensity: 1.4, roughness: 0.5 })) as THREE.Material
+    for (const lat of [-3.55, -1.2, 1.2, 3.55]) {
+      const pod = put(new THREE.BoxGeometry(0.72, 0.5, 0.34), ink, lat, legH - 0.42)
       pod.castShadow = false
-      put(new THREE.BoxGeometry(0.12, 0.5, 0.12), steel, lat, legH - 0.22)
+      put(new THREE.BoxGeometry(0.14, 0.55, 0.14), steel, lat, legH - 0.1)
+      for (const [dx, dy] of [[-0.17, 0.11], [0.17, 0.11], [-0.17, -0.11], [0.17, -0.11]] as const) {
+        const lamp = put(new THREE.BoxGeometry(0.16, 0.16, 0.08), red, lat + dx, legH - 0.42 + dy)
+        lamp.castShadow = false
+      }
     }
-    for (const side of [-1, 1] as const) put(new THREE.BoxGeometry(0.2, 0.2, 0.2), lite, side * (so + 1.1), legH - 0.1)
+    for (const side of [-1, 1] as const) put(new THREE.BoxGeometry(0.22, 0.22, 0.22), lite, side * (so + 1.2), legH + trussH + 0.4)
     // the chequered line across the asphalt
+    // the chequered line across the asphalt: real squares, three rows deep
     const sq = this.mat('lineWhite', () => new THREE.MeshStandardMaterial({ color: 0xe9e7df, roughness: 0.78, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })) as THREE.Material
     const ink2 = this.mat('lineInk', () => new THREE.MeshStandardMaterial({ color: 0x25262a, roughness: 0.8, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })) as THREE.Material
-    const rows = 2, cols = 14
+    const rows = 3, cols = 12
+    const cell = (2 * TRACK.halfWidth) / cols
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const lat = -TRACK.halfWidth + (c + 0.5) * ((2 * TRACK.halfWidth) / cols)
+      const lat = -TRACK.halfWidth + (c + 0.5) * cell
       const sgn = (r + c) % 2 === 0 ? sq : ink2
-      const bar = this.bar(0.9 + r * 0.34, lat, 0.34, (2 * TRACK.halfWidth) / cols, 0.012)
+      const bar = this.bar(0.16 + r * cell, lat, cell - 0.06, cell - 0.04, 0.012)
       const m = new THREE.Mesh(bar, sgn)
       m.renderOrder = 2
       g.add(m)
     }
+    // solid white lines bounding the block, so the finish reads at distance
+    for (const ss of [0.1, 0.16 + rows * cell]) {
+      const m = new THREE.Mesh(this.bar(ss, 0, 0.16, 2 * TRACK.halfWidth, 0.01), sq)
+      m.renderOrder = 2
+      g.add(m)
+    }
+
     return g
   }
 

@@ -765,6 +765,43 @@ export function billboardFaceTexture(kind: 'rush' | 'octane' | 'tyreking' | 'har
   )
 }
 
+/** Wide sponsor band for the finish gantry truss — chequered ends, title centre. */
+export function finishBannerTexture(): THREE.Texture {
+  return cached('finishBanner', () =>
+    canvasTexture(1024, 132, (ctx, w, h) => {
+      const rnd = new Rand(9273)
+      ctx.fillStyle = '#101f33'
+      ctx.fillRect(0, 0, w, h)
+      const cell = 22
+      for (const x0 of [0, w - cell * 5]) {
+        for (let cx = 0; cx < 5; cx++) {
+          for (let cy = 0; cy * cell < h; cy++) {
+            ctx.fillStyle = (cx + cy) % 2 === 0 ? '#e9e7df' : '#25262a'
+            ctx.fillRect(x0 + cx * cell, cy * cell, cell, Math.min(cell, h - cy * cell))
+          }
+        }
+      }
+      const img = ctx.getImageData(0, 0, w, h)
+      for (let i = 0; i < w * h; i += 3) {
+        if (rnd.next() < 0.04) { const i4 = i * 4; img.data[i4 + 3] = 214 }
+      }
+      ctx.putImageData(img, 0, 0)
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#f2b23c'
+      ctx.font = 'bold 88px sans-serif'
+      ctx.fillText('FINISH', w / 2, h * 0.62)
+      ctx.font = 'bold 24px sans-serif'
+      ctx.fillStyle = 'rgba(240,236,220,0.88)'
+      ctx.fillText('CAPE MARLO SPRINT · SECTOR 0', w / 2, h * 0.9)
+      ctx.fillText('OCTANE 98', w * 0.27, h * 0.62)
+      ctx.fillText('TYRE KING', w * 0.73, h * 0.62)
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'
+      ctx.lineWidth = 8
+      ctx.strokeRect(4, 4, w - 8, h - 8)
+    }, { srgb: true, clamp: true }),
+  )
+}
+
 /** Timber grain for crates/pallets/benches. */
 export function woodMaps(tone = 0x8a7250, seed = 66): { map: THREE.Texture; normalMap: THREE.Texture } {
   return cached(`wood${tone}_${seed}`, () => {
