@@ -266,6 +266,7 @@ async function driveOnce({ suppress, untilFinish, seconds, stretch, slowMs = 0 }
     }
   } finally {
     await page.evaluate(() => { window.__slowMs = 0 })
+    await page.evaluate(() => window.__perfStop?.())
   }
   const out = await page.evaluate(() => ({
     frames: window.__perfFrames,

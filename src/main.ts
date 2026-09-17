@@ -500,7 +500,14 @@ function boot(): void {
       })(),
     }
   }
+  let perfGen = 0
+  let perfRaf = 0
   ;(globalThis as unknown as { __perfStart?: () => void }).__perfStart = () => {
+    // single-owner sampler: cancel any prior loop before starting a new one so
+    // repeated captures never append concurrently into the shared trace arrays
+    perfGen++
+    cancelAnimationFrame(perfRaf)
+    const gen = perfGen
     const rec = globalThis as unknown as { __perfFrames?: unknown[]; __perfHeap?: unknown[] }
     rec.__perfFrames = []
     rec.__perfHeap = []
@@ -508,6 +515,7 @@ function boot(): void {
     const zoneFn = (globalThis as unknown as { __perfZone: () => { s: number; zone: string; phase: string } }).__perfZone
     let last = -1
     const tick = (t: number): void => {
+      if (gen !== perfGen) return // superseded by a newer __perfStart — stop this loop
       if (last >= 0) {
         const d = diagFn()
         const z = zoneFn()
@@ -516,9 +524,14 @@ function boot(): void {
       last = t
       const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
       if (mem) (rec.__perfHeap as unknown[]).push({ t, usedMb: Math.round(mem.usedJSHeapSize / 1e5) / 10 })
-      requestAnimationFrame(tick)
+      perfRaf = requestAnimationFrame(tick)
     }
-    requestAnimationFrame(tick)
+    perfRaf = requestAnimationFrame(tick)
+  }
+  // freeze the active capture (stable snapshot for the harness to read back)
+  ;(globalThis as unknown as { __perfStop?: () => void }).__perfStop = () => {
+    perfGen++
+    cancelAnimationFrame(perfRaf)
   }
   /* Per-frame RENDER-SET attribution (dev probe): __tally() counts the whole
      scene graph regardless of culling, so it cannot explain the draw-call
