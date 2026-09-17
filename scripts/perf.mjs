@@ -129,11 +129,37 @@ const DIAG_INSTALL = () => {
         return
       }
       orig.call(this, t)
-      ;(window).__tierEvents.push({ at: Math.round(performance.now()), from: prev, to: t, manual, suppressed: false })
+      const sz = this.gl.getDrawingBufferSize(new (window.__dbg.THREE.Vector2)())
+      ;(window).__tierEvents.push({ at: Math.round(performance.now()), from: prev, to: t, manual, suppressed: false, snap: { tier: this.tier, pixelRatio: +this.gl.getPixelRatio().toFixed(3), drawing: `${sz.x}x${sz.y}`, shadowMap: this.sun.shadow.mapSize.x, bloom: +this.bloom.strength.toFixed(3) } })
     }
     R.prototype.__tierPatched = true
   }
   window.__tierEvents = []
+}
+
+/** "Slow device" emulation (harness-side only): floor the wall-clock delta the
+ *  production frame loop reads from THREE.Clock, by busy-waiting until each
+ *  frame's real cadence reaches `window.__slowMs`. This makes the UNMODIFIED
+ *  Renderer sampler observe a genuine, sustained frame-budget overrun (its
+ *  emaFrameMs is an EMA of that real dt), so the adaptive ladder exercises
+ *  itself exactly as it would on under-powered hardware. No production logic,
+ *  threshold, or tier value is overridden here — the policy decides; we only
+ *  slow the clock it measures. Gated per-run via window.__slowMs (0 = off). */
+const SLOW_INSTALL = () => {
+  const C = window.__dbg.THREE.Clock.prototype
+  if (!C.__slowPatched) {
+    const orig = C.getDelta
+    C.getDelta = function () {
+      const target = window.__slowMs || 0
+      if (target > 0) {
+        const t0 = performance.now()
+        while (performance.now() - t0 < target) { /* hold the frame open */ }
+      }
+      return orig.call(this)
+    }
+    C.__slowPatched = true
+  }
+  window.__slowMs = 0
 }
 
 /** Harness-side autopilot: patches the Input INSTANCE's poll() (never the
@@ -191,8 +217,9 @@ const SNAP_FIELD = (startS) => {
  *  untilFinish: stop at the chequered flag (full lap) else stop on the clock.
  *  stretch {start, exit}: snap the field at `start`, sample from there until
  *  the player passes `exit` (station-guarded; countdown never sampled). */
-async function driveOnce({ suppress, untilFinish, seconds, stretch }) {
+async function driveOnce({ suppress, untilFinish, seconds, stretch, slowMs = 0 }) {
   await page.evaluate(AUTOPILOT_INSTALL)
+  await page.evaluate(SLOW_INSTALL)
   await page.evaluate(({ suppress: s }) => {
     window.__tierSuppress = s
     window.__tierEvents = []
@@ -214,26 +241,31 @@ async function driveOnce({ suppress, untilFinish, seconds, stretch }) {
     await page.evaluate(SNAP_FIELD, stretch.start)
     await wait(600)
   }
+  await page.evaluate((ms) => { window.__slowMs = ms }, slowMs)
   await page.evaluate(() => window.__perfStart())
   const t0 = Date.now()
   let phaseEnd = 'unknown'
   let censusMid = null
-  for (;;) {
-    await wait(150)
-    const st = await page.evaluate(() => ({ ph: window.__raceState().phase, z: window.__perfZone() }))
-    const elapsed = Date.now() - t0
-    if (st.ph === 'finished' && elapsed > 4000) { phaseEnd = 'finished'; break }
-    phaseEnd = st.ph
-    if (stretch && st.z.phase === 'racing' && !censusMid && st.z.s > (stretch.start + stretch.exit) / 2) {
-      censusMid = await page.evaluate(() => {
-        const t = window.__tally()
-        const roots = {}
-        for (const [k, v] of Object.entries(t)) if (v.meshes) roots[k] = { meshes: v.meshes, tris: v.tris }
-        return roots
-      })
+  try {
+    for (;;) {
+      await wait(150)
+      const st = await page.evaluate(() => ({ ph: window.__raceState().phase, z: window.__perfZone() }))
+      const elapsed = Date.now() - t0
+      if (st.ph === 'finished' && elapsed > 4000) { phaseEnd = 'finished'; break }
+      phaseEnd = st.ph
+      if (stretch && st.z.phase === 'racing' && !censusMid && st.z.s > (stretch.start + stretch.exit) / 2) {
+        censusMid = await page.evaluate(() => {
+          const t = window.__tally()
+          const roots = {}
+          for (const [k, v] of Object.entries(t)) if (v.meshes) roots[k] = { meshes: v.meshes, tris: v.tris }
+          return roots
+        })
+      }
+      if (stretch && st.z.phase === 'racing' && st.z.s > stretch.exit) break
+      if (elapsed > (untilFinish ? DRIVE_TIMEOUT : seconds * 1000)) break
     }
-    if (stretch && st.z.phase === 'racing' && st.z.s > stretch.exit) break
-    if (elapsed > (untilFinish ? DRIVE_TIMEOUT : seconds * 1000)) break
+  } finally {
+    await page.evaluate(() => { window.__slowMs = 0 })
   }
   const out = await page.evaluate(() => ({
     frames: window.__perfFrames,
@@ -354,18 +386,28 @@ async function profileMode(report) {
 async function tiersMode(report) {
   await page.evaluate(DIAG_INSTALL)
   const city = GATE_P_STRETCHES.find((w) => w.name === 'city')
-  const stretch = { start: city.s0 - 45, exit: city.s1 + 55 }
-  console.log('[perf] tiers: natural pressure run on the city stretch (auto-degrade live)')
-  const nat = await driveOnce({ suppress: false, untilFinish: false, seconds: STRETCH_SECONDS, stretch })
+  const STRETCH = { start: city.s0 - 45, exit: city.s1 + 400 }
+  /* Frame-budget pressure: a harness "slow device" floor (see SLOW_INSTALL)
+     holds each frame's real wall-clock delta to SLOW_MS so the UNMODIFIED
+     Renderer sampler crosses its own >19.2ms / >2.6s downgrade gate exactly as
+     it would on under-powered hardware. The ladder is decided by production
+     code; the harness only slows the clock it measures. */
+  const SLOW_MS = 26
+  report.stress = { method: 'clock-floor', slowMs: SLOW_MS, gate: { emaMs: 19.2, lowForS: 2.6, cooldownMs: 4000 } }
+  console.log(`[perf] tiers: natural pressure run on the city stretch (auto-degrade live, ${SLOW_MS}ms/frame floor)`)
+  const nat = await driveOnce({ suppress: false, untilFinish: false, seconds: 45, stretch: STRETCH, slowMs: SLOW_MS })
   report.natural = summarize(nat)
+  report.naturalSampler = await page.evaluate(() => { const v = window.__dbg.game.view; return { ready: v.ready, emaMs: +v.emaFrameMs.toFixed(1), lowFor: +v.lowFor.toFixed(2), tier: v.tier, drawing: (() => { const s = v.gl.getDrawingBufferSize(new (window.__dbg.THREE.Vector2)()); return `${s.x}x${s.y}` })() } })
+  console.log(`  sampler after natural: ${JSON.stringify(report.naturalSampler)}`)
   console.log(`  tiers seen: ${JSON.stringify(report.natural.tierSeen)}  real events: ${JSON.stringify(nat.tierEvents.filter((e) => !e.suppressed))}`)
-  await page.evaluate(() => window.__dbg.game.ui.showTitle())
+  await page.evaluate(() => { window.__dbg.game.ui.showTitle(); const v = window.__dbg.game.view; v.__manualTier = true; v.setTier('high'); v.__manualTier = false })
   await wait(400)
-  console.log('[perf] tiers: suppression run on the same city stretch (downgrade suppressible)')
-  const sup = await driveOnce({ suppress: true, untilFinish: false, seconds: STRETCH_SECONDS, stretch })
+  console.log('[perf] tiers: suppression run on the same stretch, identical frame floor (downgrade suppressible)')
+  const sup = await driveOnce({ suppress: true, untilFinish: false, seconds: 45, stretch: STRETCH, slowMs: SLOW_MS })
   report.suppression = summarize(sup)
+  report.suppressionSampler = await page.evaluate(() => { const v = window.__dbg.game.view; return { ready: v.ready, emaMs: +v.emaFrameMs.toFixed(1), lowFor: +v.lowFor.toFixed(2), tier: v.tier } })
+  console.log(`  sampler after suppression: ${JSON.stringify(report.suppressionSampler)}`)
   console.log(`  tiers seen: ${JSON.stringify(report.suppression.tierSeen)}  suppressed-count: ${sup.tierEvents.filter((e) => e.suppressed).length}`)
-  await page.evaluate(() => window.__dbg.game.ui.showTitle())
   await wait(400)
   console.log('[perf] tiers: manual high -> medium -> low with QUALITY verification')
   report.manual = await page.evaluate(() => {

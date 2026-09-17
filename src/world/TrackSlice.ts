@@ -9,6 +9,7 @@ import { dressSlice, composePrefab, type PrefabId } from './ComposeKit'
 import { dressCircuit } from './CircuitDressing'
 import { placeVegetation } from './VegetationKit'
 import { placeProps } from './PropKit'
+import { mergeStaticGroup } from './StaticMerge'
 import { grassTuftTexture } from '../assets/Textures'
 
 /* ------------------------------------------------------------------------- *
@@ -42,13 +43,27 @@ export function buildTrackSlice(): Slice {
   group.add(water)
 
   const road = new RoadBuilder(spline, field)
-  group.add(road.build(2, spline.length - 2))
+  const roadGroup = road.build(2, spline.length - 2)
+  group.add(roadGroup)
 
   placeVegetation(group, spline, field, grassTuftTexture())
   placeProps(group, spline, field)
-  group.add(dressSlice({ spline, field }))
-  group.add(buildNorthCity(spline, field))
-  group.add(dressCircuit(spline, field))
+  const sliceComp = dressSlice({ spline, field })
+  group.add(sliceComp)
+  const northCity = buildNorthCity(spline, field)
+  const dressing = dressCircuit(spline, field)
+  group.add(northCity)
+  group.add(dressing)
+  /* Draw-call batching (Phase 9): fold the three profile-indicted density
+     groups into per-cell, per-material meshes. The road deck is NOT folded:
+     its cell bounds coarsen culling (+92k tris/frame in camera at the
+     tunnel_contrast pose) and shift coplanar deck draws — evidence in
+     phase-9-report §lever-1. Landmark names the structural probe keys on
+     fold into themselves so the probe contract stays intact. */
+  const keep = ['tunnel-portal', 'tunnel-shell', 'deck-pylons', 'deck-abutment', 'deck-soffit', 'finish', 'shortcut', 'terrain-tile', 'water']
+  mergeStaticGroup(sliceComp, { keepNames: keep })
+  mergeStaticGroup(northCity, { keepNames: keep })
+  mergeStaticGroup(dressing, { keepNames: keep })
 
   return {
     group, spline, field, water,

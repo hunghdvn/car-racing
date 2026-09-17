@@ -9,6 +9,7 @@ import { composePrefab } from './world/ComposeKit'
 import { makeBollard, makeCones, makeDrum, makePallet, makeCrates, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeSign, makeTrafficLight, makeUtilityPole, makeStreetlight, makeMastLight, makeContainer, makeBarrierUnit, makePipeStack, makeVan, makeSignGantry, makeBillboard, makeRadioMast, makeWaterTower, makeGantryCrane } from './world/PropKit'
 import { palmGeometry, pineGeometry, bushGeometry, rockGeometry, broadleafGeometry, treeLOD } from './world/VegetationKit'
 import { roadPose, heroShot } from './world/TrackSlice'
+import { setStaticMergeEnabled, densityAudit } from './world/StaticMerge'
 import { gridSlot } from './game/RaceDirector'
 import { Game } from './game/Game'
 
@@ -41,6 +42,9 @@ function boot(): void {
     if (fill) fill.style.width = `${Math.round(pct * 100)}%`
   }
   bootStep('Booting renderer', 0.06)
+  /* harness A/B lever (Phase 9): nomerge=1 boots with the density batching
+     off so the cost evidence compares like-for-like against the fold. */
+  if (new URLSearchParams(location.search).has('nomerge')) setStaticMergeEnabled(false)
   const game = new Game(canvas, PAINTS[1].color)
   /* the WebAudio context may only exist past a user gesture (spec §15) —
      the first real press unlocks it; everything before is a silent no-op */
@@ -438,6 +442,7 @@ function boot(): void {
   }
 
   /* ---------------- dev probes (removed with the harness, spec §23.4) ------ */
+  ;(globalThis as unknown as { __densityAudit?: () => object }).__densityAudit = densityAudit
   ;(globalThis as unknown as { __tally?: () => object }).__tally = () => {
     const byRoot: Record<string, { meshes: number; tris: number; names: Record<string, number> }> = {}
     for (const root of view.scene.children) {
@@ -514,6 +519,51 @@ function boot(): void {
       requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
+  }
+  /* Per-frame RENDER-SET attribution (dev probe): __tally() counts the whole
+     scene graph regardless of culling, so it cannot explain the draw-call
+     count. This walks the two render sets three.js draws per chain — main
+     pass (visible ∩ camera frustum) and shadow pass (casters ∩ shadow-map
+     frustum) — attributing meshes/tris to scene roots with the renderer's
+     own Frustum.intersectsObject test. Read-only. */
+  const frScratch = {
+    camFr: new THREE.Frustum(), shFr: new THREE.Frustum(),
+    m4: new THREE.Matrix4(),
+    tmpCam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500),
+  }
+  ;(globalThis as unknown as { __perfRenderSet?: () => object }).__perfRenderSet = () => {
+    const { camFr, shFr, m4, tmpCam } = frScratch
+    const cam = view.camera
+    m4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+    camFr.setFromProjectionMatrix(m4)
+    // shadow-map frustum: the ortho camera lives at the light, aimed at target
+    const sc = view.sun.shadow.camera
+    tmpCam.left = sc.left; tmpCam.right = sc.right; tmpCam.top = sc.top; tmpCam.bottom = sc.bottom
+    tmpCam.near = sc.near; tmpCam.far = sc.far
+    tmpCam.updateProjectionMatrix()
+    tmpCam.position.copy(view.sun.position)
+    tmpCam.up.set(0, 1, 0)
+    tmpCam.lookAt(view.sun.target.position)
+    tmpCam.updateMatrixWorld(true)
+    m4.multiplyMatrices(tmpCam.projectionMatrix, tmpCam.matrixWorldInverse)
+    shFr.setFromProjectionMatrix(m4)
+    const groups: Record<string, { main: number; mainTris: number; shadow: number; shadowTris: number }> = {}
+    const gOf = (k: string): { main: number; mainTris: number; shadow: number; shadowTris: number } => (groups[k] ?? (groups[k] = { main: 0, mainTris: 0, shadow: 0, shadowTris: 0 }))
+    let mainTotal = 0, shadowTotal = 0
+    for (const root of view.scene.children) {
+      const key = root.name || root.type
+      const rec = gOf(key)
+      root.traverse((o: THREE.Object3D) => {
+        const m = o as THREE.Mesh
+        if (!m.isMesh || !m.visible || !m.frustumCulled) return
+        const g = m.geometry as THREE.BufferGeometry
+        const tris = (g.index ? g.index.count / 3 : (g.getAttribute('position')?.count ?? 0) / 3) | 0
+        const inCam = !m.frustumCulled || camFr.intersectsObject(o)
+        if (inCam) { rec.main++; rec.mainTris += tris; mainTotal++ }
+        if (m.castShadow && (!m.frustumCulled || shFr.intersectsObject(o))) { rec.shadow++; rec.shadowTris += tris; shadowTotal++ }
+      })
+    }
+    return { mainTotal, shadowTotal, groups }
   }
   ;(globalThis as unknown as { __probe?: () => object }).__probe = () => ({
     buildMs: (globalThis as unknown as { __buildMs?: number }).__buildMs ?? null,
