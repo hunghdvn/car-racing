@@ -168,6 +168,20 @@ export function buildCarNames(paints: readonly PaintDef[], playerCarId: number):
   return paints.map((p, i) => (i === playerCarId ? 'YOU' : p.name.toUpperCase()))
 }
 
+export type UiMode = 'title' | 'racing'
+
+/**
+ * Countdown/GO board visibility policy: the board is a RACE-screen element.
+ * The director phase alone is not authority — paused->MAIN MENU mid-countdown
+ * returns to the title while the director may still sit at 'countdown', and a
+ * phase read straight off the director would then repaint a ghost board over
+ * the title. Show only while the UI is on the racing screen, and only for the
+ * live countdown phase or the GO hold window (goT > 0, owned by flagDropped).
+ */
+export function countdownBoardVisible(mode: UiMode, phase: HudData['phase'], goT: number): boolean {
+  return mode === 'racing' && (phase === 'countdown' || goT > 0)
+}
+
 /* ================================ DOM part =============================== */
 
 export interface HudData {
@@ -234,7 +248,7 @@ export class UIManager {
   private readonly mctx: CanvasRenderingContext2D | null
   private readonly swatchHost: HTMLElement | null
 
-  private mode: 'title' | 'racing' = 'title'
+  private mode: UiMode = 'title'
   private prevPhase: HudData['phase'] = 'idle'
   /** true while the race HUD (not the title board) is on screen */
   get onScreen(): boolean { return this.mode === 'racing' }
@@ -400,18 +414,17 @@ export class UIManager {
     if (this.mode === 'racing' && hud.phase === 'finished' && this.prevPhase !== 'finished') this.showResults(hud)
     this.prevPhase = hud.phase
 
-    /* countdown board */
-    if (hud.phase === 'countdown') {
+    /* countdown board — visibility is gated on the UI screen mode, not just
+       the director phase (see countdownBoardVisible). The GO hold window is
+       owned by flagDropped's timer: tick it off the countdown phase. */
+    if (this.mode === 'racing' && hud.phase !== 'countdown' && this.goT > 0) this.goT -= dt
+    if (countdownBoardVisible(this.mode, hud.phase, this.goT)) {
       this.show(this.countdownEl, true)
-      if (this.countdownNum) {
+      if (this.countdownNum && hud.phase === 'countdown') {
         this.countdownNum.textContent = countdownLabelFor(hud.countdown)
         this.countdownNum.classList.remove('go')
       }
-    } else if (this.goT > 0) {
-      this.goT -= dt
-      if (this.goT <= 0) this.show(this.countdownEl, false)
     } else {
-      /* never leave a stale board up once we are past countdown + GO hold */
       this.show(this.countdownEl, false)
     }
 

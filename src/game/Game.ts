@@ -201,6 +201,10 @@ export class Game {
     }
     if (a === 'confirm') {
       if (this.paused) { this.setPaused(false); return }
+      /* the title screen is authority for "start": after MAIN MENU the sim
+         may still be mid-flight behind the board, and Enter must behave like
+         the START RACE button rather than dead-end on a stale phase */
+      if (!this.ui.onScreen) { this.beginRace(); return }
       if (this.director.phase === 'finished') { this.beginRace(); return }
       if (this.director.phase === 'idle') { this.beginRace(); return }
     }

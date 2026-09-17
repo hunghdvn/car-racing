@@ -1,6 +1,6 @@
 import { assert, assertNear, test } from '../harness'
 import {
-  countdownCueFor, countdownLabelFor, popupExpired, buildResultRows, ordinalBadge,
+  countdownCueFor, countdownLabelFor, countdownBoardVisible, popupExpired, buildResultRows, ordinalBadge,
   nitroReadyEdge, nitroSegmentsOn, NITRO_READY_FRAC, wrongWayStep, freshWrongWay,
   driftChainStep, freshDriftChain, distToPolyline, shortcutEnterEdge, freshShortcut,
   gearLabelFor, gearIndexOf, rpmFor, buildCarNames, type StandingLike,
@@ -30,6 +30,19 @@ test('countdown: each cue fires exactly once and the board clamps its label', ()
   assert(countdownCueFor(0.02, 0) === 'go', 'GO drops with the flag')
   assert(countdownLabelFor(3.2) === '3', 'board never shows more than the configured top')
   assert(countdownLabelFor(0.1) === '1', 'the last visible number is 1')
+})
+
+test('countdown board: visibility follows the UI screen mode, not just the phase', () => {
+  /* the defect this locks out: paused -> MAIN MENU mid-countdown leaves the
+     director at 'countdown' while the title screen is up — a phase-only
+     check would repaint a ghost board over the title */
+  assert(!countdownBoardVisible('title', 'countdown', 0), 'title over a countdown phase hides the board')
+  assert(!countdownBoardVisible('title', 'countdown', UI.goHoldSec), 'the GO window cannot leak onto the title either')
+  assert(countdownBoardVisible('racing', 'countdown', 0), 'a normal countdown on the race screen shows the board')
+  assert(countdownBoardVisible('racing', 'racing', UI.goHoldSec), 'the GO hold keeps the board through its window')
+  assert(!countdownBoardVisible('racing', 'racing', 0), 'no hold, no countdown: the board retires')
+  assert(!countdownBoardVisible('racing', 'idle', 0), 'idle never raises the board')
+  assert(!countdownBoardVisible('racing', 'finished', 0), 'finished never raises the board')
 })
 
 test('popups: TTL policy expires on the configured span', () => {
