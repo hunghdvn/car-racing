@@ -1,4 +1,4 @@
-import { TRACK, VEHICLE, type ZoneId } from '../config'
+import { DECK_FACE, PHYS_SEED, TRACK, VEHICLE, type ZoneId } from '../config'
 import { clamp, clamp01, damp, Rand, wrapPi } from '../util'
 import { rampSlopeAt } from '../world/RoadBuilder'
 import type { TrackProbe } from './TrackProbe'
@@ -91,7 +91,7 @@ export class VehiclePhysics {
   private obstacles: readonly Obstacle[] = []
   private rnd: Rand
 
-  constructor(private probe: TrackProbe, seed = 20260917) {
+  constructor(private probe: TrackProbe, seed = PHYS_SEED) {
     this.rnd = new Rand(seed)
   }
 
@@ -229,13 +229,13 @@ export class VehiclePhysics {
           this.airTime = 0
           this.apexAboveRoad = 0
         }
-      } else if (c.zone === 'elevated' && Math.abs(this.lat) > TRACK.halfWidth + TRACK.bridge.deckEdge + 0.1) {
+      } else if (c.zone === 'elevated' && Math.abs(this.lat) > DECK_FACE + V.deckFall) {
         // drove over the deck parapet line — fall toward the city floor
         this.grounded = false
         this.vy = 0
         this.airTime = 0
         this.apexAboveRoad = 0
-      } else if (c.y < this.y - 0.35 && speed > 3) {
+      } else if (c.y < this.y - V.surfaceFallDrop && speed > 3) {
         // surface fell out from under us (washed deck edge / missed apex)
         this.grounded = false
         this.vy = 0
@@ -355,7 +355,7 @@ export class VehiclePhysics {
         this.x -= sx * side * over
         this.z -= sz * side * over
         const latV = (this.vx * sx + this.vz * sz) * side
-        if (latV > 0.5) {
+        if (latV > V.barrierGraze) {
           this.ev.impact = Math.max(this.ev.impact, latV)
           const f = this.vx * hx + this.vz * hz
           const nl = -latV * V.collisionBounce
@@ -390,7 +390,7 @@ export class VehiclePhysics {
       this.x += nx * pen
       this.z += nz * pen
       const vn = this.vx * nx + this.vz * nz
-      if (vn < -0.5) {
+      if (vn < -V.barrierGraze) {
         this.ev.impact = Math.max(this.ev.impact, -vn)
         this.vx -= (1 + V.collisionBounce) * vn * nx
         this.vz -= (1 + V.collisionBounce) * vn * nz

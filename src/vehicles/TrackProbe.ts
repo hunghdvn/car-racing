@@ -1,4 +1,4 @@
-import { TRACK, VEHICLE, type ZoneId } from '../config'
+import { DECK_FACE, TRACK, VEHICLE, type ZoneId } from '../config'
 import { clamp, smoothstep } from '../util'
 import { TrackSpline } from '../world/TrackSpline'
 import { CoastField } from '../world/Terrain'
@@ -116,7 +116,7 @@ export class RoadSurfaceProbe implements TrackProbe {
     const absLat = Math.abs(lat)
     const zone = this.spline.zoneAt(s)
     if (zone === 'elevated') {
-      if (absLat <= HW + TRACK.bridge.deckEdge + DECK_GRAZE) {
+      if (absLat <= DECK_FACE + DECK_GRAZE) {
         return { y: this.spline.surfaceY(s, clamp(lat, -HW, HW)), onRoad: absLat <= ONROAD_LAT, rough: 0 }
       }
       return { y: this.field.height(wx, wz), onRoad: false, rough: 1 }
@@ -136,7 +136,7 @@ export class RoadSurfaceProbe implements TrackProbe {
   private wallAt(s: number, zone: ZoneId, absLat: number): number {
     void absLat
     if (zone === 'tunnel') return TRACK.tunnel.tubeHalf - TUNNEL_WALL_INSET
-    if (zone === 'elevated') return HW + TRACK.bridge.deckEdge + DECK_PARAPET_STANDOFF
+    if (zone === 'elevated') return DECK_FACE + DECK_PARAPET_STANDOFF
     for (const w of this.walls) if (s >= w.s0 && s <= w.s1) return HW + VEHICLE.barrierInset
     return Infinity
   }

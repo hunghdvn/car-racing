@@ -1,4 +1,4 @@
-import { NITRO, VEHICLE } from '../config'
+import { NITRO, PHYS_SEED, VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import type { InputState } from '../core/Input'
 import { REST_CMD, VehiclePhysics, type CarEvents, type DriveCommand } from './VehiclePhysics'
@@ -13,8 +13,8 @@ import type { TrackProbe } from './TrackProbe'
  * ------------------------------------------------------------------------- */
 
 export class PlayerVehicle {
-  /** physics rumble seed — VehiclePhysics' default stream, re-armed on reset */
-  static readonly PHYS_SEED = 20260917
+  /** physics rumble seed — VehiclePhysics' default stream, re-armed on reset (single source in config) */
+  static readonly PHYS_SEED = PHYS_SEED
   readonly phys: VehiclePhysics
   /** live drive command of the last update (visual binding reads it) */
   readonly cmd: DriveCommand = { ...REST_CMD }

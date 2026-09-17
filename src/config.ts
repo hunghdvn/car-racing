@@ -37,11 +37,13 @@ export const GRAPHICS = {
   msaaSamples: 4,
 } as const
 
-/** Adaptive quality tiers — fallback order per spec §12/§18 (§18 of brief: shadows→bloom→DPR→particles→density→LOD). */
+/** Adaptive quality tiers — fallback order per spec §12/§18 (§18 of brief: shadows→bloom→DPR→particles).
+ *  Every field here is a live consumer in `Renderer` (DPR/shadow/bloom) or the FX
+ *  particle budgets; there are deliberately no advertised-but-unwired knobs. */
 export const QUALITY = {
-  high: { pixelRatio: 1.75, shadowMap: 2048, bloom: 0.32, particles: 1, propDensity: 1, lodBias: 1 },
-  medium: { pixelRatio: 1.4, shadowMap: 1448, bloom: 0.26, particles: 0.8, propDensity: 1, lodBias: 0.85 },
-  low: { pixelRatio: 1.15, shadowMap: 1024, bloom: 0.18, particles: 0.55, propDensity: 0.8, lodBias: 0.7 },
+  high: { pixelRatio: 1.75, shadowMap: 2048, bloom: 0.32, particles: 1 },
+  medium: { pixelRatio: 1.4, shadowMap: 1448, bloom: 0.26, particles: 0.8 },
+  low: { pixelRatio: 1.15, shadowMap: 1024, bloom: 0.18, particles: 0.55 },
 } as const
 
 /** Vehicle physics — arcade (spec §14). All m/s, m/s², rad unless noted. */
@@ -94,6 +96,13 @@ export const VEHICLE = {
   landScrubK: 0.008,
   /** collision: wall sits barrierInset beyond the asphalt edge; post-hit scrub/cooldown */
   barrierInset: 0.62, collideScrub: 0.9, collideCd: 0.22, vehicleHalf: 0.92,
+  /** barrier graze gate (m/s): approach speed below which a wall/obstacle touch is a scrape
+   *  (no impact event, no bounce). Single source for BOTH corridor-clamp and OBB collide paths. */
+  barrierGraze: 0.5,
+  /** elevated deck fall gate (m): past DECK_FACE + deckFall the parapet line is driven over */
+  deckFall: 0.1,
+  /** surface-fall gate (m): when the ground drops this far under a fast wheel it reads as a miss */
+  surfaceFallDrop: 0.35,
   /** off-road: beyond roadEdge+offPad the surface is loose */
   offPad: 0.42,
   /** respawn: blackout duration and out-of-corridor trigger distance */
@@ -266,6 +275,10 @@ export const PAINTS: PaintDef[] = [
 
 /** Determinism: master seed for all seeded placement (spec §22). */
 export const SEED = 20260916
+
+/** Determinism: the player physics rumble stream seed (VehiclePhysics default, re-armed on
+ *  reset). Single source so PlayerVehicle and VehiclePhysics cannot drift. */
+export const PHYS_SEED = 20260917
 
 /** Asset kits (Phase 4, spec §4.2/§4.3/§4.7/§10). LOD switches in metres. */
 export const KIT = {
@@ -494,3 +507,8 @@ export const TRACK = {
     ] as const,
   },
 } as const
+
+/** The elevated viaduct deck face (kerb reveal outboard of the asphalt), shared single
+ *  source for the surface probe's stand/wall tests and the physics deck-fall gate so the
+ *  deck-edge model cannot drift between the two consumers. */
+export const DECK_FACE = TRACK.halfWidth + TRACK.bridge.deckEdge
