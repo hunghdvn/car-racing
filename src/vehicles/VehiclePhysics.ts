@@ -1,7 +1,7 @@
 import { TRACK, VEHICLE, type ZoneId } from '../config'
 import { clamp, clamp01, damp, Rand, wrapPi } from '../util'
 import { rampSlopeAt } from '../world/RoadBuilder'
-import type { TrackProbe, Corridor } from './TrackProbe'
+import type { TrackProbe } from './TrackProbe'
 
 /* ------------------------------------------------------------------------- *
  * Arcade physics core (spec §14): planar slip-based model — heading rotates
@@ -272,7 +272,7 @@ export class VehiclePhysics {
     this.steerVis = clamp(Math.atan2(this.yawRate * V.wheelbase, Math.max(speed, V.steerSpeedGate)), -V.steerMaxRad, V.steerMaxRad)
 
     /* --- corridor + obstacle collisions --- */
-    this.collide(c)
+    this.collide()
 
     /* --- sanity flags (PlayerVehicle owns the respawn policy) --- */
     if (!Number.isFinite(this.x + this.y + this.z + this.vx + this.vy + this.vz)) this.sunk = true
@@ -329,10 +329,16 @@ export class VehiclePhysics {
     }
   }
 
-  private collide(c: Corridor): void {
+  private collide(): void {
     const V = VEHICLE
     const hx = -Math.sin(this.yaw), hz = -Math.cos(this.yaw)
-    const rx = -hz, rz = hx
+    // The barrier clamp consults the corridor at the *integrated* position:
+    // the top-of-step sample predates the x/z advance, so clamping against it
+    // leaves up to one simulation step of barrier penetration per hit. The
+    // probe is pure, so the extra sample is deterministic. s/lat telemetry
+    // deliberately keeps the step-top values: the lip-crossing gate reads the
+    // pre-step s, and the out-of-corridor gate reads the pre-step lat.
+    const c = this.probe.corridor(this.x, this.z)
     if (Number.isFinite(c.wall)) {
       const lim = c.wall - V.vehicleHalf
       const sx = c.sideX, sz = c.sideZ
