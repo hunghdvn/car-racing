@@ -351,16 +351,18 @@ export class CoastField {
     const rock = smoothstep(0.75, 1.7, slope)
     const rv = 0.42 + v * 0.12 + fine * 0.05
     c.setRGB(lerp(c.r, rv, rock), lerp(c.g, rv * 0.96, rock), lerp(c.b, rv * 0.9, rock))
-    // sand/gravel near the shoulder + cliff-top dunes, tone-shifted per patch
+    // sand/gravel near the shoulder + cliff-top dunes, tone-shifted per patch.
+    // Phase 5C: WARM sand — the dusk sky's blue tilt used to drag these to a
+    // pink/mauve read, so the base pulls red up and blue well down.
     const band = smoothstep(11, 7.6, aLat) * (aLat > TRACK.shoulderOuter ? 1 : 0)
     const dune = smoothstep(0.71, 0.87, fbm2(x * 0.02 + 9, z * 0.02 + 1, 3)) * smoothstep(-16, -30, z)
     const sand = Math.max(band, dune * 0.85)
-    const sr = 0.5 + fine * 0.13 + patch * 0.06
-    c.setRGB(lerp(c.r, sr, sand), lerp(c.g, sr * 0.87, sand), lerp(c.b, sr * 0.62, sand))
+    const sr = 0.56 + fine * 0.12 + patch * 0.06
+    c.setRGB(lerp(c.r, sr, sand), lerp(c.g, sr * 0.92, sand), lerp(c.b, sr * 0.55, sand))
     // sea-side land reads beach sand, not scrub — kills the green shelf slab
     const zE = z + (fbm2(x * 0.016 + 0.7, 5.1, 2) - 0.5) * C.edgeMeander
     const beach = smoothstep(C.cliffZTop + 18, C.cliffZTop - 6, zE) * (1 - rock)
-    c.setRGB(lerp(c.r, 0.56 + fine * 0.1, beach), lerp(c.g, 0.49 + fine * 0.09, beach), lerp(c.b, 0.35 + fine * 0.07, beach))
+    c.setRGB(lerp(c.r, 0.62 + fine * 0.1, beach), lerp(c.g, 0.565 + fine * 0.085, beach), lerp(c.b, 0.34 + fine * 0.06, beach))
     // wet/dry shore gradient: damp darkening hugging the waterline
     const wet = smoothstep(this.seaLevel + 0.12, this.seaLevel + 2.6, h)
     c.multiplyScalar(lerp(0.62, 1, wet))
