@@ -110,8 +110,14 @@ try {
   const times = fin.map((r) => r.fin)
   const monotonic = times.every((t, i) => i === 0 || t >= times[i - 1] - 0.5)
   const positionsSane = st.every((r, i) => r.pos === i + 1)
-  rec('results-order', fin.length >= 1 && positionsSane, `standings ranked 1..n, ${fin.length}/${st.length} classified finished`)
-  rec('results-times', fin.length >= 1 && monotonic, `finish times monotonic with position: ${JSON.stringify(times)}`)
+  // The field is the full grid (player + 5 AI = 6). The director assigns `pos`
+  // 1..n even for a DNF/unclassified car, so `positionsSane` alone is satisfied by a
+  // partial finish — gate "five AI race the line … recovery" on EVERY competitor
+  // being present AND classified finished (no DNF slips through the ordering check).
+  const GRID = 6
+  const allClassified = st.length === GRID && fin.length === GRID
+  rec('results-order', allClassified && positionsSane, `standings ranked 1..n, ${fin.length}/${st.length} classified finished (gate: ${GRID}/${GRID} expected)`)
+  rec('results-times', allClassified && monotonic, `finish times monotonic with position: ${JSON.stringify(times)}`)
 
   // a clean restart from the finished state
   const phaseR = await page.evaluate(() => { window.__AP = false; return window.__startRace() })

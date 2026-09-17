@@ -476,6 +476,7 @@ const report = {
   label: LABEL,
   mode: MODE,
   when: new Date().toISOString(),
+  command: `node scripts/perf.mjs ${process.argv.slice(2).join(' ')}`.trimEnd(),
   gitHead: execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim(),
   gitDirty: execSync('git status --porcelain', { cwd: ROOT }).toString().trim().length > 0,
   stack: `${GPU ? 'headed' : 'headless'}: ${displayType ?? 'stack unknown'} — ${gpuDevice ?? 'device unknown'}`,
