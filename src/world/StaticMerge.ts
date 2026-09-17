@@ -41,13 +41,6 @@ interface MergeStats {
   idKeys: number
 }
 
-interface MergeStats {
-  folded: number
-  buckets: number
-  fingerprinted: number
-  idKeys: number
-}
-
 interface Scope {
   dest: THREE.Object3D
   inv: THREE.Matrix4
