@@ -100,6 +100,9 @@ export class Input {
   onAction: ((a: InputAction) => void) | null = null
   private pressed = new Set<string>()
   private bindings: Record<InputAction, ActionBinding> = defaultBindings()
+  /** actions are a fixed union; rebind swaps a value at an existing key only,
+   *  so the iteration list is hoisted off the keydown/poll hot paths (alloc-free) */
+  private readonly actions = Object.keys(this.bindings) as InputAction[]
   /** pad button states of the last poll (edge detection for one-shots) */
   private padPrev: boolean[] = []
 
@@ -109,7 +112,7 @@ export class Input {
       if (PREVENT.has(e.code)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)
-      for (const action of Object.keys(this.bindings) as InputAction[]) {
+      for (const action of this.actions) {
         if (this.bindings[action].kb.includes(e.code)) this.onAction?.(action)
       }
     })
@@ -177,7 +180,7 @@ export class Input {
   /** gamepad one-shot edges against the current action bindings */
   private pollPad(pad: GamepadSnapshot | null, actionsActive: boolean): void {
     if (!pad) { this.padPrev.length = 0; return }
-    for (const action of Object.keys(this.bindings) as InputAction[]) {
+    for (const action of this.actions) {
       const b = this.bindings[action].padButton
       if (b === null) continue
       const hit = !!pad.buttons[b] && (pad.buttons[b].pressed || pad.buttons[b].value > 0.5)
