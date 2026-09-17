@@ -13,6 +13,8 @@ import type { TrackProbe } from './TrackProbe'
  * ------------------------------------------------------------------------- */
 
 export class PlayerVehicle {
+  /** physics rumble seed — VehiclePhysics' default stream, re-armed on reset */
+  static readonly PHYS_SEED = 20260917
   readonly phys: VehiclePhysics
   /** live drive command of the last update (visual binding reads it) */
   readonly cmd: DriveCommand = { ...REST_CMD }
@@ -33,10 +35,13 @@ export class PlayerVehicle {
     this.phys = new VehiclePhysics(probe)
   }
 
-  /** immediate placement on the centreline (grid, tests, harness spawn) */
-  resetTo(s: number, speed = 0): void {
-    const c = this.probe.centerPose(s)
+  /** immediate placement on the racing lane (grid, tests, harness spawn) */
+  resetTo(s: number, speed = 0, lat = 0): void {
+    const c = lat === 0 ? this.probe.centerPose(s) : this.probe.lanePose(s, lat)
     this.phys.resetAt(c.x, c.z, c.yaw, speed)
+    // a grid/re-start reset re-arms the seeded rumble history as well, so a
+    // replayed race is bit-identical regardless of what the car drove before
+    this.phys.reseed(PlayerVehicle.PHYS_SEED)
     this.respawnT = 0
     this.stuckT = 0
     this.driftT = 0
@@ -59,9 +64,17 @@ export class PlayerVehicle {
 
   addShortcutBonus(): void { this.nitroVal = Math.min(NITRO.max, this.nitroVal + NITRO.bonusShortcut) }
 
-  update(dt: number, input: InputState): void {
+  update(dt: number, input: InputState, locked = false): void {
     const V = VEHICLE
     const p = this.phys
+
+    /* countdown gate: command path held at rest, nothing integrates */
+    if (locked) {
+      this.cmd.throttle = this.cmd.brake = this.cmd.steer = 0
+      this.cmd.handbrake = this.cmd.nitro = false
+      this.events = { impact: 0, landed: 0, launched: 0 }
+      return
+    }
 
     if (this.respawnT > 0) {
       this.respawnT -= dt

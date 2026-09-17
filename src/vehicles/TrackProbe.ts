@@ -54,6 +54,8 @@ export interface TrackProbe {
   surface(s: number, lat: number, wx: number, wz: number): Surf
   /** on-centre placement (respawn snaps) */
   centerPose(s: number): CenterPose
+  /** placement on the racing lane at (s, lat) — grid slots, AI recovery */
+  lanePose(s: number, lat: number): CenterPose
 }
 
 const HW = TRACK.halfWidth
@@ -125,5 +127,15 @@ export class RoadSurfaceProbe implements TrackProbe {
   centerPose(s: number): CenterPose {
     const f = this.spline.frame(s)
     return { x: f.pos.x, y: this.spline.surfaceY(s, 0), z: f.pos.z, yaw: f.yaw }
+  }
+
+  lanePose(s: number, lat: number): CenterPose {
+    const f = this.spline.frame(s)
+    return {
+      x: f.pos.x + f.side.x * lat,
+      y: this.spline.surfaceY(s, lat),
+      z: f.pos.z + f.side.z * lat,
+      yaw: f.yaw,
+    }
   }
 }

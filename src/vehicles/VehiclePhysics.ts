@@ -97,6 +97,13 @@ export class VehiclePhysics {
 
   setObstacles(list: readonly Obstacle[]): void { this.obstacles = list }
 
+  /**
+   * Re-arm the seeded rumble generator (grid/restart): a car reset through
+   * its drive layer re-derives its whole random history from the slot seed,
+   * so a replayed race is bit-identical regardless of the previous one.
+   */
+  reseed(seed: number): void { this.rnd = new Rand(seed >>> 0 || 1) }
+
   get speed(): number { return Math.hypot(this.vx, this.vz) }
   get forwardSpeed(): number { return -Math.sin(this.yaw) * this.vx - Math.cos(this.yaw) * this.vz }
 

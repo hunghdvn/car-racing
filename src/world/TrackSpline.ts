@@ -22,6 +22,11 @@ export interface RoadFrame {
 
 const DEG = Math.PI / 180
 
+/** reusable allocation-free planar frame (AI hot path, see planarAt) */
+export interface PlanarFrame {
+  x: number; z: number; yaw: number; sideX: number; sideZ: number; curv: number
+}
+
 interface LutRow { x: number; y: number; z: number; s: number; tx: number; ty: number; tz: number; curv: number; zone: ZoneId }
 
 /** Per-control-point authored tags (the Phase-5 circuit profile, spec §7). */
@@ -245,6 +250,36 @@ export class TrackSpline {
 
   /** Plan curvature magnitude at s (props/dressing can read corner intensity). */
   curvature(s: number): number { return this.frame(s).curv }
+
+  /**
+   * Allocation-free LUT reads for the AI hot path (spec §22 determinism):
+   * station -> signed curvature and the planar centre/side/yaw frame, both
+   * interpolated between LUT rows. The AI samples the line several times per
+   * step; frame()/curvature() allocate, these do not.
+   */
+  curvAt(s: number): number {
+    const sc = clamp(s, 0, this.length)
+    const i = this.rowAt(sc)
+    const a = this.lut[i], b = this.lut[Math.min(this.lut.length - 1, i + 1)]
+    const t = b.s > a.s ? clamp((sc - a.s) / (b.s - a.s), 0, 1) : 0
+    return lerp(a.curv, b.curv, t)
+  }
+
+  planarAt(s: number, out: PlanarFrame): PlanarFrame {
+    const sc = clamp(s, 0, this.length)
+    const i = this.rowAt(sc)
+    const a = this.lut[i], b = this.lut[Math.min(this.lut.length - 1, i + 1)]
+    const t = b.s > a.s ? clamp((sc - a.s) / (b.s - a.s), 0, 1) : 0
+    const tx = lerp(a.tx, b.tx, t), tz = lerp(a.tz, b.tz, t)
+    out.x = lerp(a.x, b.x, t)
+    out.z = lerp(a.z, b.z, t)
+    out.yaw = Math.atan2(-tx, -tz)
+    const l = Math.hypot(tx, tz) || 1
+    out.sideX = -tz / l
+    out.sideZ = tx / l
+    out.curv = lerp(a.curv, b.curv, t)
+    return out
+  }
 
   /**
    * Engineered road-bed profile: the surface the terrain skirt must meet.

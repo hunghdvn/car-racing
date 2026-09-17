@@ -147,6 +147,24 @@ export const AI = {
   avoidRadius: 5.4, avoidForce: 0.5,
   stuckTime: 3.2, stuckSpeed: 2.2,
   slipstreamDist: 9, slipstreamGain: 0.055,
+  /* --- Phase 7: AI controller + race integration extensions --- *
+   * steerK/headingK are the approved base gains; headingScale/yawDamp are
+   * fixed unit normalisations/calibration of that controller (the physics
+   * consumes steer as normalised authority, so the rad-error term needs a
+   * constant scale into that domain). */
+  headingScale: 9.5,        // rad heading error -> normalised steer authority
+  yawDamp: 0.085,           // yaw-rate damping term in the steer law (s)
+  steerLookBase: 6,         // m of fixed look-ahead on the steering frame
+  steerLookTime: 0.42,      // s of speed-proportional steering look-ahead
+  lineGain: 150,            // racing-line cut: lat = clamp(curv * lineGain, ±lineMax)
+  lineMax: 2.6,             // m max apex cut off the centreline
+  laneBias: 0.5,            // m of seeded per-car lane preference (spacing personality)
+  avoidBand: 2.3,           // m lateral band a close rival occupies before we nudge
+  avoidReach: 3.2,          // m of lateral nudge a full avoidForce produces
+  blockBrake: 0.55,         // max brake when a rival blocks the slot ahead
+  nitroCurvGate: 0.0045,    // |curv| under which a stretch counts as straight
+  nitroMinToActivate: 14,   // AI tank fraction required to light the nitro
+  nitroClearGap: 13,        // m of clear slot ahead required to deploy nitro
 } as const
 
 export const PARTICLES = { smokeMax: 900, dustMax: 500, sparkMax: 420, splatMax: 260, smokesPerSec: 340 } as const
@@ -154,7 +172,15 @@ export const PARTICLES = { smokeMax: 900, dustMax: 500, sparkMax: 420, splatMax:
 export const AUDIO = { master: 0.85, engineBase: 52, engineRange: 208, idleRpm: 0.14, shiftPoint: 0.82 } as const
 
 /** Race (spec §20: single lap ~2 min, 6 cars). */
-export const RACE = { laps: 1, cars: 6, totalProgressCheckpoints: 24 } as const
+export const RACE = {
+  laps: 1, cars: 6, totalProgressCheckpoints: 24,
+  /* --- Phase 7: director + grid extensions --- */
+  countdownTime: 3.2,       // s of lights-out hold before GO (countdown state)
+  timeLimit: 320,           // s of sim time after which the field is classified
+  gridFront: 14,            // m the pole slot stands before the start/finish line
+  gridRowGap: 11,           // m between staggered grid rows (> car length + margin)
+  gridLane: 1.55,           // m lateral lane offset off the crown centre
+} as const
 
 export const PAINTS: PaintDef[] = [
   { name: 'Solar Flare', color: 0xf27a1e },
