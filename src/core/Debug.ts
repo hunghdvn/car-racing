@@ -24,6 +24,9 @@ export interface ShotPose {
   parkAi?: boolean
   /** section tag for reporting */
   tag?: string
+  /** dev/kit poses: half-width of the sun's ortho shadow box so isolated
+   *  display boards sit inside the frustum (gameplay uses GRAPHICS default) */
+  shadowSpan?: number
 }
 
 export interface DebugHost {

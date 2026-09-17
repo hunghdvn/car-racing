@@ -195,10 +195,28 @@ export class Renderer {
   /** draw calls/triangles of the most recent full composer chain (dev probe) */
   lastChain = { calls: 0, tris: 0 }
 
+  /** Dev-only (kit shots): re-aim the shadow frustum at an arbitrary focus. */
+  setShadowFocus(p: THREE.Vector3): void {
+    this.updateShadowFor(p)
+    this.gl.shadowMap.needsUpdate = true
+  }
+
   private updateShadowFor(p: THREE.Vector3): void {
     this.sun.position.copy(p).addScaledVector(this.sunDir, 240)
     this.sun.target.position.copy(p)
     this.sun.target.updateMatrixWorld()
+  }
+
+  /** Dev-only (kit boards): widen/narrow the sun's ortho shadow frustum so the
+   *  isolated display boards (up to 460 m across) sit INSIDE it — otherwise
+   *  their shadow map is never rendered and the boards float without ground
+   *  contact shadows when their frames serve as evidence. */
+  setShadowExtent(e: number): void {
+    const sc = this.sun.shadow.camera
+    if (Math.abs(sc.right - e / 2) < 0.01) return
+    sc.left = -e / 2; sc.right = e / 2; sc.top = e / 2; sc.bottom = -e / 2
+    ;(sc as unknown as { updateProjectionMatrix?: () => void }).updateProjectionMatrix?.()
+    this.gl.shadowMap.needsUpdate = true
   }
 
   private resize(): void {

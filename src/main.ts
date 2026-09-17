@@ -5,7 +5,7 @@ import { Debug } from './core/Debug'
 import type { ShotPose } from './core/Debug'
 import { buildCar, type CarModel } from './assets/CarModel'
 import { ChaseCamera, type CarView } from './camera/ChaseCamera'
-import { PAINTS, VEHICLE, KIT } from './config'
+import { PAINTS, VEHICLE, KIT, GRAPHICS } from './config'
 import { Rand } from './util'
 import { buildBuilding, BUILDING_DESIGNS, type BuildingDesignId } from './world/BuildingKit'
 import { composePrefab } from './world/ComposeKit'
@@ -178,7 +178,7 @@ function boot(): void {
     const pad = (cx: number, cz: number, w = 220, d = 130, col = 0x6b6155): void => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 8, d), new THREE.MeshStandardMaterial({ color: col, roughness: 0.9, metalness: 0.02, emissive: new THREE.Color(col).multiplyScalar(0.72) }))
       m.position.set(cx, -4, cz)
-      m.receiveShadow = false
+      m.receiveShadow = true
       m.castShadow = false
       view.scene.add(m)
     }
@@ -192,12 +192,12 @@ function boot(): void {
       const front: BuildingDesignId[] = ['cafe', 'terrace', 'retail', 'substation', 'apartment', 'office']
       const back: BuildingDesignId[] = ['civic', 'warehouse', 'factory', 'silo', 'carpark']
       front.forEach((id, i) => {
-        const b = buildBuilding(id, kitRand(), false)
+        const b = buildBuilding(id, kitRand(), true)
         b.position.set((i - 2.5) * 16.5, 0, 10)
         row.add(b)
       })
       back.forEach((id, i) => {
-        const b = buildBuilding(id, kitRand(), false)
+        const b = buildBuilding(id, kitRand(), true)
         b.position.set((i - 2) * 21, 0, 40)
         row.add(b)
       })
@@ -206,7 +206,7 @@ function boot(): void {
       pad(BX, 24, 230, 110)
       Debug.registerPose('kit_buildings', {
         camera: [BX, 12, -52], look: [BX, 5.5, 16], fov: 62,
-        player: { pos: [BX, -600, -60], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [BX, -600, -60], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 240,
       })
     }
     // --- props: three converging rows, camera close enough to read greebles ---
@@ -231,11 +231,12 @@ function boot(): void {
       ]
       bigs.forEach((f, i) => { const o = f(); o.position.set(i * 15.5 - 39, 0, 38); row.add(o) })
       row.position.set(BX, 0, BZ)
+      row.traverse((o) => { if ((o as unknown as { isMesh?: boolean }).isMesh) o.castShadow = true })
       view.scene.add(row)
       pad(BX, BZ + 22, 240, 160)
       Debug.registerPose('kit_props', {
         camera: [BX, 1.9, BZ - 13], look: [BX, 2.6, BZ + 16], fov: 58,
-        player: { pos: [BX, -600, BZ - 24], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [BX, -600, BZ - 24], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 260,
       })
     }
     // --- vegetation: species near row + decimated-LOD silhouette far row ---
@@ -283,11 +284,12 @@ function boot(): void {
         row.add(m)
       })
       row.position.set(BX, 0, BZ)
+      row.traverse((o) => { if ((o as unknown as { isMesh?: boolean }).isMesh) o.castShadow = true })
       view.scene.add(row)
       pad(BX, BZ + 12, 200, 100)
       Debug.registerPose('kit_vegetation', {
         camera: [BX, 2.8, BZ - 20], look: [BX, 2.2, BZ + 12], fov: 52,
-        player: { pos: [BX, -600, BZ - 32], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [BX, -600, BZ - 32], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 200,
       })
     }
     // --- cluster/infra boards: separate column, 400m apart, full detail ----
@@ -298,6 +300,7 @@ function boot(): void {
         pre.position.set(x, 0, z)
         pre.rotation.y = rotY
         pre.scale.setScalar(scl)
+        pre.traverse((o) => { if ((o as unknown as { isMesh?: boolean }).isMesh) o.castShadow = true })
         view.scene.add(pre)
       }
       const CITY = 3000
@@ -306,7 +309,7 @@ function boot(): void {
       pad(CX, CITY, 200, 150)
       Debug.registerPose('kit_clusters', {
         camera: [CX, 13, CITY - 72], look: [CX, 7, CITY + 8], fov: 47,
-        player: { pos: [CX, -600, CITY - 70], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [CX, -600, CITY - 70], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 220,
       })
       const IND = CITY + 400
       mk('IndustrialCluster_Yard', CX - 26, IND, 0xc3)
@@ -314,7 +317,7 @@ function boot(): void {
       pad(CX, IND, 210, 160)
       Debug.registerPose('kit_industrial', {
         camera: [CX, 8.5, IND - 40], look: [CX, 4.2, IND + 6], fov: 52,
-        player: { pos: [CX, -600, IND - 52], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [CX, -600, IND - 52], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 240,
       })
       const INF = CITY + 1500
       mk('TunnelApproach_Portal', CX - 26, INF + 8, 0xc5)
@@ -323,7 +326,7 @@ function boot(): void {
       pad(CX + 6, INF + 12, 300, 130)
       Debug.registerPose('kit_infra', {
         camera: [CX + 6, 5.2, INF - 46], look: [CX + 6, 2.4, INF + 8], fov: 52,
-        player: { pos: [CX + 6, -600, INF - 62], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [CX + 6, -600, INF - 62], yaw: Math.PI, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 320,
       })
       const SKY = CITY + 900
       const SKX = CX + 2200
@@ -331,7 +334,7 @@ function boot(): void {
       pad(SKX, SKY - KIT.skyline.bandZ + 6, 460, 60)
       Debug.registerPose('kit_skyline', {
         camera: [SKX + 40, 52, SKY + 430], look: [SKX + 40, 14, SKY - KIT.skyline.bandZ], fov: 38,
-        player: { pos: [SKX, -600, SKY + 58], yaw: 0, speed: 0 }, freezeSim: true, tag: 'kit',
+        player: { pos: [SKX, -600, SKY + 58], yaw: 0, speed: 0 }, freezeSim: true, tag: 'kit', shadowSpan: 520,
       })
     }
     // Gate M material matrix: road + sea + cluster + car rubber all in one.
@@ -355,6 +358,7 @@ function boot(): void {
   let simFrozen = false
   let shotSpeed = 0, shotNitro = false, shotDrift = false
 
+  const poseFocus = new THREE.Vector3()
   function applyPose(p: ShotPose): void {
       simFrozen = !!p.freezeSim
       shotSpeed = p.player?.speed ?? 0
@@ -376,6 +380,12 @@ function boot(): void {
       view.camera.position.fromArray(p.camera)
       view.camera.lookAt(p.look ? new THREE.Vector3(...p.look) : new THREE.Vector3(0, 0.6, 0))
       if (p.fov) { view.camera.fov = p.fov; view.camera.updateProjectionMatrix() }
+      // capture renders synchronously from applyPose — the shadow frustum
+      // must follow HERE, not only in the rAF loop, or frozen poses show the
+      // previous frame's shadow box and the subject renders unshadowed
+      const look = p.look ?? p.camera
+      view.setShadowExtent(p.shadowSpan ?? GRAPHICS.shadowExtent)
+      view.setShadowFocus(poseFocus.set(look[0], Math.max(0, look[1] - 3), look[2]))
   }
 
   Debug.bind({
@@ -582,6 +592,7 @@ function boot(): void {
   let dist = 0
   let loadingHidden = false
   let wheelAngle = 0
+  const shadowFocus = new THREE.Vector3()
   let frameCount = 0
 
   function frame(): void {
@@ -616,7 +627,10 @@ function boot(): void {
     } else if (Debug.lastPose) {
       applyPose(Debug.lastPose)
     }
-    view.update(dt, car.group.position)
+    const pose = Debug.lastPose
+    view.setShadowExtent(pose?.shadowSpan ?? GRAPHICS.shadowExtent)
+    const fc = pose?.freezeSim && (pose.look ?? pose.camera) ? (pose.look ?? pose.camera!) : null
+    view.update(dt, fc ? shadowFocus.set(fc[0], Math.max(0, fc[1] - 3), fc[2]) : car.group.position)
     slice.update(t, view.camera.position)
     view.render()
     if (!loadingHidden && t > 0.5) { loadingHidden = true; $('loading')?.classList.add('hidden') }
