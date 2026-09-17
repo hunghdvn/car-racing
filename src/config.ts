@@ -171,6 +171,79 @@ export const PARTICLES = { smokeMax: 900, dustMax: 500, sparkMax: 420, splatMax:
 
 export const AUDIO = { master: 0.85, engineBase: 52, engineRange: 208, idleRpm: 0.14, shiftPoint: 0.82 } as const
 
+/* ---------------------------------------------------------------------------
+ * Phase 8 — effects / audio / UI tuning (spec §15/§16/§18). Every FX, decal,
+ * audio-mapping and UI-timing number lives here; modules read only these.
+ * ------------------------------------------------------------------------- */
+
+/** Skid decals: pooled rear-wheel quads, ring-buffer recycled (spec §15). */
+export const SKIDS = {
+  /** total decal quads in the ring pool (both rear wheels share it) */
+  pool: 620,
+  /** quad size (m): along the travel direction / across the tyre */
+  len: 0.58, width: 0.26,
+  /** gates: a mark is laid only while slipping and rolling */
+  minSpeed: 6.5, slipMin: 0.16,
+  /** seconds of hold before an unconverged mark starts to fade, full fade span */
+  holdSec: 9, fadeSec: 17,
+  /** multiply-blend darkness of a fresh mark (white = no mark, black = full) */
+  tint: 0x241d17,
+  /** metres of travel between marks per wheel */
+  spacing: 0.46,
+} as const
+
+/** Particle emission / lifetime / burst tuning (spec §15, §17 budgets).
+ *  All pools scale with QUALITY[tier].particles. */
+export const FX = {
+  /** continuous emitters (rate at full quality tier, particles/second) */
+  smokePerSec: PARTICLES.smokesPerSec,
+  dustPerSec: 190,
+  trailPerSec: 110,
+  /** burst sizes */
+  sparkBurst: 26, debrisBurst: 10, puffBurst: 16, splashBurst: 22,
+  /** lifetimes (s) */
+  lifeSmoke: 0.9, lifeDust: 0.8, lifeSpark: 0.42, lifeDebris: 0.85,
+  lifePuff: 0.75, lifeSplash: 0.55, lifeTrail: 0.2,
+  /** launch speeds (m/s) and gravity each kind carries (m/s²) */
+  sparkSpeed: 8.2, sparkGrav: 16,
+  debrisSpeed: 5.4, debrisGrav: 19,
+  splashSpeed: 4.6, splashGrav: 12,
+  /** smoke rises with this buoyancy (m/s², negative gravity) */
+  smokeRise: 1.6,
+  /** event gates */
+  impactMin: 0.5, landMin: 1.2, launchMin: 0.5,
+  /** drift-smoke emission gate (mirrors the physics drift gates) */
+  smokeSlipMin: 0.14, smokeSpeedMin: 8,
+  dustRoughMin: 0.12, dustSpeedMin: 5,
+  splashSeaPad: 0.6, splashSpeedMin: 6,
+  /** nitro trail: metres behind the car centre the stream starts */
+  trailRear: 2.15, trailLift: 0.34,
+} as const
+
+/** UI timing / thresholds / HUD mapping (spec §15/§16). */
+export const UI = {
+  /** popup DOM lifetime (s) — matched to the popup-in keyframe span */
+  popupTtlSec: 1.2,
+  /** 'GO' hold after the flag drops */
+  goHoldSec: 0.6,
+  /** countdown display clamp: the board never shows more than this number */
+  countdownTop: 3,
+  /** wrong-way: dot(heading, track-heading) gate + latch hysteresis */
+  wrongWayDot: -0.35, wrongWaySpeedMin: 4, wrongWayHoldSec: 0.55, wrongWayClearSec: 0.7,
+  /** wind-in speed gate (m/s) and the speed where it is full */
+  windInSpeed: 33, windFullSpeed: 62,
+  /** HUD nitro bar segment count */
+  nitroSegments: 8,
+  /** gear feel: cumulative top-speed fractions of the gate-up shifts */
+  gearTops: [0.11, 0.27, 0.45, 0.63, 0.8, 1.02],
+  /** HUD refresh cadences (s between DOM writes) */
+  speedEvery: 0.05, ringEvery: 0.1, minimapEvery: 0.05,
+  /** nitro vignette opacity while the tank burns */
+  vignetteNitro: 0.85,
+  /** impact flash peak opacity (scaled by severity) */
+  flashPeak: 0.55,
+} as const
+
 /** Race (spec §20: single lap ~2 min, 6 cars). */
 export const RACE = {
   laps: 1, cars: 6, totalProgressCheckpoints: 24,
