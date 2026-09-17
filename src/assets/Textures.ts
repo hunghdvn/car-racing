@@ -277,10 +277,10 @@ export function concreteMaps(tone = 0xb9b4a9, seed = 91): { map: THREE.Texture; 
 }
 
 /** Red/white alternating curb faces + black/yellow rumble blocks (tiled along run). */
-export function curbStripeTexture(kind: 'curb' | 'rumble'): THREE.Texture {
+export function curbStripeTexture(kind: 'curb' | 'rumble' | 'standard'): THREE.Texture {
   return cached(`stripe${kind}`, () =>
     canvasTexture(256, 32, (ctx, w, h) => {
-      const bands = kind === 'curb' ? ['#c23b31', '#e8e6de'] : ['#1c1e22', '#d8a41d']
+      const bands = kind === 'curb' ? ['#c23b31', '#e8e6de'] : kind === 'rumble' ? ['#1c1e22', '#d8a41d'] : ['#24262b', '#d7d4cb']
       for (let b = 0; b < 4; b++) {
         ctx.fillStyle = bands[b % 2]
         ctx.fillRect((b * w) / 4, 0, w / 4, h)

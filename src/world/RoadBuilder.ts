@@ -1,9 +1,10 @@
 import * as THREE from 'three'
-import { TRACK, SEED } from '../config'
+import { TRACK, SEED, type ZoneId } from '../config'
 import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry, crNormals, sweepProfile, ensureOutwardWinding, forceUpWinding, type SweepFrame } from '../util'
 
 const UP = new THREE.Vector3(0, 1, 0)
 import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture } from '../assets/Textures'
+import { rockGeometry } from './VegetationKit'
 import type { TrackSpline } from './TrackSpline'
 
 /* ------------------------------------------------------------------------- *
@@ -49,6 +50,7 @@ export class RoadBuilder {
   private spline: TrackSpline
   private field: HeightField | null
   readonly group = new THREE.Group()
+  private mats: Record<string, THREE.Material> = {}
 
   constructor(spline: TrackSpline, field: HeightField | null) {
     this.spline = spline
@@ -63,21 +65,57 @@ export class RoadBuilder {
   build(sFrom: number, sTo: number): THREE.Group {
     const g = this.group
     const CHUNK = 150
-    for (let a = sFrom; a < sTo - 1; a += CHUNK) {
-      const b = Math.min(sTo, a + CHUNK)
+    const emit = (a: number, b: number, tag: string): void => {
       const seg = new THREE.Group()
-      seg.name = `road-seg-${Math.round(a)}`
+      seg.name = tag
       seg.add(this.buildAsphalt(a, b))
       seg.add(this.buildShoulders(a, b))
       seg.add(this.buildSkirts(a, b))
       seg.add(this.buildMarkings(a, b))
       seg.add(this.buildPatches(a, b))
+      const mid = (a + b) / 2
+      const zone = this.spline.zoneAt(mid)
+      if (zone === 'tunnel') {
+        seg.add(this.tunnelRun(a, b))
+        // the authored portal-approach barriers still belong outside the bore
+        const bg = new THREE.Group()
+        bg.name = `edge-barrier-${Math.round(a)}`
+        for (const w of RoadBuilder.windows(TRACK.edge.barrier, a, b)) this.barrierRun(bg, w.s0, w.s1)
+        seg.add(bg)
+      } else if (zone === 'elevated') seg.add(this.deckRun(a, b))
+      else seg.add(this.zoneEdgeRun(a, b, zone))
       g.add(seg)
     }
-    g.add(this.buildEdgeProfiles(sFrom, sTo))
+    for (let a = sFrom; a < sTo - 1; a += CHUNK) emit(a, Math.min(sTo, a + CHUNK), `road-seg-${Math.round(a)}`)
+    // The circuit closes on itself: the finish line sits exactly on the seam at
+    // s = 0 = length, so the stubs either side of it are paved too.
+    if (sFrom > 0.05) emit(0, Math.min(sFrom, 4), 'road-seam-head')
+    if (sTo < this.spline.length - 0.05) emit(Math.max(sTo, this.spline.length - 4), this.spline.length, 'road-seam-tail')
+    // The frozen Phase-3 coastal edge stack is authored once, over its own
+    // windows, and stays byte-identical to the approved slice.
+    g.add(this.buildEdgeProfiles(0, this.spline.length))
     g.add(this.buildGuardrail())
     g.add(this.buildDrains())
     g.add(this.buildKicker())
+    g.add(this.buildFinish())
+    g.add(this.buildShortcut())
+    // An InstancedMesh whose count exceeds its allocated capacity makes the GPU
+    // read past the end of the instance buffer — on screen that is black garbage
+    // geometry that is maddening to diagnose from a screenshot, so fail loudly
+    // here instead (spec §21 discipline).
+    const walk = (o: THREE.Object3D, path: string): void => {
+      const im = o as unknown as { isInstancedMesh?: boolean; count?: number; instanceMatrix?: { count?: number }; matrix?: { elements: number[] } }
+      if (im.isInstancedMesh && im.instanceMatrix?.count) {
+        const cap = im.instanceMatrix.count // items, not floats, in this fork
+        if ((im.count ?? 0) > cap) {
+          const e = im.matrix?.elements
+          const at = e ? `@(${e[12].toFixed(0)},${e[13].toFixed(0)},${e[14].toFixed(0)})` : ''
+          throw new Error(`[road] instanced overflow: ${path}/<${o.name || 'unnamed'}>${at} ${im.count} > ${cap} (raw ${im.instanceMatrix.count})`)
+        }
+      }
+      for (const c of o.children) walk(c, `${path}/${o.name || o.type}`)
+    }
+    walk(g, 'road')
     return g
   }
 
@@ -370,7 +408,7 @@ export class RoadBuilder {
       return out
     }
     for (const side of [1, -1]) for (const s of lattice(sFrom, 4, 2, sTo)) white.push(this.bar(s, side * (hw - 0.42), 4.06, 0.15, 0.014))
-    for (const s of lattice(sFrom, 7, 3, sTo)) white.push(this.bar(s + 1.7, 0, 3.4, 0.15, 0.014))
+    for (const s of lattice(sFrom, 7, 3, sTo)) if (!this.atSpurMouth(s + 1.7)) white.push(this.bar(s + 1.7, 0, 3.4, 0.15, 0.014))
     for (const s of lattice(sFrom, 8, 2, sTo)) faded.push(this.bar(s + 2, hw * 0.45, 4, 0.14, 0.012))
     // landing-zone transverse bars after the lip (spec §7 landing zone)
     const r = TRACK.ramp
@@ -625,5 +663,769 @@ export class RoadBuilder {
       frames.push({ p: [p.x, p.y, p.z], s: [f.side.x, f.side.y, f.side.z], u: [f.up.x, f.up.y, f.up.z] })
     }
     return sweepProfile([[0, 0], [0.055, 0], [0.055, 0.065], [0, 0.065]], frames, { caps: true, uvScale: 1 })
+  }
+
+  /* ════════════════════════ circuit structures (Phase 5) ═══════════════════════ *
+   * Everything the appended zones need that the frozen coastal slice never did:
+   * per-zone edge assemblies, the tunnel bore with its portals and light pools,
+   * the elevated viaduct (deck structure, parapets, pylons, joints), the finish
+   * gantry over the lap seam and the guarded infield shortcut.                  */
+
+  private mat(key: string, make: () => THREE.Material): THREE.Material {
+    let m = this.mats[key] as THREE.Material | undefined
+    if (!m) { m = make(); this.mats[key] = m }
+    return m
+  }
+
+  private static windows(list: readonly { s0: number; s1: number; style?: string }[], a: number, b: number): { s0: number; s1: number; style?: string }[] {
+    const out: { s0: number; s1: number; style?: string }[] = []
+    for (const w of list) {
+      const s0 = Math.max(a, w.s0), s1 = Math.min(b, w.s1)
+      if (s1 - s0 > 2.5) out.push({ s0, s1, style: w.style })
+    }
+    return out
+  }
+
+  private concMat(tone = 0xa9a49a, seed = 51, rough = 0.85): THREE.MeshStandardMaterial {
+    return this.mat(`conc${tone}/${seed}`, () => {
+      const c = concreteMaps(tone, seed)
+      return new THREE.MeshStandardMaterial({ map: c.map, normalMap: c.normalMap, roughnessMap: c.roughnessMap, roughness: rough, metalness: 0.02 })
+    }) as THREE.MeshStandardMaterial
+  }
+
+  private steelMat(color: number, metal = 0.82, rough = 0.44): THREE.MeshStandardMaterial {
+    return this.mat(`steel${color}/${metal}/${rough}`, () => new THREE.MeshStandardMaterial({ color, metalness: metal, roughness: rough })) as THREE.MeshStandardMaterial
+  }
+
+  /** Kerb + painted stripe on both edges (style picks the stripe palette). */
+  private kerbRun(g: THREE.Group, s0: number, s1: number, style: 'coast' | 'hazard' | 'standard' | 'city'): void {
+    const conc = this.concMat()
+    const stripeKind = style === 'hazard' ? 'rumble' : style === 'standard' ? 'standard' : 'curb'
+    const stripeMat = this.mat(`stripe-${stripeKind}`, () => new THREE.MeshStandardMaterial({
+      map: curbStripeTexture(stripeKind), roughness: 0.8, metalness: 0,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    })) as THREE.MeshStandardMaterial
+    const curbChain: [number, number][] = [[5.32, -0.02], [5.32, 0.13], [6.12, 0.16], [6.26, 0.13], [6.26, -0.03], [6.7, -0.05]]
+    const stripeChain: [number, number][] = [[5.325, -0.005], [6.115, 0.145], [6.25, 0.115]]
+    for (const side of [1, -1] as const) {
+      const curb = new THREE.Mesh(this.chainStrip(side, s0, s1, 6.4, curbChain, 0.34), conc)
+      curb.castShadow = true
+      curb.receiveShadow = true
+      curb.name = 'curb'
+      g.add(curb)
+      const stripe = new THREE.Mesh(this.chainStrip(side, s0, s1, 6.4, stripeChain, 0.172), stripeMat)
+      stripe.renderOrder = 1
+      g.add(stripe)
+    }
+  }
+
+  private rumbleRun(g: THREE.Group, s0: number, s1: number): void {
+    const chain: [number, number][] = [[5.32, -0.01], [5.32, 0.03], [6.28, 0.045], [6.38, 0.02], [6.38, -0.02]]
+    const mat = this.mat('rumble', () => new THREE.MeshStandardMaterial({ map: curbStripeTexture('rumble'), roughness: 0.75, metalness: 0.04 })) as THREE.MeshStandardMaterial
+    for (const side of [1, -1] as const) {
+      const m = new THREE.Mesh(this.chainStrip(side, s0, s1, 6.2, chain, 0.155), mat)
+      m.receiveShadow = true
+      m.name = 'rumble'
+      g.add(m)
+    }
+  }
+
+  /** Segment-jointed concrete barrier, both edges. */
+  private barrierRun(g: THREE.Group, s0: number, s1: number): void {
+    const profile: [number, number][] = [
+      [6.55, 0.02], [7.32, 0.02], [7.14, 0.17], [6.98, 0.36], [6.92, 0.74], [6.87, 0.88], [6.72, 0.88], [6.66, 0.74], [6.6, 0.36], [6.55, 0.14],
+    ]
+    const conc = this.concMat()
+    for (const side of [1, -1] as const) {
+      const frames: SweepFrame[] = []
+      const rows = Math.max(2, Math.ceil((s1 - s0) / 1.6))
+      for (let i = 0; i <= rows; i++) {
+        const s = lerp(s0, s1, i / rows)
+        const f = this.spline.frame(s)
+        const dy = this.spline.bedY(s, side * 6.9) - f.pos.y
+        frames.push({ p: [f.pos.x, f.pos.y + dy, f.pos.z], s: [f.side.x * side, f.side.y * side, f.side.z * side], u: [f.up.x, f.up.y, f.up.z] })
+      }
+      const m = new THREE.Mesh(sweepProfile(profile, frames, { caps: false, uvScale: 0.42 }), conc)
+      m.castShadow = true
+      m.receiveShadow = true
+      m.name = 'barrier'
+      g.add(m)
+    }
+  }
+
+  /** Corrugated W-rail with posts on a global lattice (seam-free across chunks). */
+  private guardRun(g: THREE.Group, s0: number, s1: number): void {
+    const bandA: [number, number][] = [[-6.16, 0.5], [-5.84, 0.5], [-5.84, 0.615], [-6.16, 0.615]]
+    const bandB: [number, number][] = [[-6.16, 0.665], [-5.84, 0.665], [-5.84, 0.78], [-6.16, 0.78]]
+    const spine: [number, number][] = [[-6.18, 0.47], [-6.06, 0.47], [-6.06, 0.81], [-6.18, 0.81]]
+    const steel = this.steelMat(0x9aa2ab)
+    for (const side of [1, -1] as const) {
+      const frames: SweepFrame[] = []
+      const rows = Math.max(2, Math.ceil((s1 - s0) / 2.6))
+      for (let i = 0; i <= rows; i++) {
+        const s = lerp(s0, s1, i / rows)
+        const f = this.spline.frame(s)
+        const dy = this.spline.bedY(s, side * -6.0) - f.pos.y + 0.02
+        frames.push({ p: [f.pos.x, f.pos.y + dy, f.pos.z], s: [f.side.x * side, f.side.y * side, f.side.z * side], u: [f.up.x, f.up.y, f.up.z] })
+      }
+      const rail = new THREE.Mesh(mergeGeometries([bandA, bandB, spine].map((p) => ({ geometry: sweepProfile(p, frames, { caps: false, uvScale: 0.3 }) }))), steel)
+      rail.castShadow = true
+      rail.receiveShadow = true
+      rail.name = 'guardrail-rail'
+      g.add(rail)
+    }
+    // posts on the absolute lattice so chunk seams never double up or gap
+    const post = new THREE.BoxGeometry(0.085, 0.84, 0.085)
+    post.translate(0, 0.36, 0)
+    const start = Math.ceil(s0 / 3.4) * 3.4
+    const count = Math.floor((s1 - start) / 3.4) + 1
+    // two posts per lattice station (both verges) — the capacity has to cover both
+    const posts = new THREE.InstancedMesh(post, this.steelMat(0x707880, 0.7, 0.52), Math.max(1, count * 2))
+    posts.castShadow = true
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const p = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
+    const rj = new Rand(SEED ^ 0x9a11)
+    let n = 0
+    for (let i = 0; i < count; i++) {
+      const s = start + i * 3.4
+      for (const side of [1, -1] as const) {
+        const lat = side * 6.0 + rj.range(-0.05, 0.05)
+        const f = this.spline.frame(s)
+        p.copy(f.pos).addScaledVector(f.side, lat)
+        p.y = f.pos.y + (this.spline.bedY(s, lat) - f.pos.y)
+        e.set(rj.range(-0.012, 0.012), f.yaw, rj.range(-0.02, 0.02))
+        q.setFromEuler(e)
+        m4.compose(p, q, sc)
+        posts.setMatrixAt(n++, m4)
+      }
+    }
+    posts.count = Math.min(n, Math.max(1, count * 2))
+    posts.instanceMatrix.needsUpdate = true
+    posts.name = 'guardrail-posts'
+    g.add(posts)
+  }
+
+  /** Tyre-barrier bags (instanced) against a high-speed exit. */
+  private tyreRun(g: THREE.Group, s0: number, s1: number): void {
+    const rows = Math.max(1, Math.round((s1 - s0) / 1.2))
+    const geo = new THREE.CylinderGeometry(0.34, 0.34, 0.36, 10)
+    const inst = new THREE.InstancedMesh(geo, this.mat('tyre', () => new THREE.MeshStandardMaterial({ color: 0x21232a, roughness: 0.86, metalness: 0.05 })) as THREE.Material, rows * 8 * 3)
+    inst.castShadow = true
+    inst.receiveShadow = true
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const p = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
+    const rnd = new Rand(SEED ^ 0x51a7)
+    let n = 0
+    for (let i = 0; i < rows; i++) {
+      const s = s0 + (i + 0.5) * (s1 - s0) / rows
+      const f = this.spline.frame(s)
+      for (let k = 0; k < 8; k++) for (let tier = 0; tier < 3; tier++) {
+        const lat = -6.9 - (k % 2) * 0.62
+        const base = this.spline.bedY(s, lat)
+        p.copy(f.pos).addScaledVector(f.side, lat + rnd.range(-0.04, 0.04))
+        p.y = base + 0.19 + tier * 0.355
+        e.set(rnd.range(-0.05, 0.05), f.yaw + rnd.range(-0.2, 0.2), rnd.range(-0.05, 0.05))
+        q.setFromEuler(e)
+        m4.compose(p, q, sc)
+        inst.setMatrixAt(n++, m4)
+      }
+    }
+    inst.count = n
+    inst.instanceMatrix.needsUpdate = true
+    inst.name = 'tyres'
+    g.add(inst)
+  }
+
+  /** Chevron alignment boards facing the driver into a corner. */
+  private chevronRun(g: THREE.Group, s0: number, s1: number): void {
+    const plate = new THREE.BoxGeometry(1.5, 1.1, 0.08)
+    const chev = new THREE.BoxGeometry(0.3, 0.86, 0.1)
+    const boards = Math.max(1, Math.round((s1 - s0) / 6))
+    const plateInst = new THREE.InstancedMesh(plate, this.mat('chevPlate', () => new THREE.MeshStandardMaterial({ color: 0xe9e6dd, roughness: 0.7 })) as THREE.Material, boards)
+    const chevInst = new THREE.InstancedMesh(chev, this.mat('chevInk', () => new THREE.MeshStandardMaterial({ color: 0x1d2026, roughness: 0.68 })) as THREE.Material, boards * 2)
+    plateInst.castShadow = true
+    chevInst.castShadow = true
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const p = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
+    let nc = 0
+    for (let i = 0; i < boards; i++) {
+      const s = s0 + (i + 0.5) * (s1 - s0) / boards
+      const f = this.spline.frame(s)
+      const lat = -8.6
+      const base = this.spline.bedY(s, lat)
+      p.copy(f.pos).addScaledVector(f.side, lat)
+      p.y = base + 1.35
+      e.set(0, f.yaw + Math.PI / 2, 0)
+      q.setFromEuler(e)
+      m4.compose(p, q, sc)
+      plateInst.setMatrixAt(i, m4)
+      for (const off of [-0.34, 0.34]) {
+        p.copy(f.pos).addScaledVector(f.side, lat - 0.07)
+        p.y = base + 1.35
+        e.set(0, f.yaw + Math.PI / 2 + off * 0.55, 0)
+        q.setFromEuler(e)
+        m4.compose(p, q, sc)
+        chevInst.setMatrixAt(nc++, m4)
+      }
+    }
+    plateInst.instanceMatrix.needsUpdate = true
+    chevInst.count = nc
+    chevInst.instanceMatrix.needsUpdate = true
+    plateInst.name = 'chevron-plate'
+    chevInst.name = 'chevron-ink'
+    g.add(plateInst, chevInst)
+  }
+
+  /** Per-zone edge stack for one station chunk (the coastal slice keeps its
+   *  authored Phase-3 assemblies, which stay byte-identical). */
+  zoneEdgeRun(a: number, b: number, zone: ZoneId): THREE.Group {
+    const g = new THREE.Group()
+    g.name = `edge-${zone}-${Math.round(a)}`
+    if (zone === 'coastal') return g
+    const E = TRACK.edge
+    for (const w of RoadBuilder.windows(E.kerb, a, b)) this.kerbRun(g, w.s0, w.s1, 'standard')
+    for (const w of RoadBuilder.windows(E.rumble, a, b)) this.rumbleRun(g, w.s0, w.s1)
+    for (const w of RoadBuilder.windows(E.barrier, a, b)) this.barrierRun(g, w.s0, w.s1)
+    for (const w of RoadBuilder.windows(E.guard, a, b)) this.guardRun(g, w.s0, w.s1)
+    for (const w of RoadBuilder.windows(E.tyres, a, b)) this.tyreRun(g, w.s0, w.s1)
+    for (const w of RoadBuilder.windows(E.chevrons, a, b)) this.chevronRun(g, w.s0, w.s1)
+    return g
+  }
+
+  /* ───────────────────────────── tunnel bore ───────────────────────────── *
+   * The terrain ridge passes OVER the tube; the shell is the readable inside,
+   * with a dark wainscot, a reflective band at eye height, ribs, emissive
+   * fittings and additive light pools on the asphalt (dark-but-not-black). */
+  private tunnelRun(a: number, b: number): THREE.Group {
+    const g = new THREE.Group()
+    g.name = `tunnel-${Math.round(a)}`
+    const T = TRACK.tunnel
+    const rng = this.spline.zoneRange('tunnel')
+    const s0 = Math.max(a, rng.s0 - T.apron - 7), s1 = Math.min(b, rng.s1 + T.apron + 7)
+    if (s1 - s0 < 1) return g
+    const H = T.tubeHalf, R = T.tubeRise, so = TRACK.shoulderOuter
+    const prof: [number, number][] = [
+      [-H - 0.6, -0.9], [-H, -0.9], [-H, R * 0.4], [-H * 0.94, R * 0.72],
+      [-H * 0.66, R * 0.9], [-H * 0.33, R * 0.985], [0, R],
+      [H * 0.33, R * 0.985], [H * 0.66, R * 0.9], [H * 0.94, R * 0.72],
+      [H, R * 0.4], [H, -0.9], [H + 0.6, -0.9],
+    ]
+    const lift = prof.map((p) => p[1])
+    const cols = prof.map((p) => p[0])
+    const conc = this.concMat(0x8f8c86, 131, 0.9)
+    conc.side = THREE.DoubleSide
+    const bed = (s: number, lat: number): number => this.spline.bedY(s, clamp(lat, -so - 3, so + 3))
+    const shell = new THREE.Mesh(this.loft(s0, s1, 1.4, cols,
+      (s, lat, out, j) => this.absPoint(s, lat, bed(s, lat) + lift[j], out),
+      0.22,
+      (s, lat, c, j) => {
+        const h = lift[j] / R
+        const v = 0.2 + fbm2(s * 0.07 + 2.2, j * 1.31 + 0.7, 2) * 0.055
+        if (h < 0.2) c.setRGB(v * 0.78, v * 0.79, v * 0.84)
+        else if (h < 0.36) c.setRGB(0.64, 0.625, 0.56)
+        else c.setRGB(v, v * 0.985, v * 0.93)
+      }), conc)
+    shell.receiveShadow = true
+    shell.name = 'tunnel-shell'
+    g.add(shell)
+
+    // ribs: one arch band instanced along the bore
+    const centre = R * 0.42
+    const ribPos: number[] = [], ribIdx: number[] = []
+    const depth = 0.42
+    for (const zc of [0, depth]) for (const [lat, y] of prof) {
+      const ox = lat - 0, oy = y - centre
+      const l = Math.hypot(ox, oy) || 1
+      ribPos.push(lat + (ox / l) * 0.14, y + (oy / l) * 0.14, zc)
+    }
+    const pn = prof.length
+    for (const base of [0, pn]) for (let j = 0; j < pn - 1; j++) {
+      const a0 = base + j, b0 = a0 + pn
+      ribIdx.push(a0, b0, a0 + 1, a0 + 1, b0, b0 + 1)
+    }
+    const ribGeo = new THREE.BufferGeometry()
+    ribGeo.setAttribute('position', new THREE.Float32BufferAttribute(ribPos, 3))
+    ribGeo.setIndex(ribIdx)
+    sanitizeGeometry(ribGeo)
+    crNormals(ribGeo)
+    ribGeo.translate(0, 0, -depth / 2)
+    const ribMat = this.concMat(0x75736e, 211, 0.88)
+    ribMat.side = THREE.DoubleSide
+    const ribN = Math.max(1, Math.floor((s1 - s0) / T.ribEvery))
+    const ribs = new THREE.InstancedMesh(ribGeo, ribMat, ribN)
+    ribs.castShadow = false
+    ribs.receiveShadow = true
+
+    // fittings + light pools
+    const fitGeo = new THREE.BoxGeometry(3.4, 0.1, 0.3)
+    const fitMat = new THREE.MeshStandardMaterial({ color: 0xf2e6c8, emissive: 0xffe3ab, emissiveIntensity: 2.1, roughness: 0.5 })
+    const poolGeo = new THREE.PlaneGeometry(6.6, 10.5, 4, 6)
+    poolGeo.rotateX(-Math.PI / 2)
+    {
+      const pp = poolGeo.getAttribute('position')
+      const cc = new Float32Array(pp.count * 3)
+      for (let i = 0; i < pp.count; i++) {
+        const dx = Math.abs(pp.getX(i)) / 3.3, dz = Math.abs(pp.getZ(i)) / 5.25
+        const f = clamp(1 - Math.max(dx, dz), 0, 1)
+        cc[i * 3] = f * f; cc[i * 3 + 1] = f * f * 0.86; cc[i * 3 + 2] = f * f * 0.6
+      }
+      poolGeo.setAttribute('color', new THREE.Float32BufferAttribute(cc, 3))
+      sanitizeGeometry(poolGeo)
+    }
+    const poolMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
+    const lightN = Math.max(1, Math.floor((s1 - s0) / T.lightEvery))
+    const fits = new THREE.InstancedMesh(fitGeo, fitMat, lightN)
+    const pools = new THREE.InstancedMesh(poolGeo, poolMat, lightN)
+    pools.renderOrder = 3
+
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const p = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
+    for (let i = 0; i < ribN; i++) {
+      const s = s0 + (i + 0.5) * (s1 - s0) / ribN
+      const f = this.spline.frame(s)
+      p.copy(f.pos).addScaledVector(f.side, 0)
+      p.y = bed(s, 0)
+      e.set(0, f.yaw, 0)
+      q.setFromEuler(e)
+      m4.compose(p, q, sc)
+      ribs.setMatrixAt(i, m4)
+    }
+    for (let i = 0; i < lightN; i++) {
+      const s = s0 + (i + 0.5) * (s1 - s0) / lightN
+      const f = this.spline.frame(s)
+      p.copy(f.pos); p.y = bed(s, 0) + R - 0.14
+      e.set(0, f.yaw, 0)
+      q.setFromEuler(e)
+      m4.compose(p, q, sc)
+      fits.setMatrixAt(i, m4)
+      p.copy(f.pos); p.y = this.spline.surfaceY(s, 0) + 0.014
+      m4.compose(p, q, new THREE.Vector3(1, 1, 1))
+      pools.setMatrixAt(i, m4)
+    }
+    ribs.instanceMatrix.needsUpdate = true
+    fits.instanceMatrix.needsUpdate = true
+    pools.instanceMatrix.needsUpdate = true
+    ribs.name = 'tunnel-ribs'; fits.name = 'tunnel-fittings'; pools.name = 'tunnel-pools'
+    g.add(ribs, fits, pools)
+
+    // portals where this chunk reaches an end of the bore
+    for (const [se, dir] of [[rng.s0, -1], [rng.s1, 1]] as const) {
+      if (se < a || se > b) continue
+      g.add(this.portalAt(se, dir))
+    }
+    return g
+  }
+
+  /** Portal frame: jambs, a deep lintel with a sign band, wing walls into the
+   *  rock and mouth ribs, so the bore reads as driven through a ridge. */
+  private portalAt(s: number, dir: -1 | 1): THREE.Group {
+    const g = new THREE.Group()
+    g.name = 'tunnel-portal'
+    const T = TRACK.tunnel
+    const f = this.spline.frame(s)
+    const bed0 = this.spline.bedY(s, 0)
+    const H = T.tubeHalf, R = T.tubeRise
+    const conc = this.concMat(0xa5a19a, 151, 0.88)
+    const dark = this.mat('portalInk', () => new THREE.MeshStandardMaterial({ color: 0x25262a, roughness: 0.92 })) as THREE.Material
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, lat: number, y: number, yawExtra = 0): THREE.Mesh => {
+      const m = new THREE.Mesh(geo, mat)
+      p.copy(f.pos).addScaledVector(f.side, lat)
+      m.position.set(p.x, bed0 + y, p.z)
+      m.rotation.set(0, f.yaw + yawExtra, 0)
+      m.castShadow = true
+      m.receiveShadow = true
+      g.add(m)
+      return m
+    }
+    const p = new THREE.Vector3()
+    const jambW = 1.25, jambH = R + 1.5
+    for (const side of [-1, 1] as const) {
+      add(new THREE.BoxGeometry(jambW, jambH, T.portalDepth), conc, side * (H + jambW * 0.5 - 0.1), jambH * 0.5 - 0.9)
+      add(new THREE.BoxGeometry(2.1, 0.5, T.portalDepth + 1.4), conc, side * (H + 1.9), 0.2)     // footing
+      // wing walls splay back into the hillside
+      add(new THREE.BoxGeometry(0.8, 3.4, 6.4), conc, side * (H + 2.4), 1.5, side * 0.22 * dir)
+    }
+    add(new THREE.BoxGeometry(2 * H + 2 * jambW + 0.6, 1.7, T.portalDepth), conc, 0, jambH - 0.35)
+    add(new THREE.BoxGeometry(2 * H + 2 * jambW + 1.3, 0.42, T.portalDepth + 0.35), conc, 0, jambH + 0.62)
+    const band = add(new THREE.BoxGeometry(2 * H + 0.4, 0.86, T.portalDepth + 0.4), dark, 0, jambH + 1.28)
+    band.renderOrder = 1
+    // the mouth ring: a rib stood just outside the frame so the opening reads deep
+    add(new THREE.BoxGeometry(2 * H + 0.5, 0.34, 0.34), conc, 0, R + 0.18)
+    for (const side of [-1, 1] as const) add(new THREE.BoxGeometry(0.34, R + 0.4, 0.34), conc, side * (H + 0.2), (R + 0.4) * 0.5 - 0.9)
+    // boulders at the portal feet tie the cut into the rock
+    for (const [lat, sc, seed] of [[-H - 2.6, 1.5, 3], [H + 2.9, 1.8, 11], [-H - 4.2, 1.1, 23], [H + 4.6, 1.3, 31]] as const) {
+      const r = new THREE.Mesh(rockGeometry(new Rand(SEED ^ (seed * 7919 + 13)), seed), this.concMat(0x8a8781, 71 + seed, 0.95))
+      p.copy(f.pos).addScaledVector(f.side, lat)
+      r.position.set(p.x, this.field ? this.field.height(p.x, p.z) + 0.15 : bed0 + 0.3, p.z)
+      r.scale.setScalar(sc)
+      r.rotation.set(0.1, seed * 1.7, 0.08)
+      r.castShadow = true
+      r.receiveShadow = true
+      g.add(r)
+    }
+    return g
+  }
+
+  /* ───────────────────────── elevated viaduct (the north city) ────────────── */
+  private deckRun(a: number, b: number): THREE.Group {
+    const g = new THREE.Group()
+    g.name = `deck-${Math.round(a)}`
+    const B = TRACK.bridge
+    const rng = this.spline.zoneRange('elevated')
+    const s0 = Math.max(a, rng.s0 - 3), s1 = Math.min(b, rng.s1 - B.abutment * 0.15)
+    if (s1 - s0 < 1) return g
+    const hw = TRACK.halfWidth, so = TRACK.shoulderOuter
+    const conc = this.concMat(0xb0aba1, 171, 0.86)
+    const darkConc = this.concMat(0x6f6c68, 191, 0.9)
+
+    // parapets: inside face, cap, outside face down to the deck edge
+    const para: [number, number][] = [
+      [hw + 0.34, -0.05], [hw + 0.34, 0.66], [hw + 0.46, 1.02], [hw + 0.78, 1.06], [hw + 0.86, 0.9], [hw + 0.86, -0.92],
+    ]
+    for (const side of [1, -1] as const) {
+      const m = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.6, para, 0.3), conc)
+      m.castShadow = true
+      m.receiveShadow = true
+      m.name = 'deck-parapet'
+      g.add(m)
+      // a steel hand-rail reveal on the inside of the parapet
+      const rail: [number, number][] = [[hw + 0.3, 0.72], [hw + 0.42, 0.78], [hw + 0.42, 0.86], [hw + 0.3, 0.8]]
+      const rm = new THREE.Mesh(this.chainStrip(side, s0, s1, hw + 0.36, rail, 0.4), this.steelMat(0x8d949c, 0.75, 0.45))
+      rm.name = 'deck-rail'
+      g.add(rm)
+    }
+
+    // structural depth: two girders plus the soffit panel
+    const gir: [number, number][] = [[hw - 0.95, -0.02], [hw - 0.95, -B.deckUnder], [hw - 0.35, -B.deckUnder], [hw - 0.35, -0.02]]
+    for (const side of [1, -1] as const) {
+      const gm = new THREE.Mesh(this.chainStrip(side, s0, s1, hw - 0.65, gir, 0.3), conc)
+      gm.name = 'deck-girder'
+      gm.receiveShadow = true
+      g.add(gm)
+    }
+    const soft = new THREE.Mesh(this.loft(s0, s1, 2.4, [-hw - 0.9, 0, hw + 0.9],
+      (s, lat, out) => this.absPoint(s, lat, this.spline.bedY(s, clamp(lat, -so, so)) - B.deckUnder, out),
+      0.2, undefined, false, new THREE.Vector3(0, -1, 0)), darkConc)
+    soft.name = 'deck-soffit'
+    g.add(soft)
+
+    // pylons: columns to the ground plus a pier cap under the soffit
+    const n = Math.max(1, Math.round((s1 - s0) / B.pylonEvery))
+    const colGeo = new THREE.BoxGeometry(1, 1, 1.95)
+    colGeo.translate(0, -0.5, 0)
+    const capGeo = new THREE.BoxGeometry(B.pylonW + 1.5, 0.55, 3.4)
+    const cols = new THREE.InstancedMesh(colGeo, conc, n)
+    const caps = new THREE.InstancedMesh(capGeo, conc, n)
+    const joints = new THREE.InstancedMesh(new THREE.BoxGeometry(2 * hw + 1.7, 0.02, 0.17), darkConc, n)
+    cols.castShadow = true
+    cols.receiveShadow = true
+    caps.castShadow = true
+    caps.receiveShadow = true
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const p = new THREE.Vector3(), sc = new THREE.Vector3()
+    let placed = 0
+    for (let i = 0; i < n; i++) {
+      const s = s0 + (i + 0.5) * (s1 - s0) / n
+      const f = this.spline.frame(s)
+      const soffit = this.spline.bedY(s, 0) - B.deckUnder
+      const ground = this.field ? this.field.height(f.pos.x, f.pos.z) : soffit - 8
+      const h = soffit - ground + 0.5
+      if (h < 2.2) continue
+      e.set(0, f.yaw, 0)
+      q.setFromEuler(e)
+      p.copy(f.pos); p.y = soffit
+      m4.compose(p, q, new THREE.Vector3(1, 1, 1))
+      caps.setMatrixAt(placed, m4)
+      m4.compose(p, q, new THREE.Vector3(B.pylonW, h, 1.95))
+      cols.setMatrixAt(placed, m4)
+      // expansion joint across the deck at every pier
+      p.copy(f.pos); p.y = this.spline.surfaceY(s, 0) + 0.008
+      m4.compose(p, q, sc.set(1, 1, 1))
+      joints.setMatrixAt(placed, m4)
+      placed++
+    }
+    cols.count = caps.count = joints.count = placed
+    cols.instanceMatrix.needsUpdate = true
+    caps.instanceMatrix.needsUpdate = true
+    joints.instanceMatrix.needsUpdate = true
+    cols.name = 'deck-pylons'; caps.name = 'deck-pier-caps'; joints.name = 'deck-joints'
+    g.add(cols, caps, joints)
+
+    // abutment cheeks where the deck lands into the embankment
+    for (const se of [rng.s1 - B.abutment * 0.15]) {
+      if (se < a || se > b) continue
+      const f = this.spline.frame(se)
+      for (const side of [-1, 1] as const) {
+        const w = new THREE.Mesh(new THREE.BoxGeometry(1.1, 8.5, B.abutment), conc)
+        w.position.set(f.pos.x + f.side.x * side * (so + 0.6), this.spline.bedY(se, 0) - 3.4, f.pos.z + f.side.z * side * (so + 0.6))
+        w.rotation.set(0, f.yaw, 0)
+        w.castShadow = true
+        w.receiveShadow = true
+        w.name = 'deck-abutment'
+        g.add(w)
+      }
+    }
+    void so
+    return g
+  }
+
+  /* ───────────────────────── finish gantry at the lap seam ───────────────── */
+  private buildFinish(): THREE.Group {
+    const g = new THREE.Group()
+    g.name = 'finish'
+    const s = 0
+    const f = this.spline.frame(s)
+    const bed0 = this.spline.bedY(s, 0)
+    const so = TRACK.shoulderOuter
+    const steel = this.steelMat(0x4a4f57, 0.72, 0.5)
+    const ink = this.mat('finishInk', () => new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.7 })) as THREE.Material
+    const lite = this.mat('finishLite', () => new THREE.MeshStandardMaterial({ color: 0xe8eaee, emissive: 0xfff0d0, emissiveIntensity: 1.5, roughness: 0.6 })) as THREE.Material
+    const p = new THREE.Vector3()
+    const put = (geo: THREE.BufferGeometry, mat: THREE.Material, lat: number, y: number, yaw = 0): THREE.Mesh => {
+      const m = new THREE.Mesh(geo, mat)
+      p.copy(f.pos).addScaledVector(f.side, lat)
+      m.position.set(p.x, bed0 + y, p.z)
+      m.rotation.set(0, f.yaw + yaw, 0)
+      m.castShadow = true
+      m.receiveShadow = true
+      g.add(m)
+      return m
+    }
+    const legH = 8.4, span = 2 * (so + 2.4)
+    for (const side of [-1, 1] as const) {
+      put(new THREE.BoxGeometry(0.62, legH, 0.62), steel, side * (so + 2.4), legH * 0.5)
+      put(new THREE.BoxGeometry(1.5, 0.34, 1.5), this.concMat(0x9d988f, 231, 0.9), side * (so + 2.4), 0.17)
+      // lattice bracing up the leg
+      put(new THREE.BoxGeometry(0.12, 3.2, 0.12), steel, side * (so + 2.0), 2.4, side * 0.62)
+    }
+    // the truss: two chords + diagonals, so it reads as a rig and not a slab
+    put(new THREE.BoxGeometry(span, 0.26, 0.42), steel, 0, legH)
+    put(new THREE.BoxGeometry(span, 0.26, 0.42), steel, 0, legH + 1.5)
+    const bays = 11
+    for (let i = 0; i < bays; i++) {
+      const lat = -span / 2 + (i + 0.5) * (span / bays)
+      const d = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.85, 0.11), steel)
+      d.position.set(f.pos.x + f.side.x * lat, bed0 + legH + 0.75, f.pos.z + f.side.z * lat)
+      d.rotation.set(0, f.yaw + (i % 2 ? 0.62 : -0.62), 0)
+      d.castShadow = true
+      g.add(d)
+    }
+    // banner board across the truss with a chequered end band
+    put(new THREE.BoxGeometry(span * 0.62, 1.24, 0.14), this.mat('finishBanner', () => new THREE.MeshStandardMaterial({ color: 0x8f2a24, roughness: 0.72, metalness: 0.05 })) as THREE.Material, 0, legH + 0.76)
+    {
+      const sq = new THREE.BoxGeometry(0.31, 0.31, 0.16)
+      const n = 16
+      const inst = new THREE.InstancedMesh(sq, ink, n * 4)
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+      const v = new THREE.Vector3(), s1 = new THREE.Vector3(1, 1, 1)
+      let k = 0
+      for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) {
+        if ((i + j) % 2 === 0) continue
+        for (const sgn of [1, -1] as const) {
+          const lat = sgn * (span * 0.32 + i * 0.32)
+          v.copy(f.pos).addScaledVector(f.side, lat)
+          e.set(0, f.yaw, 0)
+          q.setFromEuler(e)
+          m4.compose(new THREE.Vector3(v.x, bed0 + legH + 0.3 + j * 0.32, v.z), q, s1)
+          inst.setMatrixAt(k++, m4)
+        }
+      }
+      inst.count = k
+      inst.instanceMatrix.needsUpdate = true
+      inst.name = 'finish-chequers'
+      g.add(inst)
+    }
+    // start-light pods over each lane
+    for (const lat of [-3.4, -1.2, 1.2, 3.4]) {
+      const pod = put(new THREE.BoxGeometry(0.5, 0.34, 0.28), ink, lat, legH - 0.5)
+      pod.castShadow = false
+      put(new THREE.BoxGeometry(0.12, 0.5, 0.12), steel, lat, legH - 0.22)
+    }
+    for (const side of [-1, 1] as const) put(new THREE.BoxGeometry(0.2, 0.2, 0.2), lite, side * (so + 1.1), legH - 0.1)
+    // the chequered line across the asphalt
+    const sq = this.mat('lineWhite', () => new THREE.MeshStandardMaterial({ color: 0xe9e7df, roughness: 0.78, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })) as THREE.Material
+    const ink2 = this.mat('lineInk', () => new THREE.MeshStandardMaterial({ color: 0x25262a, roughness: 0.8, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })) as THREE.Material
+    const rows = 2, cols = 14
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const lat = -TRACK.halfWidth + (c + 0.5) * ((2 * TRACK.halfWidth) / cols)
+      const sgn = (r + c) % 2 === 0 ? sq : ink2
+      const bar = this.bar(0.9 + r * 0.34, lat, 0.34, (2 * TRACK.halfWidth) / cols, 0.012)
+      const m = new THREE.Mesh(bar, sgn)
+      m.renderOrder = 2
+      g.add(m)
+    }
+    return g
+  }
+
+  /* ─────────────────────── guarded infield shortcut ─────────────────────── *
+   * A real alternate line: its own mini-spline, its own lofted surface, guards
+   * on both sides, cones and an arrow at the mouth. The main line breaks its
+   * centre dashes and its barrier run where the lane takes off.            */
+  private spurMouths: number[] | null = null
+
+  /** Stations where the shortcut lane meets the racing line (computed once). */
+  private spurStations(): number[] {
+    if (!this.spurMouths) this.spurMouths = TRACK.shortcut.pts.map(([x, z]) => this.spline.nearest(x, z).s)
+    return this.spurMouths
+  }
+
+  /** True within the marking break at either junction. */
+  private atSpurMouth(s: number): boolean {
+    const L = this.spline.length
+    for (const m of this.spurStations()) {
+      const d = Math.abs(s - m)
+      if (Math.min(d, L - d) < 10) return true
+    }
+    return false
+  }
+
+  private buildShortcut(): THREE.Group {
+    const g = new THREE.Group()
+    g.name = 'shortcut'
+    const half = TRACK.shortcut.half
+    const pts = TRACK.shortcut.pts.map(([x, z, y]) => new THREE.Vector3(x, y, z))
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal')
+    const raw = curve.getPoints(Math.round(pts.length * 46))
+    const acc: number[] = [0]
+    for (let i = 1; i < raw.length; i++) acc.push(acc[i - 1] + raw[i].distanceTo(raw[i - 1]))
+    const total = acc[acc.length - 1]
+    const at = (s: number): { p: THREE.Vector3; tx: number; tz: number; yaw: number } => {
+      let i = 1
+      while (i < acc.length - 1 && acc[i] < s) i++
+      const a = raw[Math.max(0, i - 1)], b = raw[Math.min(raw.length - 1, i + 1)]
+      const tx = b.x - a.x, tz = b.z - a.z
+      const l = Math.hypot(tx, tz) || 1
+      return { p: raw[i], tx: tx / l, tz: tz / l, yaw: Math.atan2(-tx, -tz) }
+    }
+    const crown = (lat: number): number => -0.055 * Math.min(1, Math.abs(lat) / half) * Math.min(1, Math.abs(lat) / half)
+    const cols = [-half, -half * 0.42, half * 0.42, half, half + 1.5]
+    const rows = Math.max(2, Math.round(total / 1.1))
+    const pos: number[] = [], uv: number[] = [], col: number[] = [], idx: number[] = []
+    const p = new THREE.Vector3(), c = new THREE.Color()
+    for (let i = 0; i <= rows; i++) {
+      const s = (i / rows) * total
+      const fr = at(s)
+      for (const lat of cols) {
+        const sx = -fr.tz, sz = fr.tx // planar driver-right
+        const x = fr.p.x + sx * lat, z = fr.p.z + sz * lat
+        const edgeOut = Math.abs(lat) > half
+        const y = edgeOut
+          ? (this.field ? Math.min(this.field.height(x, z), fr.p.y - 0.9) : fr.p.y - 1.1)
+          : fr.p.y + 0.022 + crown(lat)
+        pos.push(x, y, z)
+        uv.push(lat * 0.24, s * 0.24)
+        roadVertexColor(s, lat * 1.4, c)
+        // the lane reads a shade lighter and older than the racing line
+        c.setRGB(c.r * 1.06, c.g * 1.05, c.b * 1.04)
+        col.push(c.r, c.g, c.b)
+      }
+    }
+    const n = cols.length
+    for (let i = 0; i < rows; i++) for (let j = 0; j < n - 1; j++) {
+      const a = i * n + j, b = a + n
+      idx.push(a, b, a + 1, a + 1, b, b + 1)
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+    geo.setIndex(idx)
+    sanitizeGeometry(geo)
+    forceUpWinding(geo, UP)
+    const lane = new THREE.Mesh(geo, this.mat('spurAsphalt', () => {
+      const m = this.asphaltMat()
+      m.polygonOffset = true
+      m.polygonOffsetFactor = -2
+      m.polygonOffsetUnits = -2
+      return m
+    }) as THREE.Material)
+    lane.receiveShadow = true
+    lane.name = 'shortcut-lane'
+    g.add(lane)
+
+    // guards both sides, stopping short of each mouth
+    const postGeo = new THREE.BoxGeometry(0.08, 0.9, 0.08)
+    postGeo.translate(0, 0.45, 0)
+    const postN = Math.max(2, Math.round(total / 3.2)) * 2
+    const posts = new THREE.InstancedMesh(postGeo, this.steelMat(0x767d85, 0.7, 0.5), postN)
+    posts.castShadow = true
+    const railGeo = new THREE.BoxGeometry(0.07, 0.2, 3.3)
+    const rails = new THREE.InstancedMesh(railGeo, this.steelMat(0x9aa2ab), postN)
+    rails.castShadow = true
+    rails.receiveShadow = true
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler()
+    const v = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1)
+    let np = 0, nr = 0
+    const gap = 15
+    for (const side of [-1, 1] as const) for (let i = 0; i < postN / 2; i++) {
+      const s = ((i + 0.5) / (postN / 2)) * total
+      if (s < gap || s > total - gap) continue
+      const fr = at(s)
+      const sx = -fr.tz, sz = fr.tx
+      const lat = side * (half + 0.45)
+      const x = fr.p.x + sx * lat, z = fr.p.z + sz * lat
+      const gy = this.field ? this.field.height(x, z) : fr.p.y - 1
+      e.set(0, fr.yaw, 0)
+      q.setFromEuler(e)
+      m4.compose(new THREE.Vector3(x, Math.min(gy, fr.p.y - 0.4), z), q, sc)
+      posts.setMatrixAt(np++, m4)
+      m4.compose(new THREE.Vector3(x, Math.min(gy, fr.p.y - 0.4) + 0.72, z), q, sc)
+      rails.setMatrixAt(nr++, m4)
+    }
+    posts.count = np
+    rails.count = nr
+    posts.instanceMatrix.needsUpdate = true
+    rails.instanceMatrix.needsUpdate = true
+    posts.name = 'shortcut-posts'; rails.name = 'shortcut-rails'
+    g.add(posts, rails)
+
+    // cones lining the mouth + a painted arrow into the lane
+    const coneGeo = new THREE.ConeGeometry(0.21, 0.46, 9)
+    coneGeo.translate(0, 0.23, 0)
+    const cones = new THREE.InstancedMesh(coneGeo, this.mat('cone', () => new THREE.MeshStandardMaterial({ color: 0xe2622a, roughness: 0.6 })) as THREE.Material, 10)
+    cones.castShadow = true
+    let nc = 0
+    for (const [sC, latA] of [[gap * 0.45, half + 0.5], [gap * 0.72, half + 0.5], [gap * 1.05, half + 0.5], [total - gap * 0.5, -half - 0.5], [total - gap * 0.8, -half - 0.5]] as const) {
+      const fr = at(sC)
+      const sx = -fr.tz, sz = fr.tx
+      const x = fr.p.x + sx * latA, z = fr.p.z + sz * latA
+      const gy = this.field ? Math.min(this.field.height(x, z), fr.p.y) : fr.p.y - 0.2
+      e.set(0, fr.yaw, 0)
+      q.setFromEuler(e)
+      m4.compose(new THREE.Vector3(x, gy, z), q, sc)
+      cones.setMatrixAt(nc++, m4)
+    }
+    cones.count = nc
+    cones.instanceMatrix.needsUpdate = true
+    cones.name = 'shortcut-cones'
+    g.add(cones)
+
+    const arrow = this.shortcutArrow(at(gap * 1.35), half * 0.62)
+    arrow.name = 'shortcut-arrow'
+    g.add(arrow)
+    return g
+  }
+
+  /** Painted chevron arrow on the lane, just past the mouth. */
+  private shortcutArrow(fr: { p: THREE.Vector3; tx: number; tz: number; yaw: number }, wide: number): THREE.Mesh {
+    const sx = -fr.tz, sz = fr.tx
+    const pts: number[] = [], uv: number[] = [], idx: number[] = []
+    const shape: [number, number][] = [[-wide, 1.5], [0, 0.2], [wide, 1.5], [wide, 0.7], [0, -0.6], [-wide, 0.7]]
+    for (const [lat, along] of shape) {
+      pts.push(fr.p.x + sx * lat + fr.tx * along, fr.p.y + 0.014, fr.p.z + sz * lat + fr.tz * along)
+      uv.push((lat + wide) / (2 * wide), (along + 0.6) / 2.1)
+    }
+    idx.push(0, 1, 2, 0, 1, 2, 0, 2, 5, 1, 4, 2, 2, 4, 3)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    geo.setIndex(idx)
+    sanitizeGeometry(geo)
+    forceUpWinding(geo, UP)
+    const m = new THREE.Mesh(geo, this.mat('arrowPaint', () => new THREE.MeshStandardMaterial({
+      color: 0xe8c83e, roughness: 0.75, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    })) as THREE.Material)
+    m.renderOrder = 2
+    return m
   }
 }

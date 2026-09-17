@@ -298,11 +298,12 @@ export const TRACK = {
   ] as const,
   /** Tunnel bore (spec §7): terrain passes OVER the tube; portals mask the ends. */
   tunnel: {
-    crownRise: 8.0,      // authored ridge height above the crown along the bore
-    tubeHalf: 5.55,      // inner half-width of the bore
-    tubeRise: 5.35,      // inner clear height at the crown
+    crownRise: 8.0,      // authored ridge height above the crown that buries the bore
+    tubeHalf: 8.6,       // inner half-width of the bore (shoulders stay inside)
+    tubeRise: 6.3,       // inner clear height at the crown
     apron: 15,           // carved-cut length each side where the tube emerges
     lightEvery: 12.5,    // fitting spacing along the bore
+    ribEvery: 6.25,      // arch rib spacing
     portalDepth: 2.6,    // portal frame projection out of the rock
   },
   /** Elevated viaduct (spec §5 Tier 1): deck, parapets, pylons, soffit. */
@@ -314,12 +315,49 @@ export const TRACK = {
     abutment: 22,        // earthwork transition at each deck end
     deckEdge: 0.72,      // kerb reveal outboard of the asphalt
   },
-  /** Guarded shortcut (spec §7/§20): an infield lane that skips the dock bulge. */
-  /** Guarded shortcut (spec §7/§20): an infield lane that skims the headland
-   *  sweeper and re-joins before the line. ~55 m real saving, its own loft. */
-  /** Guarded shortcut (spec §7/§20): an infield lane that skips the whole
-   *  headland sweeper and re-joins the finishing straight before the line.
-   *  ~100 m real saving (verified offline), its own lofted surface. */
+  /** Per-zone edge assemblies (spec §7). Each list is station windows; the
+   *  frozen coastal runs keep their authored values so the hero slice is
+   *  byte-stable. `style` picks the kerb paint character. */
+  edge: {
+    kerb: [
+      { s0: 140, s1: 300, style: 'coast' as const },        // frozen authored slice
+      { s0: 384, s1: 1050, style: 'hazard' as const },        // works: yellow/black
+      { s0: 1955, s1: 2586, style: 'standard' as const },    // ridge esses
+      { s0: 2602, s1: 2636, style: 'city' as const },         // city outskirts: red/white
+      { s0: 2658, s1: 2966, style: 'city' as const },
+      { s0: 3006, s1: 3118, style: 'city' as const },
+    ],
+    rumble: [
+      { s0: 150, s1: 286 },                                   // frozen authored slice
+      { s0: 640, s1: 690 }, { s0: 890, s1: 946 },            // yard corner entries
+      { s0: 2062, s1: 2112 }, { s0: 2322, s1: 2374 },        // ridge esses apexes
+      { s0: 2742, s1: 2796 },                                  // back-straight kink
+      { s0: 2812, s1: 2862 },                                  // headland sweeper entry
+    ],
+    barrier: [
+      { s0: 148, s1: 262 },                                    // frozen authored slice
+      { s0: 1058, s1: 1092 }, { s0: 1210, s1: 1242 },        // tunnel portal approaches
+      { s0: 2664, s1: 2762 },                                  // pit wall frontage
+    ],
+    guard: [
+      { s0: 158, s1: 272 },                                    // frozen authored slice
+      { s0: 376, s1: 1054 },                                   // works east leg
+      { s0: 1948, s1: 2590 },                                  // ridge descent (high speed)
+      { s0: 2594, s1: 2636 }, { s0: 2658, s1: 2966 },         // back straight (gap at the spur mouth)
+      { s0: 3006, s1: 3120 },                                  // finishing straight
+    ],
+    tyres: [
+      { s0: 1990, s1: 1996 }, { s0: 2240, s1: 2246 },        // ridge esses inside
+      { s0: 2858, s1: 2866 },                                  // sweeper apex
+    ],
+    chevrons: [
+      { s0: 662, s1: 668 }, { s0: 930, s1: 936 },             // yard corners
+      { s0: 2380, s1: 2386 }, { s0: 2822, s1: 2828 },         // sweeper
+    ],
+  },
+  /** Shortcut (spec §7/§20): an infield lane that skips the whole headland
+   *  sweeper and re-joins the finishing straight before the line. ~100 m real
+   *  saving (verified offline against the spline), its own lofted surface. */
   shortcut: {
     half: 3.9,
     pts: [
