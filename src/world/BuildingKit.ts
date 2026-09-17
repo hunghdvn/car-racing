@@ -1195,7 +1195,6 @@ function designSubstation(rnd: Rand): THREE.Group {
     sanitizeGeometry(wgeo)
     crNormals(wgeo)
     // render as thin quads via LineSegments-safe fallback: use thin cylinders instanced? keep simple: skip wire mesh (fence rails read enough)
-    void wgeo; void widx
   }
   // gate posts + warning plate
   const gp = box(0.14, 2.2, 0.14, mat.metal)

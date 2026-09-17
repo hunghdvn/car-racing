@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { SEED, THEME, KIT } from '../config'
-import { Rand, lerp, clamp, smoothstep, fbm2, hash21, mergeGeometries, sweepProfile, sanitizeGeometry, crNormals, kitLodEnabled, setKitLodEnabled, type MergePart, type SweepFrame } from '../util'
+import { Rand, clamp, fbm2, hash21, mergeGeometries, sweepProfile, sanitizeGeometry, crNormals, kitLodEnabled, setKitLodEnabled, type MergePart, type SweepFrame } from '../util'
 import { buildBuilding, buildingMaterials, BUILDING_DESIGNS, type BuildingDesignId } from './BuildingKit'
-import { makeContainer, makeDrum, makeCrates, makePipeStack, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeUtilityPole, makeMastLight, makeVan, makeBarrierUnit, makeBollard, makeSignGantry, propLOD, makeGantryCrane, makeSign, makeTrafficLight, makeStreetlight } from './PropKit'
+import { makeContainer, makeDrum, makeCrates, makePipeStack, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeUtilityPole, makeMastLight, makeVan, makeBarrierUnit, makeBollard, makeSign, makeTrafficLight, makeStreetlight } from './PropKit'
 import { broadleafGeometry, treeLOD, foliageVariants, foliageMaterial, palmGeometry, bushGeometry, rockGeometry } from './VegetationKit'
 import { concreteMaps } from '../assets/Textures'
 import type { TrackSpline } from './TrackSpline'
@@ -670,5 +670,3 @@ export function dressSlice(opts: SliceLayoutOpts): THREE.Group {
   drop('Skyline_Backdrop', 150, 122, 0, 18, 0)
   return g
 }
-
-void lerp; void smoothstep; void fbm2; void propLOD; void makeSignGantry; void makeGantryCrane

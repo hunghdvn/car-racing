@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { TRACK, THEME, SEED, type ZoneId } from '../config'
+import { TRACK, type ZoneId } from '../config'
 import { clamp, lerp, smoothstep, fbm2, hash21, makeCanvas, sanitizeGeometry, crNormals } from '../util'
 import { groundDetailTexture } from '../assets/Textures'
 import type { TrackSpline } from './TrackSpline'
@@ -403,5 +403,3 @@ export class CoastField {
     return { texture, x0, z0, spanX, spanZ }
   }
 }
-
-void SEED; void THEME; void crNormals
