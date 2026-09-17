@@ -118,19 +118,32 @@ export class CoastField {
           + Math.max(0, lat - 34) * 0.16
         h = lerp(h, hi, w[1] * gate)
       }
-      // ---- tunnel: a rock ridge whose crest passes OVER the bore
-      if (w[2] > 0.001) {
-        const crown = this.spline.roadY(s) + G.tunnelRise
+      // ---- tunnel: a rock ridge whose crest passes OVER the bore. The window
+      // is the bore PLUS an apron at each end (the generic zone blend is far
+      // wider than the tube, which left the shell roofed by nothing near the
+      // portals), and the crest is pinned above the tube crown so the lid is
+      // real everywhere, not only at the authored rise.
+      const tz = this.spline.zoneRange('tunnel')
+      const tPad = TRACK.tunnel.apron + 10
+      const tD = s < tz.s0 - tPad ? tz.s0 - tPad - s : s > tz.s1 + tPad ? s - (tz.s1 + tPad) : 0
+      if (tD < 34) {
+        const tw = 1 - smoothstep(10, 34, tD)
+        const lid = this.spline.bedY(s, 0) + TRACK.tunnel.tubeRise + 3.2
+        const crown = Math.max(this.spline.roadY(s) + G.tunnelRise, lid)
         const ht = crown + Math.min(13, Math.abs(lat) * G.tunnelCross)
           + (fbm2(x * 0.052 + 1.6, z * 0.052 + 4.4, 3) - 0.5) * 1.8
-        h = lerp(h, ht, w[2] * gate)
+        h = lerp(h, ht, tw * gate)
       }
-      // ---- elevated: the north-city valley floor, flown over by the deck
+      // ---- elevated: the north-city valley floor, flown over by the deck.
+      // The floor stays flat well out to the flank, then ramps up but is CAPped
+      // below the deck — otherwise the far field dips into pits beside the
+      // viaduct and the rim reads as a cliff wall from the deck.
       if (w[3] > 0.001) {
         const rng = this.spline.zoneRange('elevated')
         const endD = Math.min(s - rng.s0, rng.s1 - s)
         let floor = this.spline.roadY(s) + G.cityFloor + (fbm2(x * 0.024 + 8.9, z * 0.024 + 2.2, 3) - 0.5) * 2.0
-          + Math.max(0, Math.abs(lat) - 46) * 0.3
+          + Math.max(0, Math.abs(lat) - 60) * 0.24
+        floor = Math.min(floor, this.spline.roadY(s) - 1.8)
         // the deck lands on embankments at both ends, not on a cliff edge
         floor = lerp(floor, this.spline.roadY(s) - 1.6, 1 - smoothstep(0, G.deckRise, endD))
         h = lerp(h, floor, w[3] * gate)
@@ -181,8 +194,12 @@ export class CoastField {
     if (aLat < 26) {
       const emb = this.embedWeight(nt.s)
       if (emb > 0.001) {
+        const tz = this.spline.zoneRange('tunnel')
+        const inBore = nt.s > tz.s0 - 4 && nt.s < tz.s1 + 4
         const bed = this.spline.bedY(nt.s, clamp(nt.lat, -so - 3, so + 3)) - 0.03
-        const w = (1 - smoothstep(so - 3.2, 18, aLat)) * emb
+        // at the bore the corridor narrows to the shell soffit, so the ridge
+        // hugs the tube and it never shows its flanks to the sky
+        const w = (inBore ? 1 - smoothstep(so + 1.3, so + 7, aLat) : 1 - smoothstep(so - 3.2, 18, aLat)) * emb
         if (w > 0) h = lerp(h, bed, w)
       }
     }

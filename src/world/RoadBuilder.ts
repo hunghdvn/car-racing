@@ -65,25 +65,42 @@ export class RoadBuilder {
   build(sFrom: number, sTo: number): THREE.Group {
     const g = this.group
     const CHUNK = 150
+    const tz = this.spline.zoneRange('tunnel')
+    const ez = this.spline.zoneRange('elevated')
+    const ezPre = ez
     const emit = (a: number, b: number, tag: string): void => {
       const seg = new THREE.Group()
       seg.name = tag
       seg.add(this.buildAsphalt(a, b))
       seg.add(this.buildShoulders(a, b))
-      seg.add(this.buildSkirts(a, b))
+      // under the flying deck the skirt would read as an embankment wall;
+      // the deckRun soffit/girder/fascia close the underside instead
+      if (!(b > ezPre.s0 - 3 && a < ezPre.s1 + TRACK.bridge.abutment)) seg.add(this.buildSkirts(a, b))
       seg.add(this.buildMarkings(a, b))
       seg.add(this.buildPatches(a, b))
       const mid = (a + b) / 2
       const zone = this.spline.zoneAt(mid)
-      if (zone === 'tunnel') {
+      // Zone content is emitted by COVERAGE, not by the chunk's mid station:
+      // the bore and the deck straddle chunk seams, and a mid-zone test dropped
+      // exactly the seam chunks that carry the portals and the abutments.
+      const tPad = TRACK.tunnel.apron + 7
+      const inTunnel = b > tz.s0 - tPad && a < tz.s1 + tPad
+      const inDeck = b > ez.s0 - 3 && a < ez.s1 + TRACK.bridge.abutment
+      if (inTunnel) {
         seg.add(this.tunnelRun(a, b))
-        // the authored portal-approach barriers still belong outside the bore
-        const bg = new THREE.Group()
-        bg.name = `edge-barrier-${Math.round(a)}`
-        for (const w of RoadBuilder.windows(TRACK.edge.barrier, a, b)) this.barrierRun(bg, w.s0, w.s1)
-        seg.add(bg)
-      } else if (zone === 'elevated') seg.add(this.deckRun(a, b))
-      else seg.add(this.zoneEdgeRun(a, b, zone))
+        if (zone === 'tunnel') {
+          // the authored portal-approach barriers still belong outside the bore
+          const bg = new THREE.Group()
+          bg.name = `edge-barrier-${Math.round(a)}`
+          for (const w of RoadBuilder.windows(TRACK.edge.barrier, a, b)) this.barrierRun(bg, w.s0, w.s1)
+          seg.add(bg)
+        }
+      } else if (inDeck) {
+        seg.add(this.deckRun(a, b))
+      } else {
+        seg.add(this.zoneEdgeRun(a, b, zone))
+      }
+      if (inDeck && inTunnel) seg.add(this.deckRun(a, b))
       g.add(seg)
     }
     for (let a = sFrom; a < sTo - 1; a += CHUNK) emit(a, Math.min(sTo, a + CHUNK), `road-seg-${Math.round(a)}`)
@@ -901,7 +918,10 @@ export class RoadBuilder {
     g.name = `tunnel-${Math.round(a)}`
     const T = TRACK.tunnel
     const rng = this.spline.zoneRange('tunnel')
-    const s0 = Math.max(a, rng.s0 - T.apron - 7), s1 = Math.min(b, rng.s1 + T.apron + 7)
+    // the shell spans portal-face to portal-face (not the full apron window):
+    // tube protruding beyond a portal reads as a floating culvert, and the rock
+    // is supposed to meet the PORTAL, not the tube
+    const s0 = Math.max(a, rng.s0 - 1.6), s1 = Math.min(b, rng.s1 + 1.6)
     if (s1 - s0 < 1) return g
     const H = T.tubeHalf, R = T.tubeRise, so = TRACK.shoulderOuter
     const prof: [number, number][] = [
@@ -1052,11 +1072,12 @@ export class RoadBuilder {
     // the mouth ring: a rib stood just outside the frame so the opening reads deep
     add(new THREE.BoxGeometry(2 * H + 0.5, 0.34, 0.34), conc, 0, R + 0.18)
     for (const side of [-1, 1] as const) add(new THREE.BoxGeometry(0.34, R + 0.4, 0.34), conc, side * (H + 0.2), (R + 0.4) * 0.5 - 0.9)
-    // boulders at the portal feet tie the cut into the rock
-    for (const [lat, sc, seed] of [[-H - 2.6, 1.5, 3], [H + 2.9, 1.8, 11], [-H - 4.2, 1.1, 23], [H + 4.6, 1.3, 31]] as const) {
+    // boulders at the threshold, half-buried in the cut floor — seated at the
+    // deterministic bed level so none of them float on the hillside
+    for (const [lat, sc, seed] of [[-H - 0.95, 1.25, 3], [H + 1.15, 1.45, 11], [-H - 2.1, 0.95, 23], [H + 2.35, 1.05, 31]] as const) {
       const r = new THREE.Mesh(rockGeometry(new Rand(SEED ^ (seed * 7919 + 13)), seed), this.concMat(0x8a8781, 71 + seed, 0.95))
       p.copy(f.pos).addScaledVector(f.side, lat)
-      r.position.set(p.x, this.field ? this.field.height(p.x, p.z) + 0.15 : bed0 + 0.3, p.z)
+      r.position.set(p.x, bed0 - 0.18, p.z)
       r.scale.setScalar(sc)
       r.rotation.set(0.1, seed * 1.7, 0.08)
       r.castShadow = true
