@@ -2,15 +2,17 @@ import * as THREE from 'three'
 import { Renderer } from '../core/Renderer'
 import { Sky } from '../core/SkyEnv'
 import { Debug, type ShotPose } from '../core/Debug'
-import { Input } from '../core/Input'
+import { Input, type InputState } from '../core/Input'
 import { buildCar, type CarModel } from '../assets/CarModel'
 import { ChaseCamera, type CarView } from '../camera/ChaseCamera'
-import { GRAPHICS, PAINTS } from '../config'
+import { AI, GRAPHICS, PAINTS, type PaintDef } from '../config'
 import { clamp, clamp01 } from '../util'
 import { buildTrackSlice, type Slice } from '../world/TrackSlice'
 import { RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
+import { AIVehicle, type AIContext, type RivalView } from '../vehicles/AIVehicle'
+import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
 
 /* ------------------------------------------------------------------------- *
@@ -19,6 +21,13 @@ import type { Obstacle } from '../vehicles/VehiclePhysics'
  * POSE shots (Debug registry) — collision event routing to the camera, and
  * the shadow-frustum follow. The car reaches every consumer through the
  * CarView contract; ChaseCamera is the camera's single input.
+ *
+ * Phase 7 extends the loop to the full field: the player plus AI.count AI
+ * vehicles share one fixed-120Hz accumulator step (player first, then AI in
+ * slot order, so the replay order is fixed), the RaceDirector owns the
+ * countdown/laps/standings state those steps advance, and frozen shots
+ * consume ShotPose.parkAi to hold the AI field on its deterministic grid.
+ * Each car owns its own reusable CarView (never the shared player one).
  * ------------------------------------------------------------------------- */
 
 const SIM_HZ = 1 / 120
@@ -33,6 +42,8 @@ export class Game {
   readonly player: PlayerVehicle
   readonly input: Input
   readonly chase: ChaseCamera
+  readonly ai: AIVehicle[] = []
+  readonly director: RaceDirector
   frameCount = 0
   simTime = 0
   paused = false
@@ -43,6 +54,10 @@ export class Game {
   private shadowFocus = new THREE.Vector3()
   private cvPos = new THREE.Vector3()
   private carView: CarView = { pos: new THREE.Vector3(), yaw: 0, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 }
+  private readonly aiVisuals: VehicleVisual[] = []
+  private readonly aiCars: CarModel[] = []
+  private readonly rivals: RivalView[] = []
+  private readonly ctx: AIContext = { locked: false, leaderProgress: 0, progress: 0 }
 
   constructor(canvas: HTMLCanvasElement, paintHex: number = PAINTS[1].color) {
     this.view = new Renderer(canvas)
@@ -64,6 +79,23 @@ export class Game {
       if (a === 'respawn') this.player.requestRespawn()
       if (a === 'pause') this.paused = !this.paused
     }
+    /* the AI field: distinct paints, per-car model + visual + brain, one
+       shared probe/spline (world queries are never duplicated per car) */
+    const playerPaint = PAINTS.find((pt) => pt.color === paintHex)
+    const aiPaints: PaintDef[] = PAINTS.filter((pt) => pt !== playerPaint).slice(0, AI.count)
+    for (let i = 0; i < AI.count; i++) {
+      const model = buildCar(aiPaints[i % aiPaints.length].color)
+      model.group.name = `ai-car-${i}`
+      model.group.position.set(0, -600, 0) // parked off-scene until the grid
+      this.view.scene.add(model.group)
+      this.aiCars.push(model)
+      this.aiVisuals.push(new VehicleVisual(model))
+      this.ai.push(new AIVehicle(i, this.slice.spline, this.probe))
+    }
+    const competitors: Competitor[] = [{ id: 0, phys: this.player.phys }, ...this.ai.map((a, i) => ({ id: i + 1, phys: a.phys }))]
+    this.director = new RaceDirector(competitors, this.slice.spline.length)
+    for (const a of this.ai) this.rivals.push(a)
+    this.rivals.unshift({ phys: this.player.phys })
     this.chase = new ChaseCamera(this.view.camera.aspect, this.view.camera)
     Debug.bind({
       applyPose: (p) => this.applyPose(p),
@@ -81,9 +113,36 @@ export class Game {
     this.chase.mode = 'chase'
   }
 
-  setObstacles(list: readonly Obstacle[]): void { this.player.phys.setObstacles(list) }
+  /** place the full field on its deterministic grid slots */
+  spawnGrid(): void {
+    const L = this.slice.spline.length
+    const g0 = gridSlot(0, L)
+    this.player.resetTo(g0.s, 0, g0.lat)
+    for (let i = 0; i < this.ai.length; i++) {
+      const g = gridSlot(i + 1, L)
+      this.ai[i].resetTo(g.s, g.lat)
+    }
+  }
 
-  /** live CarView (ChaseCamera / HUD contract) */
+  /** grid the field and run the countdown to the flag */
+  startRace(): void {
+    this.spawnGrid()
+    this.director.start()
+    this.chase.snapTo(this.snapshot())
+    this.chase.mode = 'chase'
+  }
+
+  /** restart the race from a completed one: grid + director, no stale state */
+  restartRace(): void {
+    this.startRace()
+  }
+
+  setObstacles(list: readonly Obstacle[]): void {
+    this.player.phys.setObstacles(list)
+    for (const a of this.ai) a.phys.setObstacles(list)
+  }
+
+  /** live CarView (ChaseCamera / HUD contract) — one shared instance, player */
   snapshot(): CarView {
     const p = this.player.phys
     const cv = this.carView
@@ -96,6 +155,27 @@ export class Game {
     const g = this.probe.surface(p.s, p.lat, p.x, p.z)
     cv.airHeight = clamp01((p.y - g.y) / 4)
     return cv
+  }
+
+  /** per-AI reusable CarView (one owned instance per car, never re-allocated) */
+  aiView(i: number): CarView {
+    return this.ai[i].view
+  }
+
+  /** one fixed simulation step of the whole field + director (deterministic) */
+  private stepSim(dt: number, inp: InputState): void {
+    if (this.director.phase !== 'idle') this.director.update(dt)
+    const locked = this.director.locked()
+    this.player.update(dt, inp, locked)
+    const leader = this.director.leaderProgress()
+    // the field holds its classified order once the flag drops
+    this.ctx.locked = locked || this.director.phase === 'finished'
+    this.ctx.leaderProgress = leader
+    for (let i = 0; i < this.ai.length; i++) {
+      const st = this.director.standingFor(i + 1)
+      this.ctx.progress = st ? st.fraction : 0
+      this.ai[i].update(dt, this.ctx, this.rivals)
+    }
   }
 
   /** frozen Debug-shot binding: car via the explicit pose visual, camera direct */
@@ -116,6 +196,7 @@ export class Game {
       air: pl?.air,
     })
     this.car.group.updateMatrixWorld(true)
+    this.parkField(!!p.parkAi)
     this.view.camera.position.fromArray(p.camera)
     this.view.camera.lookAt(p.look ? new THREE.Vector3(...p.look) : new THREE.Vector3(0, 0.6, 0))
     if (p.fov) { this.view.camera.fov = p.fov; this.view.camera.updateProjectionMatrix() }
@@ -124,6 +205,35 @@ export class Game {
     const look = p.look ?? p.camera
     this.view.setShadowExtent(p.shadowSpan ?? GRAPHICS.shadowExtent)
     this.view.setShadowFocus(this.shadowFocus.set(look[0], Math.max(0, look[1] - 3), look[2]))
+  }
+
+  /**
+   * ShotPose.parkAi consumption: a frozen shot either holds the AI field on
+   * its deterministic grid slots (parkAi) or removes it from the frame
+   * entirely (single-car shots) — both fully repeatable, the sim never
+   * decides where a parked car stands.
+   */
+  private parkField(onGrid: boolean): void {
+    const L = this.slice.spline.length
+    for (let i = 0; i < this.ai.length; i++) {
+      if (!onGrid) {
+        this.aiCars[i].group.position.set(0, -600, 0)
+        this.aiCars[i].group.updateMatrixWorld(true)
+        continue
+      }
+      const g = gridSlot(i + 1, L)
+      const c = this.probe.lanePose(g.s, g.lat)
+      const f = this.slice.spline.frame(g.s)
+      this.aiVisuals[i].applyPoseVisual({
+        pos: [c.x, c.y, c.z],
+        yaw: c.yaw,
+        pitch: f.pitch,
+        bank: f.bank,
+        speed: 0,
+        brakeGlow: 0.35,
+      })
+      this.aiCars[i].group.updateMatrixWorld(true)
+    }
   }
 
   start(): void {
@@ -135,17 +245,19 @@ export class Game {
       } else if (!this.paused) {
         this.simTime += dt
         const inp = this.input.poll(dt)
-        // fixed-dt accumulator (determinism; clamped catch-up)
+        // fixed-dt accumulator (determinism; clamped catch-up): the whole
+        // field + director advance in one deterministic order per substep
         this.acc += dt
         let steps = 0
         while (this.acc >= SIM_HZ && steps < 10) {
-          this.player.update(SIM_HZ, inp)
+          this.stepSim(SIM_HZ, inp)
           this.acc -= SIM_HZ
           steps++
         }
         if (steps === 10) this.acc = 0
         const p = this.player.phys
         this.visual.bind(dt, p, this.player.cmd, this.player.nitroActive ? 1 : 0)
+        for (let i = 0; i < this.ai.length; i++) this.aiVisuals[i].bind(dt, this.ai[i].phys, this.ai[i].cmd, this.ai[i].nitroLevel)
         // route collision/landing events into the camera trauma
         const ev = this.player.events
         if (ev.impact > 0.4) this.chase.shake(clamp(ev.impact / 9, 0.14, 0.9))

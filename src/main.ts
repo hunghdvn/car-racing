@@ -1,13 +1,14 @@
 import * as THREE from 'three'
 import { Debug } from './core/Debug'
 import type { ShotPose } from './core/Debug'
-import { KIT, PAINTS } from './config'
+import { KIT, PAINTS, RACE } from './config'
 import { Rand } from './util'
 import { buildBuilding, BUILDING_DESIGNS, type BuildingDesignId } from './world/BuildingKit'
 import { composePrefab } from './world/ComposeKit'
 import { makeBollard, makeCones, makeDrum, makePallet, makeCrates, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeSign, makeTrafficLight, makeUtilityPole, makeStreetlight, makeMastLight, makeContainer, makeBarrierUnit, makePipeStack, makeVan, makeSignGantry, makeBillboard, makeRadioMast, makeWaterTower, makeGantryCrane } from './world/PropKit'
 import { palmGeometry, pineGeometry, bushGeometry, rockGeometry, broadleafGeometry, treeLOD } from './world/VegetationKit'
 import { roadPose, heroShot } from './world/TrackSlice'
+import { gridSlot } from './game/RaceDirector'
 import { Game } from './game/Game'
 
 const $ = (id: string): HTMLElement | null => document.getElementById(id)
@@ -140,6 +141,27 @@ function boot(): void {
         speed: 14, wheelSteer: 0.44, lean: -0.075, susp: -0.09, brakeGlow: 0.95,
       },
       freezeSim: true, tag: 'drive-state',
+    })
+  }
+
+  /* ---------------- Phase 7 — the six-car grid (Gate C battery shot 1) -----
+   * All six painted cars staggered on the start straight, grounded on their
+   * deterministic grid slots through the host's parkAi path, start-light
+   * gantry over the seam dead ahead. parkAi holds the field regardless of
+   * any race state, so the frame is fully repeatable run to run. */
+  {
+    const L = slice.spline.length
+    const camS = L - (RACE.gridFront + 2 * RACE.gridRowGap + 19)
+    const f = slice.spline.frame(camS)
+    const g0 = gridSlot(0, L)
+    const rp = roadPose(slice.spline, g0.s, g0.lat)
+    const lg = slice.spline.frame(L - 4)
+    Debug.registerPose('grid', {
+      camera: [f.pos.x + f.side.x * 1.7, slice.spline.surfaceY(camS, 0) + 2.75, f.pos.z + f.side.z * 1.7],
+      look: [lg.pos.x + lg.side.x * 0.2, lg.pos.y + 4.1, lg.pos.z + lg.side.z * 0.2],
+      fov: 52,
+      player: { pos: rp.pos, yaw: rp.yaw, pitch: rp.pitch, bank: rp.bank, speed: 0, brakeGlow: 0.4 },
+      freezeSim: true, parkAi: true, tag: 'grid',
     })
   }
 
@@ -432,6 +454,29 @@ function boot(): void {
     nitro: Math.round(game.player.nitroVal),
     respawning: game.player.respawning,
     simTime: Math.round(game.simTime * 10) / 10,
+    racePhase: game.director.phase,
+    countdown: Math.round(game.director.countdown * 100) / 100,
+    raceTime: Math.round(game.director.simTime * 100) / 100,
+    position: game.director.positionOf(0),
+  })
+  /* dev race probes: Enter (or the probe) grid the field and runs the
+     countdown; a finished race restarts clean. The shots battery never
+     presses them, so approved frames stay race-independent. */
+  ;(globalThis as unknown as { __startRace?: () => string }).__startRace = () => {
+    if (game.director.phase === 'finished') game.restartRace()
+    else if (game.director.phase === 'idle') game.startRace()
+    return game.director.phase
+  }
+  ;(globalThis as unknown as { __raceState?: () => object }).__raceState = () => ({
+    phase: game.director.phase,
+    countdown: Math.round(game.director.countdown * 100) / 100,
+    simTime: Math.round(game.director.simTime * 100) / 100,
+    standings: game.director.standingsFor().map((r) => ({ id: r.id, pos: r.position, pct: Math.round(r.fraction * 1000) / 10, cps: r.checkpoints, fin: r.finished ? Math.round(r.finishTime * 100) / 100 : null })),
+  })
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Enter') return
+    if (game.director.phase === 'finished') game.restartRace()
+    else if (game.director.phase === 'idle') game.startRace()
   })
 
   // ---- dev-only Gate A probes ------------------------------------------------
