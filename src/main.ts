@@ -34,9 +34,33 @@ window.addEventListener('unhandledrejection', (ev) => fatal(ev.reason))
  * ------------------------------------------------------------------------- */
 function boot(): void {
   const canvas = document.getElementById('scene') as HTMLCanvasElement
+  const bootStep = (t: string, pct: number): void => {
+    const el = $('loading-step'), fill = $('loading-fill')
+    if (el) el.textContent = t
+    if (fill) fill.style.width = `${Math.round(pct * 100)}%`
+  }
+  bootStep('Booting renderer', 0.06)
   const game = new Game(canvas, PAINTS[1].color)
+  /* the WebAudio context may only exist past a user gesture (spec §15) —
+     the first real press unlocks it; everything before is a silent no-op */
+  const unlockAudio = (): void => { game.audio.unlock() }
+  window.addEventListener('pointerdown', unlockAudio, { once: true })
+  window.addEventListener('keydown', unlockAudio, { once: true })
   const { view, car, slice } = game
-  ;(globalThis as unknown as { __dbg?: unknown }).__dbg = { scene: view.scene, cam: view.camera, slice, THREE, game }
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game }
+  /* dev-only: drive the fixed-dt sim + presentation deterministically so the
+     event-aggregating effects pipeline can be verified without waiting on the
+     host's real-time frame rate (software rasterization throttles rAF). */
+  ;(dbg as unknown as { pump: (simSeconds: number) => void }).pump = (simSeconds: number): void => {
+    const dt = 1 / 120
+    const steps = Math.min(Math.round(simSeconds / dt), 6000)
+    const g = game as unknown as { stepSim: (d: number, inp: unknown) => void; flushFx: () => void; presentation: (d: number) => void; input: { poll: (d: number) => unknown } }
+    const inp = g.input.poll(1 / 60)
+    for (let i = 0; i < steps; i++) g.stepSim(dt, inp)
+    g.flushFx()
+    g.presentation(0)
+  }
+  ;(globalThis as unknown as { __dbg?: unknown }).__dbg = dbg
 
   const qp: Record<string, string> = {}
   for (const kv of location.search.slice(1).split('&')) { const i = kv.indexOf('='); if (i > 0) qp[kv.slice(0, i)] = kv.slice(i + 1) }
@@ -459,12 +483,12 @@ function boot(): void {
     raceTime: Math.round(game.director.simTime * 100) / 100,
     position: game.director.positionOf(0),
   })
-  /* dev race probes: Enter (or the probe) grid the field and runs the
-     countdown; a finished race restarts clean. The shots battery never
-     presses them, so approved frames stay race-independent. */
+  /* dev race probes: they route through the same host seam as the UI, so the
+     formal title/results flow stays true under Playwright too; a finished
+     race restarts clean. The shots battery never presses them, so approved
+     frames stay race-independent. */
   ;(globalThis as unknown as { __startRace?: () => string }).__startRace = () => {
-    if (game.director.phase === 'finished') game.restartRace()
-    else if (game.director.phase === 'idle') game.startRace()
+    if (game.director.phase === 'finished' || game.director.phase === 'idle') game.beginRace()
     return game.director.phase
   }
   ;(globalThis as unknown as { __raceState?: () => object }).__raceState = () => ({
@@ -473,11 +497,8 @@ function boot(): void {
     simTime: Math.round(game.director.simTime * 100) / 100,
     standings: game.director.standingsFor().map((r) => ({ id: r.id, pos: r.position, pct: Math.round(r.fraction * 1000) / 10, cps: r.checkpoints, fin: r.finished ? Math.round(r.finishTime * 100) / 100 : null })),
   })
-  window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Enter') return
-    if (game.director.phase === 'finished') game.restartRace()
-    else if (game.director.phase === 'idle') game.startRace()
-  })
+  // Enter confirm is owned by the central Input -> UIManager path (no raw
+  // key handler here): title/Enter -> START, results/Enter -> RESTART.
 
   // ---- dev-only Gate A probes ------------------------------------------------
   function halfBits(h: number): number {
@@ -620,9 +641,28 @@ function boot(): void {
     }
   }
 
-// spawn the hero on the coastal straight and run the real drive loop
-game.spawnAt(150)
-game.start()
+/* ---------------------------------------------------------------------------
+ * Formal boot flow (Phase 8): loading -> title -> race. The world builds
+ * synchronously inside Game's constructor; the loading bar steps across
+ * deferred frames so each stage actually paints, the bar retires through
+ * UIManager (keeping the Playwright __probe().loadingHidden contract), and
+ * the title board hands over to the race through the Input/UIManager path
+ * (START RACE button or the Enter confirm action).
+ * ------------------------------------------------------------------------- */
+  game.spawnAt(150)
+  bootStep('Building the world', 0.42)
+  requestAnimationFrame(() => {
+    bootStep('Dressing the circuit', 0.68)
+    requestAnimationFrame(() => {
+      bootStep('Warming the pipeline', 0.9)
+      requestAnimationFrame(() => {
+        bootStep('Ready', 1)
+        game.markLoadingShown()
+        game.ui.showTitle()
+        game.start()
+      })
+    })
+  })
 }
 
 try { boot() } catch (e) { fatal(e) }
