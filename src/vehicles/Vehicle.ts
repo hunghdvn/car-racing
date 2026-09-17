@@ -90,3 +90,19 @@ export function poseFromSlip(slip: number): { wheelSteer: number; lean: number }
     lean: slip * 0.16,
   }
 }
+
+/**
+ * Live-frame binding of the whole AI field, gated on the race director:
+ * before a race starts no field binds at all, so a car group keeps its
+ * deterministic constructor park pose instead of being overwritten with a
+ * stale off-grid physics position. Same gate as stepAIField — the live loop
+ * and the parked field can never disagree.
+ */
+export function bindAIFieldVisuals(
+  dt: number, gate: { fieldActive(): boolean },
+  ai: readonly { phys: VehiclePhysics; cmd: DriveCommand; nitroLevel: number }[],
+  visuals: readonly VehicleVisual[],
+): void {
+  if (!gate.fieldActive()) return
+  for (let i = 0; i < ai.length; i++) visuals[i].bind(dt, ai[i].phys, ai[i].cmd, ai[i].nitroLevel)
+}

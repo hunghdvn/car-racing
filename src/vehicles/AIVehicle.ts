@@ -39,6 +39,32 @@ export interface AIContext {
   progress: number
 }
 
+/** the field gate (RaceDirector provides it): single policy of the loop */
+export interface RaceFieldGate {
+  fieldActive(): boolean
+  leaderProgress(): number
+  standingFor(id: number): { fraction: number } | null
+}
+
+/**
+ * One deterministic AI-field step in slot order, run by Game right after
+ * the player. The gate is the single policy source: while the race is not
+ * started (idle) the field is fully dormant — no brain, physics or controller
+ * state advances before startRace raises it through the countdown.
+ */
+export function stepAIField(
+  dt: number, gate: RaceFieldGate, ctx: AIContext,
+  ai: readonly AIVehicle[], rivals: readonly RivalView[],
+): void {
+  if (!gate.fieldActive()) return
+  ctx.leaderProgress = gate.leaderProgress()
+  for (let i = 0; i < ai.length; i++) {
+    const st = gate.standingFor(i + 1)
+    ctx.progress = st ? st.fraction : 0
+    ai[i].update(dt, ctx, rivals)
+  }
+}
+
 /** deterministic per-slot seed stream rooted at the master SEED */
 export function aiSlotSeed(slot: number): number {
   return (SEED ^ Math.imul(slot + 1, 0x9e3779b1)) >>> 0

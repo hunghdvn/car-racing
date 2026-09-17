@@ -2,8 +2,10 @@ import { AI, RACE, SEED, VEHICLE } from '../../src/config'
 import { assert, assertFinite, test } from '../harness'
 import { cornerTarget, laneSteer, rig, SIM_DT } from '../rig'
 import { PlayerVehicle } from '../../src/vehicles/PlayerVehicle'
-import { AIVehicle, aiSlotSeed, type AIContext, type RivalView } from '../../src/vehicles/AIVehicle'
+import { AIVehicle, aiSlotSeed, stepAIField, type AIContext, type RivalView } from '../../src/vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type RaceStanding } from '../../src/game/RaceDirector'
+import { VehicleVisual, bindAIFieldVisuals } from '../../src/vehicles/Vehicle'
+import type { CarModel } from '../../src/assets/CarModel'
 import type { InputState } from '../../src/core/Input'
 
 /* Phase 7 — AI + Race Director headless suite (brief "Tests and gates").
@@ -371,4 +373,76 @@ test('ai: pose snapshots are deterministic from seed/spline state alone', () => 
   assertFinite(a.x + a.y + a.z + a.speed, 'snapshot state finite')
   assert(a.slot === 3 && a.pace !== 0, 'snapshot carries the seeded identity')
   assert(aiSlotSeed(0) === ((SEED ^ Math.imul(1, 0x9e3779b1)) >>> 0), 'per-slot streams root at the master seed')
+})
+
+/* ---------- field dormancy before the race (live-launch review fix) -------
+ * Game drives the field exclusively through stepAIField + bindAIFieldVisuals,
+ * gated by RaceDirector.fieldActive. This drives the same two helpers the
+ * live loop calls: before a race is started no brain, physics or visual bind
+ * runs at all — the field keeps the deterministic constructor park pose and
+ * can never be seen roaming beside the launched player. */
+test('ai: field is dormant before the race — no controller steps, field keeps its park pose', () => {
+  const { spline, probe } = rig()
+  const L = spline.length
+  const player = new PlayerVehicle(probe)
+  const cars: AIVehicle[] = []
+  for (let i = 0; i < AI.count; i++) cars.push(new AIVehicle(i, spline, probe))
+  const director = new RaceDirector(
+    [{ id: 0, phys: player.phys }, ...cars.map((c, i) => ({ id: i + 1, phys: c.phys }))], L)
+  const rivals: RivalView[] = [{ phys: player.phys }, ...cars]
+  const ctx: AIContext = { locked: false, leaderProgress: 0, progress: 0 }
+  const liveFrame = () => {
+    if (director.phase !== 'idle') director.update(SIM_DT)
+    ctx.locked = director.locked() || director.phase === 'finished'
+    stepAIField(SIM_DT, director, ctx, cars, rivals)
+    bindAIFieldVisuals(SIM_DT, director, cars, visuals)
+  }
+  // minimal CarModel stand-in: the visual bind path the game exercises
+  const models = cars.map(() => {
+    const g = {
+      position: { x: 0, y: 0, z: 0, set(x: number, y: number, z: number) { this.x = x; this.y = y; this.z = z } },
+      rotation: { order: '' as string, x: 0, y: 0, z: 0, set(x: number, y: number, z: number) { this.x = x; this.y = y; this.z = z } },
+    }
+    return { g, model: { group: g, wheels: [], setHeadlights: () => {}, setBrake: () => {}, setNitro: () => {} } as unknown as CarModel }
+  })
+  const visuals = models.map((m) => new VehicleVisual(m.model))
+  for (const m of models) m.g.position.set(0, -600, 0) // the Game constructor park
+  const snap = (c: AIVehicle) =>
+    [c.phys.x, c.phys.y, c.phys.z, c.phys.yaw, c.phys.vx, c.phys.vy, c.phys.vz, c.nitroLevel, c.recoveries].join('|')
+
+  // idle: 4 s of live frames — nothing moves anywhere
+  assert(!director.fieldActive(), 'idle: field gate closed')
+  const pre = cars.map(snap)
+  for (let k = 0; k < Math.round(4 / SIM_DT); k++) liveFrame()
+  cars.forEach((c, i) => assert(snap(c) === pre[i], `idle: AI ${i} physics/controller did not advance`))
+  for (const m of models) assert(
+    m.g.position.x === 0 && m.g.position.y === -600 && m.g.position.z === 0,
+    'idle: visual bind did not run — field keeps the deterministic park pose',
+  )
+
+  // startRace equivalent: grid everyone, raise the flag — countdown holds still,
+  // but now the live bind runs and the field renders the deterministic grid slots
+  for (let i = 0; i < cars.length; i++) { const g = gridSlot(i + 1, L); cars[i].resetTo(g.s, g.lat) }
+  director.start()
+  assert(director.phase === 'countdown' && director.fieldActive(), 'countdown: gate opens with the flag')
+  const gpre = cars.map(snap)
+  for (let k = 0; k < Math.ceil((RACE.countdownTime - 0.2) / SIM_DT); k++) liveFrame()
+  assert(director.phase === 'countdown', 'countdown: field still held while the lights are up')
+  cars.forEach((c, i) => assert(snap(c) === gpre[i], `countdown: AI ${i} held at rest on its grid slot`))
+  for (let i = 0; i < cars.length; i++) assert(
+    models[i].g.position.x === cars[i].phys.x && models[i].g.position.z === cars[i].phys.z,
+    `countdown: AI ${i} renders its grid slot, not the park pose`,
+  )
+
+  // racing: the gate was never the brake — the field drives and the field follows
+  for (let k = 0; k < Math.ceil(0.4 / SIM_DT); k++) liveFrame()
+  assert(director.phase === 'racing', 'countdown elapsed -> racing')
+  for (let k = 0; k < 120; k++) liveFrame()
+  let moved = 0
+  cars.forEach((c, i) => {
+    if (snap(c) !== gpre[i]) moved++
+    assert(models[i].g.position.x === c.phys.x && models[i].g.position.y === c.phys.y && models[i].g.position.z === c.phys.z,
+      `racing: AI ${i} visual follows physics`)
+  })
+  assert(moved === cars.length, 'racing: every AI brain is live (physics advanced)')
 })

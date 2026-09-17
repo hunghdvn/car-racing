@@ -9,9 +9,9 @@ import { AI, GRAPHICS, PAINTS, type PaintDef } from '../config'
 import { clamp, clamp01 } from '../util'
 import { buildTrackSlice, type Slice } from '../world/TrackSlice'
 import { RoadSurfaceProbe } from '../vehicles/TrackProbe'
-import { VehicleVisual } from '../vehicles/Vehicle'
+import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
-import { AIVehicle, type AIContext, type RivalView } from '../vehicles/AIVehicle'
+import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
 
@@ -167,15 +167,11 @@ export class Game {
     if (this.director.phase !== 'idle') this.director.update(dt)
     const locked = this.director.locked()
     this.player.update(dt, inp, locked)
-    const leader = this.director.leaderProgress()
     // the field holds its classified order once the flag drops
     this.ctx.locked = locked || this.director.phase === 'finished'
-    this.ctx.leaderProgress = leader
-    for (let i = 0; i < this.ai.length; i++) {
-      const st = this.director.standingFor(i + 1)
-      this.ctx.progress = st ? st.fraction : 0
-      this.ai[i].update(dt, this.ctx, this.rivals)
-    }
+    // the field steps in slot order through the gated helper: fully dormant
+    // before a race starts (no brain runs until startRace raises the flag)
+    stepAIField(dt, this.director, this.ctx, this.ai, this.rivals)
   }
 
   /** frozen Debug-shot binding: car via the explicit pose visual, camera direct */
@@ -257,7 +253,7 @@ export class Game {
         if (steps === 10) this.acc = 0
         const p = this.player.phys
         this.visual.bind(dt, p, this.player.cmd, this.player.nitroActive ? 1 : 0)
-        for (let i = 0; i < this.ai.length; i++) this.aiVisuals[i].bind(dt, this.ai[i].phys, this.ai[i].cmd, this.ai[i].nitroLevel)
+        bindAIFieldVisuals(dt, this.director, this.ai, this.aiVisuals)
         // route collision/landing events into the camera trauma
         const ev = this.player.events
         if (ev.impact > 0.4) this.chase.shake(clamp(ev.impact / 9, 0.14, 0.9))

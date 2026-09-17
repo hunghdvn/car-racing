@@ -89,6 +89,14 @@ export class RaceDirector {
   /** cars may not drive until GO */
   locked(): boolean { return this.phase === 'countdown' }
 
+  /**
+   * Gate of the whole AI field: before a race is ever started (idle) the
+   * field is fully dormant — brains, physics and live visuals do not run,
+   * so a launched session shows only the player and the constructor's
+   * deterministic park pose. Step/bind helpers consult this single source.
+   */
+  fieldActive(): boolean { return this.phase !== 'idle' }
+
   /** begin (or re-begin, for restart) the race from the current car state */
   start(): void {
     this.reseed()
