@@ -6,6 +6,7 @@ import { CoastField } from './Terrain'
 import { RoadBuilder, rampLiftAt, rampSlopeAt } from './RoadBuilder'
 import { buildWater, animateWater, type ShoreMap } from './Water'
 import { dressSlice, composePrefab, type PrefabId } from './ComposeKit'
+import { dressCircuit } from './CircuitDressing'
 import { placeVegetation } from './VegetationKit'
 import { placeProps } from './PropKit'
 import { grassTuftTexture } from '../assets/Textures'
@@ -47,6 +48,7 @@ export function buildTrackSlice(): Slice {
   placeProps(group, spline, field)
   group.add(dressSlice({ spline, field }))
   group.add(buildNorthCity(spline, field))
+  group.add(dressCircuit(spline, field))
 
   return {
     group, spline, field, water,
