@@ -2,6 +2,7 @@ import { TRACK, VEHICLE } from '../../src/config'
 import { assert, assertNear, assertFinite, test } from '../harness'
 import { cornerTarget, laneSteer, flatCar, rig, SIM_DT } from '../rig'
 import { PlayerVehicle } from '../../src/vehicles/PlayerVehicle'
+import { rampSlopeAt } from '../../src/world/RoadBuilder'
 import type { InputState } from '../../src/core/Input'
 
 /* Scenarios on the REAL corridor: geometric ramp launches, barrier clamp,
@@ -48,8 +49,11 @@ test('barrier: the guard window clamps and bounces the corridor side', () => {
   const pv = new PlayerVehicle(r.probe)
   // inside the coastal guard window (158–272), driving a velocity-aligned diagonal at the wall
   const c = r.probe.centerPose(170)
+  // the guard line stands at the config barrierInset — single source, no hardcodes
+  assertNear(r.probe.corridor(c.x, c.z).wall, TRACK.halfWidth + VEHICLE.barrierInset, 1e-12,
+    'corridor wall is the asphalt edge + config barrierInset')
   pv.phys.resetAt(c.x, c.z, c.yaw + 0.26, 22)
-  let impacts = 0, maxLat = 0
+  let impacts = 0, maxLat = 0, restLat = 0
   const dt = SIM_DT
   const input: InputState = { throttle: 0.2, brake: 0, steer: 0, handbrake: false, nitro: false }
   let t = 0
@@ -57,13 +61,61 @@ test('barrier: the guard window clamps and bounces the corridor side', () => {
     pv.update(dt, input)
     if (pv.events.impact > 0.4) impacts++
     maxLat = Math.max(maxLat, Math.abs(pv.phys.lat))
+    restLat = Math.max(restLat, Math.abs(r.probe.corridor(pv.phys.x, pv.phys.z).lat))
     t += dt
   }
-  const lim = TRACK.halfWidth + 0.62 - VEHICLE.vehicleHalf
+  const lim = TRACK.halfWidth + VEHICLE.barrierInset - VEHICLE.vehicleHalf
   assert(impacts >= 1, `barrier contact registered (${impacts})`)
   assert(maxLat <= lim + 0.12, `never crossed the guard line (${maxLat.toFixed(2)} ≤ ${lim.toFixed(2)})`)
+  assert(restLat <= lim + 0.02, `resting position never rests beyond the line (${restLat.toFixed(3)} ≤ ${lim.toFixed(2)})`)
   assert(pv.phys.speed < 22, `contact scrubbed speed (${pv.phys.speed.toFixed(1)} m/s)`)
   assertFinite(pv.phys.speed, 'speed finite after contact')
+})
+
+test('ramp slope is single-source: launch vy comes from rampSlopeAt at the lip probe', () => {
+  const r = rig()
+  const pv = new PlayerVehicle(r.probe)
+  pv.resetTo(204, 45)
+  const dt = SIM_DT
+  const input: InputState = { throttle: 0.9, brake: 0, steer: 0, handbrake: false, nitro: false }
+  let t = 0, prevSpeed = 45, prevS = 204, launched = -1
+  while (t < 5 && launched < 0) {
+    input.steer = laneSteer(pv.phys, r.spline)
+    prevSpeed = pv.phys.speed; prevS = pv.phys.s
+    pv.update(dt, input)
+    if (pv.events.launched > 0) launched = pv.events.launched
+    t += dt
+  }
+  assert(launched > 0, 'the kicker launched the car')
+  const slope = rampSlopeAt(TRACK.ramp.sLip - TRACK.ramp.launchProbe)
+  assert(slope > VEHICLE.launchMinSlope, `probe slope ${slope.toFixed(4)} clears the launch gate`)
+  // the physics must take its launch slope from the built helper — if the
+  // kicker profile changes, both sides move together (no diverged derivative)
+  const grade = Math.max(0, r.spline.frame(prevS).tangent.y)
+  assertNear(launched, prevSpeed * (grade + slope * VEHICLE.launchPop), 1e-9,
+    `launch vy equals speed·(grade + rampSlopeAt(sLip−probe)·launchPop) at v=${prevSpeed.toFixed(1)}`)
+})
+
+test('collide: the barrier clamp consults the current-position corridor, not the stale sample', () => {
+  const { pv, probe } = flatCar()
+  probe.wall = 10
+  const lim = probe.wall - VEHICLE.vehicleHalf
+  // aim the nose straight at the wall (+x): heading = (−sin yaw, 0, −cos yaw)
+  pv.phys.resetAt(9.0, 380, -Math.PI / 2, 60)
+  const dt = SIM_DT
+  const input: InputState = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false }
+  let impacts = 0, worst = 0
+  // one hit then a stream of bounce-backs: at every step the *resting* position
+  // (not just the pre-step telemetry) must respect the line — with a stale
+  // pre-integration sample each hit would keep one dt of penetration (~0.5 m)
+  for (let k = 0; k < 40; k++) {
+    pv.update(dt, input)
+    if (pv.events.impact > 0.4) impacts++
+    worst = Math.max(worst, Math.abs(probe.corridor(pv.phys.x, pv.phys.z).lat))
+  }
+  assert(impacts >= 1, `the wall hit bounced the car (${impacts})`)
+  assert(worst <= lim + 1e-9, `no step-of-penetration: worst resting |lat| ${worst.toFixed(6)} ≤ ${lim}`)
+  assertFinite(pv.phys.speed, 'speed finite through the clamp')
 })
 
 test('obstacles: an authored OBB blocks and reflects the car', () => {
