@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { Debug } from './core/Debug'
 import type { ShotPose } from './core/Debug'
-import { KIT, PAINTS, RACE } from './config'
+import { Renderer } from './core/Renderer'
+import { KIT, PAINTS, RACE, QUALITY } from './config'
 import { Rand } from './util'
 import { buildBuilding, BUILDING_DESIGNS, type BuildingDesignId } from './world/BuildingKit'
 import { composePrefab } from './world/ComposeKit'
@@ -47,7 +48,7 @@ function boot(): void {
   window.addEventListener('pointerdown', unlockAudio, { once: true })
   window.addEventListener('keydown', unlockAudio, { once: true })
   const { view, car, slice } = game
-  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game }
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY }
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the
      host's real-time frame rate (software rasterization throttles rAF). */
@@ -452,6 +453,67 @@ function boot(): void {
       })
     }
     return byRoot
+  }
+  /* Phase 9 perf-sampler support (same dev-harness class as __probe/__tally,
+     removed with the harness in Phase 10): per-frame station/zone tag, tier +
+     pipeline diagnostics, and the rAF frame-time sampler the node harness
+     (scripts/perf.mjs) drives. Read-only on game state; installed on demand. */
+  ;(globalThis as unknown as { __perfZone?: () => object }).__perfZone = () => ({
+    s: Math.round(game.player.phys.s * 10) / 10,
+    zone: slice.field.zoneAt(game.player.phys.x, game.player.phys.z),
+    phase: game.director.phase,
+  })
+  let gpuInfo: { renderer: string | null; vendor: unknown } | null = null
+  let drawingCache: { pr: number; w: number; h: number; str: string } | null = null
+  ;(globalThis as unknown as { __perfDiag?: () => object }).__perfDiag = () => {
+    const pr = view.gl.getPixelRatio()
+    const w = window.innerWidth, h = window.innerHeight
+    if (!drawingCache || drawingCache.pr !== pr || drawingCache.w !== w || drawingCache.h !== h) {
+      const sz = view.gl.getDrawingBufferSize(new THREE.Vector2())
+      drawingCache = { pr, w, h, str: `${sz.x}x${sz.y}` }
+    }
+    return {
+      tier: view.tier,
+      pixelRatio: Math.round(pr * 100) / 100,
+      drawing: drawingCache.str,
+      shadowMap: view.sun.shadow.mapSize.width,
+      bloom: (view.debugPipeline.bloom as unknown as { strength: number }).strength,
+      geometries: view.gl.info.memory.geometries,
+      textures: view.gl.info.memory.textures,
+      calls: view.lastChain.calls,
+      tris: view.lastChain.tris,
+      heapMb: (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+        ? Math.round((performance as unknown as { memory: { usedJSHeapSize: number } }).memory.usedJSHeapSize / 1e5) / 10
+        : null,
+      fps: Math.round(view.fps),
+      gpu: (() => {
+        if (gpuInfo) return gpuInfo
+        const gl = view.gl.getContext()
+        const ext = gl.getExtension('WEBGL_debug_renderer')
+        gpuInfo = { renderer: ext ? String(ext.debugRendererInfoWEBGL()).trim() : null, vendor: gl.getParameter(0x1f00) }
+        return gpuInfo
+      })(),
+    }
+  }
+  ;(globalThis as unknown as { __perfStart?: () => void }).__perfStart = () => {
+    const rec = globalThis as unknown as { __perfFrames?: unknown[]; __perfHeap?: unknown[] }
+    rec.__perfFrames = []
+    rec.__perfHeap = []
+    const diagFn = (globalThis as unknown as { __perfDiag: () => Record<string, unknown> }).__perfDiag
+    const zoneFn = (globalThis as unknown as { __perfZone: () => { s: number; zone: string; phase: string } }).__perfZone
+    let last = -1
+    const tick = (t: number): void => {
+      if (last >= 0) {
+        const d = diagFn()
+        const z = zoneFn()
+        ;(rec.__perfFrames as unknown[]).push({ t, dt: t - last, calls: d.calls, tris: d.tris, s: z.s, zone: z.zone, tier: d.tier, phase: z.phase })
+      }
+      last = t
+      const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+      if (mem) (rec.__perfHeap as unknown[]).push({ t, usedMb: Math.round(mem.usedJSHeapSize / 1e5) / 10 })
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
   }
   ;(globalThis as unknown as { __probe?: () => object }).__probe = () => ({
     buildMs: (globalThis as unknown as { __buildMs?: number }).__buildMs ?? null,
