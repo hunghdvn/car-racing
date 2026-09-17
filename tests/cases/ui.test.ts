@@ -5,7 +5,8 @@ import {
   driftChainStep, freshDriftChain, distToPolyline, shortcutEnterEdge, freshShortcut,
   gearLabelFor, gearIndexOf, rpmFor, buildCarNames, type StandingLike,
 } from '../../src/ui/UIManager'
-import { Input, type InputAction } from '../../src/core/Input'
+import { Input, PAD, type InputAction, type GamepadSnapshot } from '../../src/core/Input'
+import { globalObject } from '../../src/core/globals'
 import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
 
 /* Phase 8 headless UI contracts: the countdown cue cadence, results rows,
@@ -168,4 +169,47 @@ test('input: action map fires respawn/pause/confirm once per keypress and rebind
   input.enabled = false
   for (let i = 0; i < 60; i++) input.poll(1 / 60)
   assert(s.throttle === 0, 'the lock gate (countdown) drains the axes to rest')
+})
+
+/* --- Phase 11 final-review: the window ?? globalObject() init hardening --- *
+ * The subsystem init used to read the ES2020 `globalThis` bare, which throws a
+ * ReferenceError on older-but-common browsers and silently disables audio/gamepad
+ * behind their try/catch. These lock the accessor contract and the gamepad drive
+ * mapping headlessly (no real browser globals needed — a synthetic pad + a fake
+ * event target stand in). */
+
+const padBtn = (v: number): { pressed: boolean; value: number } => ({ pressed: v > 0.08, value: v })
+const padButtons = (overrides: Record<number, number>): { pressed: boolean; value: number }[] =>
+  Array.from({ length: 16 }, (_, i) => padBtn(overrides[i] ?? 0))
+const padOf = (buttons: { pressed: boolean; value: number }[], axis2 = 0): GamepadSnapshot =>
+  ({ buttons, axes: [0, 0, axis2, 0] })
+
+test('globalObject(): resolves a usable global without needing browser globals', () => {
+  const marker = '__vrGlobalObjectMarker__'
+  ;(globalThis as Record<string, unknown>)[marker] = 42
+  const g = globalObject()
+  assert(typeof g === 'object' && g !== null, 'the accessor always returns an object (never throws)')
+  assert(g[marker] === 42, 'with no window the accessor resolves to the ambient global (node harness)')
+  delete (globalThis as Record<string, unknown>)[marker]
+})
+
+test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/RB/stick + one-shots)', () => {
+  const target = { addEventListener: (_t: string, _cb: (e: { code: string }) => void) => { /* no keyboard */ } }
+  let pad = padOf(padButtons({ [PAD.rt]: 1 }), 0.8) // RT throttle, stick right
+  const input = new Input(target, () => [pad])
+  const fired: InputAction[] = []
+  input.onAction = (a) => { fired.push(a) }
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  const s = input.state
+  assert(s.throttle > 0.8, 'right trigger drives throttle through the pad source')
+  assert(s.steer > 0.5, 'the right stick steers with the deadzone respected')
+  pad = padOf(padButtons({ [PAD.rt]: 1, [PAD.lb]: 1, [PAD.rb]: 1 }), 0.8)
+  input.poll(1 / 60)
+  assert(s.handbrake && s.nitro, 'LB latches handbrake and RB latches nitro')
+  pad = padOf(padButtons({ [PAD.a]: 1 }), 0.8) // 'a' → confirm one-shot
+  input.poll(1 / 60)
+  assert(fired.includes('confirm'), 'the gamepad "a" button raises the confirm action once')
+  const before = fired.length
+  input.poll(1 / 60) // held across a second poll must not re-fire (edge detect)
+  assert(fired.length === before, 'a held pad button does not repeat its one-shot')
 })

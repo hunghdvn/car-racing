@@ -1,3 +1,5 @@
+import { globalObject } from './globals'
+
 /**
  * Central input manager (spec §16): keyboard + gamepad drive axes, a
  * rebindable one-shot action map (respawn / pause / confirm) and the live,
@@ -193,7 +195,7 @@ export class Input {
 
 function defaultPadSource(): readonly GamepadSnapshot[] {
   try {
-    const nav = (globalThis as unknown as { navigator?: { getGamepads?: () => GamepadSnapshot[] } }).navigator
+    const nav = (globalObject() as unknown as { navigator?: { getGamepads?: () => GamepadSnapshot[] } }).navigator
     return nav && nav.getGamepads ? nav.getGamepads() : []
   } catch { return [] }
 }

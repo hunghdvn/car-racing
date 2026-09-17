@@ -1,6 +1,6 @@
-import { AUDIO, UI } from '../config'
+import { AUDIO, SEED, UI } from '../config'
 import { clamp01, damp, Rand } from '../util'
-import { SEED } from '../config'
+import { globalObject } from './globals'
 
 /* ------------------------------------------------------------------------- *
  * Original WebAudio synthesis (spec §15): a layered engine (rpm+load pitch
@@ -60,7 +60,7 @@ export class Audio {
   unlock(): void {
     if (this.ctx) { void this.ctx.resume?.().catch?.(() => undefined); return }
     try {
-      const w = globalThis as unknown as Record<string, (new () => Ctx) | undefined>
+      const w = globalObject() as unknown as Record<string, (new () => Ctx) | undefined>
       const Factory = w.AudioContext ?? w.webkitAudioContext
       if (!Factory) return
       const ctx = new Factory()
