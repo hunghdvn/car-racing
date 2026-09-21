@@ -55,7 +55,10 @@ or renderer settings.
   GLTF/GLB when it adds quality; reusable authored mesh kits; procedural generation for
   roads, terrain, layout, dressing, variation.
 - **Rendering feasibility budgets** (so quality coexists with 60 FPS, not by stripping
-  detail): static draw calls ≲ 250–350 (instancing/merging per §17), textures ≤ 1024²
+  detail): full composer + shadow-chain p95
+  ≤ 2,100 at 1280×720/DPR1 on the reference M2 (2026-09-21 measured: full-lap mean
+  1,561, p95 1,945 at 60 FPS; scene-only draw calls sampled mean 1,564, p95 1,845;
+  instancing/merging per §17), textures ≤ 1024²
   (hero car atlases may reach 2048²), one shadow-casting light (§12), DPR capped,
   particles pooled (§15). Detail is paid for with technique, never removed from Tier 1/2.
 
@@ -122,7 +125,7 @@ gentle vertex swell. Never a flat blue plane with a static texture.
 These exist to reject a 50-triangle "car"; they do not replace §22–§23 as the judge.
 
 ### 4.7 Distance-tiered detail (required)
-- **Close (≲ 40 m)**: hero + Tier-2 at full detail — readable bevels, strong silhouettes.
+- **Close (≤ 40 m)**: hero + Tier-2 at full detail — readable bevels, strong silhouettes.
 - **Mid (40–250 m)**: full designs (instanced), material detail carries it.
 - **Far (> 250 m)**: LOD variants / simplified designs / skyline kits + fog.
 The same primitive mesh may NOT serve all distances for one object type; vegetation and
@@ -147,7 +150,7 @@ Per §4.1 plus: long hood / set-back cabin / wide hips proportions; silhouette r
 side/front/rear/three-quarter; moving specular highlights prove curvature; wheels spin
 with speed, front wheels steer; suspension compresses visibly on ramps/landings; body
 pitch/roll under input; brake lights brighten, head lights emissive; nitro flames from
-exhausts. The car must appear to SIT on the road: wheel-ground gap ≲ 5 cm at rest,
+exhausts. The car must appear to SIT on the road: wheel-ground gap ≤ 5 cm at rest,
 tires visibly compressed on contact, no float in any §22 shot.
 
 ## 7. Road & track system
@@ -221,7 +224,7 @@ The hero car must look like a hero asset on screen:
 - Nitro: pull-in (−0.4 m), FOV +8–12°, slight kick.
 - Drift: camera yaw lags heading (up to ~15–20°), keeping the slide visible.
 - Jump: camera raises to keep the airborne car framed with road visible below.
-- Impact: trauma shake decayed over ≲ 0.5 s. Landing: 1 stronger shake + dust.
+- Impact: trauma shake decayed over ≤ 0.5 s. Landing: 1 stronger shake + dust.
 - Pre-race: cinematic orbit around the grid (cars large in frame, gantry visible).
 
 ## 14. Gameplay systems (unchanged scope)
