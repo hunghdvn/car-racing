@@ -8,6 +8,7 @@ import './cases/ai.test'
 import './cases/fx.test'
 import './cases/ui.test'
 import './cases/perf.test'
+import './cases/assets.test'
 
 const ok = await runAll()
 process.exit(ok ? 0 : 1)
