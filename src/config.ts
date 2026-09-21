@@ -99,6 +99,8 @@ export const VEHICLE = {
   /** barrier graze gate (m/s): approach speed below which a wall/obstacle touch is a scrape
    *  (no impact event, no bounce). Single source for BOTH corridor-clamp and OBB collide paths. */
   barrierGraze: 0.5,
+  /** sustained wall scrape friction (m/s²) along the contact tangent */
+  barrierSlideFriction: 8,
   /** elevated deck fall gate (m): past DECK_FACE + deckFall the parapet line is driven over */
   deckFall: 0.1,
   /** surface-fall gate (m): when the ground drops this far under a fast wheel it reads as a miss */
@@ -109,8 +111,8 @@ export const VEHICLE = {
   respawnTime: 0.8, respawnLat: 85, respawnSeaPad: 0.35,
   /** stuck (throttle pinned, no progress) auto-respawn gate */
   stuckTime: 3.5, stuckSpeed: 1.6,
-  /** steering visual: max front-wheel angle (rad); derived from yaw rate (auto counter-steer) */
-  steerMaxRad: 0.62, steerSpeedGate: 5,
+  /** steering visual: max front-wheel angle (rad); derived from the drive command */
+  steerMaxRad: 0.62, steerSpeedGate: 5, steerVisualResponse: 9,
   /** drift economy gate: slip must exceed driftMinSlip; chain bonus after driftChainHold s */
   driftMinSlip: 0.2, driftChainHold: 0.85, driftEndGrace: 0.45,
   /** nitro release flicker guard (s) */

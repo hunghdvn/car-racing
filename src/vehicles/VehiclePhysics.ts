@@ -184,7 +184,7 @@ export class VehiclePhysics {
     // body leans OUT of that force (left side down)
     const latAcc = (latScrub / dt) * (l0 < 0 ? 1 : l0 > 0 ? -1 : 0)
 
-    /* --- yaw: speed-tapered authority, drift boost, air control --- */
+    /* --- yaw: bounded bicycle/grip authority, drift boost, air control --- */
     let yawTarget = 0
     if (speed > 0.6 || Math.abs(f) > 0.6) {
       const curve = V.steerLowSpeed + (V.steerHighSpeed - V.steerLowSpeed) * clamp01(speed / V.topSpeed)
@@ -195,11 +195,14 @@ export class VehiclePhysics {
       // tire scrub bends travel toward the nose; this aligns the nose back
       // toward travel (post-impact recovery, counter-steer authority)
       if (this.grounded && speed > V.driftTriggerSpeed) yawTarget += clamp(-l0 * 0.055 * gripMul, -0.9, 0.9)
-      // ordinary cornering cannot demand more yaw rate than the grip circle
-      // delivers — only the handbrake drift (and air) may over-rotate
-      if (this.grounded && !drifting && speed > 8) {
-        const wCap = (V.gripMax * 0.92) / speed
-        yawTarget = clamp(yawTarget, -wCap, wCap)
+      // ordinary cornering obeys both the front-wheel lock and the tyre circle
+      // — only the handbrake drift (and air) may over-rotate
+      if (this.grounded && !drifting) {
+        const forward = Math.max(Math.abs(this.forwardSpeed), 0.6)
+        const wheelLock = (forward * Math.tan(V.steerMaxRad)) / V.wheelbase
+        const gripCap = (V.gripMax * 0.92) / forward
+        const authorityCap = Math.min(wheelLock, gripCap) * 1.02
+        yawTarget = clamp(yawTarget, -authorityCap, authorityCap)
       }
     }
     this.yawRate = damp(this.yawRate, yawTarget, V.yawResponse, dt)
@@ -275,11 +278,14 @@ export class VehiclePhysics {
     this.pitch = damp(this.pitch, pitchT, this.grounded ? 9 : V.airPitchK, dt)
     this.roll = damp(this.roll, rollT, this.grounded ? 9 : 3, dt)
 
-    /* steering visual from yaw rate => drift shows counter-steer */
-    this.steerVis = clamp(Math.atan2(this.yawRate * V.wheelbase, Math.max(speed, V.steerSpeedGate)), -V.steerMaxRad, V.steerMaxRad)
+    /* steering visual follows the driver while grip-limited; during a drift
+       the achieved yaw keeps the counter-steer readable */
+    const yawAngle = clamp(Math.atan2(this.yawRate * V.wheelbase, Math.max(speed, V.steerSpeedGate)), -V.steerMaxRad, V.steerMaxRad)
+    const wheelTarget = this.grounded && !drifting ? clamp(cmd.steer * V.steerMaxRad, -V.steerMaxRad, V.steerMaxRad) : yawAngle
+    this.steerVis = damp(this.steerVis, wheelTarget, V.steerVisualResponse, dt)
 
     /* --- corridor + obstacle collisions --- */
-    this.collide()
+    this.collide(dt)
 
     /* --- sanity flags (PlayerVehicle owns the respawn policy) --- */
     if (!Number.isFinite(this.x + this.y + this.z + this.vx + this.vy + this.vz)) this.sunk = true
@@ -336,9 +342,8 @@ export class VehiclePhysics {
     }
   }
 
-  private collide(): void {
+  private collide(dt: number): void {
     const V = VEHICLE
-    const hx = -Math.sin(this.yaw), hz = -Math.cos(this.yaw)
     // The barrier clamp consults the corridor at the *integrated* position:
     // the top-of-step sample predates the x/z advance, so clamping against it
     // leaves up to one simulation step of barrier penetration per hit. The
@@ -348,20 +353,31 @@ export class VehiclePhysics {
     const c = this.probe.corridor(this.x, this.z)
     if (Number.isFinite(c.wall)) {
       const lim = c.wall - V.vehicleHalf
-      const sx = c.sideX, sz = c.sideZ
-      if (Math.abs(c.lat) > lim) {
+      const absLat = Math.abs(c.lat)
+      if (absLat >= lim) {
         const side = Math.sign(c.lat)
-        const over = Math.abs(c.lat) - lim
-        this.x -= sx * side * over
-        this.z -= sz * side * over
-        const latV = (this.vx * sx + this.vz * sz) * side
-        if (latV > V.barrierGraze) {
-          this.ev.impact = Math.max(this.ev.impact, latV)
-          const f = this.vx * hx + this.vz * hz
-          const nl = -latV * V.collisionBounce
-          this.vx = hx * f * V.collideScrub + sx * nl
-          this.vz = hz * f * V.collideScrub + sz * nl
-          this.yawRate *= 0.55
+        let nx = c.sideX * side, nz = c.sideZ * side
+        const nLen = Math.hypot(nx, nz)
+        if (nLen > 1e-6) {
+          nx /= nLen; nz /= nLen
+          const tx = -nz, tz = nx
+          const over = Math.max(0, (absLat - lim) / nLen)
+          this.x -= nx * over
+          this.z -= nz * over
+          let vn = this.vx * nx + this.vz * nz
+          let vt = this.vx * tx + this.vz * tz
+          if (vn > V.barrierGraze) {
+            this.ev.impact = Math.max(this.ev.impact, vn)
+            vt *= V.collideScrub
+            vn = -vn * V.collisionBounce
+            this.yawRate *= 0.55
+          } else if (Math.abs(vn) <= V.barrierGraze) {
+            const slideLoss = Math.min(Math.abs(vt), V.barrierSlideFriction * dt)
+            vt -= Math.sign(vt) * slideLoss
+            vn = Math.min(0, vn)
+          }
+          this.vx = nx * vn + tx * vt
+          this.vz = nz * vn + tz * vt
         }
         this.collideCd = V.collideCd
       }

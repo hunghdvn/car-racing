@@ -134,8 +134,10 @@ function runRace(f: Field, budget: number, onStep?: (t: number, rep: RunReport) 
 let _shared: { f: Field; rep: RunReport } | null = null
 function sharedRace(): { f: Field; rep: RunReport } {
   if (!_shared) {
-    const f = buildField()
-    f.director.start()
+  const f = buildField()
+  const initialCars = JSON.stringify(f.cars.map((c) => c.snapshot()))
+  const initialPlayer = JSON.stringify([f.player.phys.x, f.player.phys.z, f.player.phys.yaw, f.player.phys.vx, f.player.phys.vz, f.player.nitroVal, f.player.nitroActive])
+  f.director.start()
     _shared = { f, rep: runRace(f, 200) }
   }
   return _shared
@@ -299,6 +301,16 @@ test('director: countdown holds the field, single lap, standings permutation, si
     const k = Math.round(r.finishTime / SIM_DT)
     assert(Math.abs(r.finishTime - k * SIM_DT) < 1e-9, `car ${r.id} finish time is a fixed-step multiple`)
   }
+})
+
+test('ai: resetTo re-arms the nitro cooldown for a clean race replay', () => {
+  const { spline, probe } = rig()
+  const car = new AIVehicle(1, spline, probe)
+  car.resetTo(200, 0, 0)
+  const cool = (): number => (car as unknown as { nitroCool: number }).nitroCool
+  ;(car as unknown as { nitroCool: number }).nitroCool = VEHICLE.nitroOffCool
+  car.resetTo(200, 0, 0)
+  assert(cool() === 0, `fresh race re-arms the nitro cooldown (${cool()})`)
 })
 
 /* ----------------------------------------------------------- 6: restart */

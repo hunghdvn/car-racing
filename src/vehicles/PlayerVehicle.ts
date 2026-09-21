@@ -45,7 +45,11 @@ export class PlayerVehicle {
     this.respawnT = 0
     this.stuckT = 0
     this.driftT = 0
+    this.driftCool = 0
     this.chainAwarded = false
+    this.nitroVal = NITRO.startValue
+    this.nitroActive = false
+    this.nitroCool = 0
     this.cmd.throttle = this.cmd.brake = this.cmd.steer = 0
     this.cmd.handbrake = this.cmd.nitro = false
   }

@@ -145,6 +145,7 @@ export class AIVehicle {
     this.cmd.handbrake = this.cmd.nitro = false
     this.nitroActive = false
     this.nitroVal = NITRO.startValue
+    this.nitroCool = 0
     this.stuckT = 0
     this.stuckClock = 0
     this.laneOffset = 0
