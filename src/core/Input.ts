@@ -59,6 +59,44 @@ const HB = ['Space']
 const NOS = ['ShiftLeft', 'ShiftRight']
 const PREVENT = new Set<string>([...AXES.up, ...AXES.down, ...AXES.left, ...AXES.right, ...HB, 'Enter', 'NumpadEnter'])
 
+type InputKeyboardEvent = {
+  code: string
+  key?: string
+  keyCode?: number
+  preventDefault?: () => void
+}
+
+const CONTROL_KEY_LABELS: Record<string, string> = {
+  KeyW: 'w',
+  KeyA: 'a',
+  KeyS: 's',
+  KeyD: 'd',
+  Space: ' ',
+  ShiftLeft: 'shift',
+  ShiftRight: 'shift',
+  ArrowUp: 'arrowup',
+  ArrowDown: 'arrowdown',
+  ArrowLeft: 'arrowleft',
+  ArrowRight: 'arrowright',
+  Enter: 'enter',
+  NumpadEnter: 'enter',
+  Escape: 'escape',
+  KeyR: 'r',
+  KeyP: 'p',
+}
+
+const controlLabel = (key: string): string => {
+  const stripped = key.normalize('NFD').replace(/[\u0300-\u036F]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd')
+  return stripped.length === 1 ? stripped.toLowerCase() : key.toLowerCase()
+}
+
+const isImeControlEvent = (e: InputKeyboardEvent): boolean => {
+  if (e.key === undefined) return false
+  if (e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified' || e.key === 'Dead') return true
+  const expected = CONTROL_KEY_LABELS[e.code]
+  return expected !== undefined && controlLabel(e.key) !== expected
+}
+
 const defaultBindings = (): Record<InputAction, ActionBinding> => ({
   respawn: { kb: ['KeyR'], padButton: PAD.y },
   pause: { kb: ['KeyP', 'Escape'], padButton: PAD.start },
@@ -92,7 +130,7 @@ export function applyPadToState(s: InputState, pad: GamepadSnapshot | null, driv
 }
 
 interface InputEventTargetLike {
-  addEventListener(type: string, cb: (e: { code: string; preventDefault?: () => void }) => void): void
+  addEventListener(type: string, cb: (e: InputKeyboardEvent) => void): void
 }
 
 export class Input {
@@ -111,6 +149,7 @@ export class Input {
   constructor(target: InputEventTargetLike = window, padSource: GamepadSource = defaultPadSource) {
     this.padSource = padSource
     target.addEventListener('keydown', (e) => {
+      if (isImeControlEvent(e)) return
       if (PREVENT.has(e.code)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)

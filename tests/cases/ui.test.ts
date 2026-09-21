@@ -193,6 +193,43 @@ test('globalObject(): resolves a usable global without needing browser globals',
   delete (globalThis as Record<string, unknown>)[marker]
 })
 
+type KeyboardLikeEvent = { code: string; key?: string; keyCode?: number; isComposing?: boolean }
+
+const keyboardHarness = (): { target: { addEventListener(t: string, cb: (e: KeyboardLikeEvent) => void): void }; down(e: KeyboardLikeEvent): void; up(e: KeyboardLikeEvent): void } => {
+  const listeners: Record<string, ((e: KeyboardLikeEvent) => void) | undefined> = {}
+  return {
+    target: { addEventListener: (t, cb) => { listeners[t] = cb } },
+    down: (e) => { listeners.keydown?.(e) },
+    up: (e) => { listeners.keyup?.(e) },
+  }
+}
+
+test('input: Vietnamese IME conversion of W does not latch a false A key', () => {
+  const kb = keyboardHarness()
+  const input = new Input(kb.target)
+  kb.down({ code: 'KeyA', key: 'ư' })
+  kb.down({ code: 'KeyW', key: 'w' })
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  assert(input.state.throttle > 0.8, 'the IME-composed W keydown still drives throttle')
+  assert(Math.abs(input.state.steer) < 0.05, `the composed KeyA must not latch left — got ${input.state.steer}`)
+  kb.up({ code: 'KeyW', key: 'w' })
+  for (let i = 0; i < 60; i++) input.poll(1 / 60)
+  assert(input.state.throttle === 0 && input.state.steer === 0, 'releasing W returns both axes to rest')
+})
+
+test('input: localized Vietnamese A/D labels still drive steering', () => {
+  const kb = keyboardHarness()
+  const input = new Input(kb.target)
+  kb.down({ code: 'KeyA', key: 'ă' })
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  assert(input.state.steer < -0.8, `the Vietnamese A label still steers left — got ${input.state.steer}`)
+  kb.up({ code: 'KeyA', key: 'ă' })
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  kb.down({ code: 'KeyD', key: 'đ' })
+  for (let i = 0; i < 30; i++) input.poll(1 / 60)
+  assert(input.state.steer > 0.8, `the Vietnamese D label still steers right — got ${input.state.steer}`)
+})
+
 test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/RB/stick + one-shots)', () => {
   const target = { addEventListener: (_t: string, _cb: (e: { code: string }) => void) => { /* no keyboard */ } }
   let pad = padOf(padButtons({ [PAD.rt]: 1 }), 0.8) // RT throttle, stick right
