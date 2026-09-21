@@ -20,7 +20,7 @@ export interface CarView {
 export class ChaseCamera {
   readonly camera: THREE.PerspectiveCamera
   mode: 'chase' | 'orbit' = 'chase'
-  private curPos = new THREE.Vector3(0, 2, -6)
+  private curPos = new THREE.Vector3(0, 2, CAMERA.distBase)
   private curLook = new THREE.Vector3()
   private camYaw = 0
   private trauma = 0
@@ -39,7 +39,7 @@ export class ChaseCamera {
 
   snapTo(car: CarView): void {
     this.camYaw = car.yaw
-    this.curPos.set(car.pos.x - Math.sin(car.yaw) * CAMERA.distBase, car.pos.y + CAMERA.heightBase, car.pos.z - Math.cos(car.yaw) * CAMERA.distBase)
+    this.curPos.set(car.pos.x + Math.sin(car.yaw) * CAMERA.distBase, car.pos.y + CAMERA.heightBase, car.pos.z + Math.cos(car.yaw) * CAMERA.distBase)
     this.curLook.copy(car.pos)
   }
 
@@ -81,18 +81,18 @@ export class ChaseCamera {
     const lookAhead = CAMERA.lookAheadBase + sp * CAMERA.lookAheadSpeed
 
     const desired = new THREE.Vector3(
-      car.pos.x - sinY * dist,
+      car.pos.x + sinY * dist,
       car.pos.y + height,
-      car.pos.z - cosY * dist,
+      car.pos.z + cosY * dist,
     )
     // never let the camera sink under the car mid-jump
     if (car.airborne) desired.y = Math.max(desired.y, car.pos.y + 0.6)
 
     dampVec(this.curPos, desired, CAMERA.posLag, dt)
     const lookTarget = new THREE.Vector3(
-      car.pos.x + sinY * lookAhead,
+      car.pos.x - sinY * lookAhead,
       car.pos.y + 0.45,
-      car.pos.z + cosY * lookAhead,
+      car.pos.z - cosY * lookAhead,
     )
     dampVec(this.curLook, lookTarget, CAMERA.posLag * 1.35, dt)
 

@@ -1,4 +1,5 @@
 import { runAll } from './harness'
+import './cases/camera.test'
 import './cases/drive.test'
 import './cases/track.test'
 import './cases/lap.test'
