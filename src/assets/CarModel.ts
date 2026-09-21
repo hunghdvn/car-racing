@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
+import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, roundedPlateGeo, tireTreadNormal } from './Textures'
 
 /* ------------------------------------------------------------------------- *
@@ -675,6 +676,18 @@ export function buildCar(paintHex: number): CarModel {
       m.castShadow = !mm.transparent
       m.receiveShadow = false
     }
+  })
+
+  // Fold the static chassis into render-identical materials while keeping
+  // wheels, steering/flame animation, and brake/headlight glow carriers intact.
+  mergeStaticMeshes(group, {
+    keepNames: [
+      'tire', 'wheelback', 'brake-disc', 'brake-caliper', 'wheel-dish',
+      'wheel-lip', 'wheel-spoke', 'wheel-hub', 'wheel-f-l', 'wheel-f-r',
+      'wheel-r-l', 'wheel-r-r', 'headlight-lens-l', 'headlight-lens-r',
+      'taillight-lens-l', 'taillight-lens-r', 'taillight-bar',
+      'flame-l', 'flame-r', 'flame-core-l', 'flame-core-r',
+    ],
   })
 
   let brakeVal = 0

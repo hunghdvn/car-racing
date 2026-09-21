@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { TRACK, SEED } from '../config'
+import { GRAPHICS, TRACK, SEED } from '../config'
 import { Rand } from '../util'
 import { TrackSpline } from './TrackSpline'
 import { CoastField } from './Terrain'
@@ -9,7 +9,8 @@ import { dressSlice, composePrefab, createPrefabHeightReader, type PrefabId } fr
 import { dressCircuit } from './CircuitDressing'
 import { placeVegetation } from './VegetationKit'
 import { placeProps } from './PropKit'
-import { mergeStaticGroup } from './StaticMerge'
+import { mergeStaticMeshes } from './StaticBatch'
+import { createShadowStreamer } from './ShadowStreamer'
 import { grassTuftTexture } from '../assets/Textures'
 
 /* ------------------------------------------------------------------------- *
@@ -46,29 +47,43 @@ export function buildTrackSlice(): Slice {
   const roadGroup = road.build(2, spline.length - 2)
   group.add(roadGroup)
 
-  placeVegetation(group, spline, field, grassTuftTexture())
-  placeProps(group, spline, field)
+  const vegetation = new THREE.Group()
+  vegetation.name = 'vegetation'
+  group.add(vegetation)
+  placeVegetation(vegetation, spline, field, grassTuftTexture())
+  const props = new THREE.Group()
+  props.name = 'props'
+  group.add(props)
+  placeProps(props, spline, field)
   const sliceComp = dressSlice({ spline, field })
   group.add(sliceComp)
   const northCity = buildNorthCity(spline, field)
   const dressing = dressCircuit(spline, field)
   group.add(northCity)
   group.add(dressing)
-  /* Draw-call batching (Phase 9): fold the three profile-indicted density
+  /* Draw-call batching (Phase 9): fold the four profile-indicted density
      groups into per-cell, per-material meshes. The road deck is NOT folded:
      its cell bounds coarsen culling (+92k tris/frame in camera at the
      tunnel_contrast pose) and shift coplanar deck draws — evidence in
      phase-9-report §lever-1. Landmark names the structural probe keys on
      fold into themselves so the probe contract stays intact. */
   const keep = ['tunnel-portal', 'tunnel-shell', 'deck-pylons', 'deck-abutment', 'deck-soffit', 'finish', 'shortcut', 'terrain-tile', 'water']
-  mergeStaticGroup(sliceComp, { keepNames: keep })
-  mergeStaticGroup(northCity, { keepNames: keep })
-  mergeStaticGroup(dressing, { keepNames: keep })
+  mergeStaticMeshes(vegetation, { keepNames: keep, cellSize: 48 })
+  mergeStaticMeshes(props, { keepNames: keep, cellSize: 48 })
+  mergeStaticMeshes(sliceComp, { keepNames: keep, cellSize: 48 })
+  mergeStaticMeshes(northCity, { keepNames: keep, cellSize: 60 })
+  mergeStaticMeshes(dressing, { keepNames: keep, cellSize: 48 })
+  const northCityShadow = createShadowStreamer(
+    northCity,
+    GRAPHICS.shadowCasterRadius,
+    GRAPHICS.shadowCasterHysteresis,
+  )
 
   return {
     group, spline, field, water,
     update(t: number, camPos: THREE.Vector3): void {
       animateWater(water, t, camPos)
+      northCityShadow(camPos)
     },
   }
 }

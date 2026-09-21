@@ -34,6 +34,8 @@ export const GRAPHICS = {
   shadowNearFar: [1, 420] as const,
   shadowBias: -0.00042,
   shadowNormalBias: 0.045,
+  shadowCasterRadius: 60,
+  shadowCasterHysteresis: 15,
   msaaSamples: 4,
 } as const
 
