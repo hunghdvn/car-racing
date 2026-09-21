@@ -39,8 +39,20 @@ const CHROME_ARGS = GPU
 let browser = null
 const results = []
 const rec = (item, pass, detail) => { results.push({ item, pass, detail }); console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${item} — ${detail}`) }
+const skip = (item, detail) => { console.log(`  SKIP  ${item} — ${detail}`) }
 try {
   browser = await chromium.launch({ headless: !GPU, args: CHROME_ARGS })
+  const cdpBrowser = await browser.newBrowserCDPSession()
+  const sysInfo = await cdpBrowser.send('SystemInfo.getInfo').catch(() => null)
+  const gpuDevice = sysInfo?.gpu?.devices?.[0]?.deviceString ?? null
+  const gpuBacked = Boolean(gpuDevice) && !/swiftshader|software rendering/i.test(gpuDevice)
+  if (GPU && !gpuBacked) {
+    console.error(`[functional] --gpu was requested but the renderer is '${gpuDevice ?? 'unknown'}'`)
+    await browser.close().catch(() => {})
+    prev.close()
+    process.exit(1)
+  }
+  if (!gpuBacked) console.log('[functional] SwiftShader detected — race-timing gates require --gpu and will be reported as SKIPPED')
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
   page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 300)))
   await page.goto(`${prev.url}/`, { waitUntil: 'load' })
@@ -102,7 +114,11 @@ try {
     if (phase === 'finished') break
   }
   rec('drive', sawMoving, sawMoving ? 'the autopilot drove the player car (speed exceeded 8 m/s)' : 'the player never gained speed')
-  rec('lap-completable', phase === 'finished', `race reached phase=${phase} via the real director`)
+  if (gpuBacked) {
+    rec('lap-completable', phase === 'finished', `race reached phase=${phase} via the real director`)
+  } else {
+    skip('lap-completable', 'wall-clock race completion requires a real GPU; run with --gpu')
+  }
 
   const rs = await page.evaluate(() => window.__raceState())
   const st = rs.standings || []
@@ -116,8 +132,13 @@ try {
   // being present AND classified finished (no DNF slips through the ordering check).
   const GRID = 6
   const allClassified = st.length === GRID && fin.length === GRID
-  rec('results-order', allClassified && positionsSane, `standings ranked 1..n, ${fin.length}/${st.length} classified finished (gate: ${GRID}/${GRID} expected)`)
-  rec('results-times', allClassified && monotonic, `finish times monotonic with position: ${JSON.stringify(times)}`)
+  if (gpuBacked) {
+    rec('results-order', allClassified && positionsSane, `standings ranked 1..n, ${fin.length}/${st.length} classified finished (gate: ${GRID}/${GRID} expected)`)
+    rec('results-times', allClassified && monotonic, `finish times monotonic with position: ${JSON.stringify(times)}`)
+  } else {
+    skip('results-order', 'full-grid classification depends on the GPU-backed race completing')
+    skip('results-times', 'finish times depend on the GPU-backed race completing')
+  }
 
   // a clean restart from the finished state
   const phaseR = await page.evaluate(() => { window.__AP = false; return window.__startRace() })
