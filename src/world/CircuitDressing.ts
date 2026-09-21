@@ -1,0 +1,628 @@
+import * as THREE from 'three'
+import { SEED, TRACK } from '../config'
+import { hash21, Rand } from '../util'
+import { composePrefab, createPrefabHeightReader, type PrefabId, type HeightReader } from './ComposeKit'
+import { buildBuilding, type BuildingDesignId } from './BuildingKit'
+import { makeGantryCrane, makeWaterTower, makeRadioMast, makeUtilityPole, makeMastLight, makeContainer, makeDrum, makePipeStack, makeTyreStack, makeVan, makeCones, makeSign, makeBillboard, makeBarrierUnit, makeBench, makeBollard } from './PropKit'
+import { rockGeometry, bushGeometry, pineGeometry, treeLOD, foliageVariants } from './VegetationKit'
+import type { TrackSpline } from './TrackSpline'
+import { spurNear } from '../vehicles/TrackProbe'
+
+/* ------------------------------------------------------------------------- *
+ * Circuit dressing (spec §8/§10, Phase 5C): authored content for the
+ * non-coastal zones so every section meets the slice's visual floor —
+ * focal landmarks, rhythm spacing, L/R variation, seeded within an authored
+ * envelope. Consumed once from buildTrackSlice; nothing here scatters noise.
+ * ------------------------------------------------------------------------- */
+
+export interface DressCtx {
+  spline: TrackSpline
+  field: HeightReader
+  rnd: Rand
+  g: THREE.Group
+}
+
+export function dressCircuit(spline: TrackSpline, field: HeightReader): THREE.Group {
+  const g = new THREE.Group()
+  g.name = 'circuit-dressing'
+  const ctx: DressCtx = { spline, field, rnd: new Rand(SEED ^ 0xd05e), g }
+  dressIndustrial(ctx)
+  dressRidge(ctx)
+  dressStartFinish(ctx)
+  return g
+}
+
+interface Placement { x: number; y: number; z: number; yaw: number }
+
+const PREFAB_PADS: Partial<Record<PrefabId, [number, number]>> = {
+  IndustrialCluster_Yard: [22, 12],
+  IndustrialCluster_Plant: [22, 12],
+}
+const prefabPadMat = new THREE.MeshStandardMaterial({ color: 0xb8a78e, roughness: 0.94, metalness: 0 })
+
+function placementPad(c: DressCtx, p: Placement, hx: number, hz: number): { mesh: THREE.Mesh; top: number } | null {
+  const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw)
+  let top = c.field.height(p.x, p.z)
+  for (const ux of [-1, -0.5, 0, 0.5, 1]) for (const uz of [-1, -0.5, 0, 0.5, 1]) {
+    const wx = p.x + cos * ux * hx + sin * uz * hz
+    const wz = p.z - sin * ux * hx + cos * uz * hz
+    top = Math.max(top, c.field.height(wx, wz))
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(hx * 2, 0.4, hz * 2), prefabPadMat)
+  mesh.receiveShadow = true
+  return { mesh, top: top + 0.02 }
+}
+
+function placement(c: DressCtx, s: number, lat: number, faceRoad: boolean, dy: number): Placement {
+  const f = c.spline.frame(s)
+  const x = f.pos.x + f.side.x * lat
+  const z = f.pos.z + f.side.z * lat
+  return { x, y: c.field.height(x, z) + dy, z, yaw: faceRoad ? f.yaw + (lat > 0 ? Math.PI / 2 : -Math.PI / 2) : 0 }
+}
+
+/** Place an object at (s, lat) on the formed ground, front facing the road
+ *  when alignRoad (same convention as the north-city run). */
+function put(c: DressCtx, o: THREE.Object3D, s: number, lat: number, faceRoad = true, dy = -0.05): THREE.Object3D {
+  const p = placement(c, s, lat, faceRoad, dy)
+  o.position.set(p.x, p.y, p.z)
+  if (faceRoad) o.rotation.y = p.yaw
+  c.g.add(o)
+  return o
+}
+
+/** Height of the formed ground relative to the root of a group about to be
+ *  planted at (s, lat). Children live in the group's local XZ, so they must
+ *  never sample the world field directly at local coordinates. */
+function localGround(c: DressCtx, s: number, lat: number, faceRoad = true, dy = -0.05): (x: number, z: number) => number {
+  const p = placement(c, s, lat, faceRoad, dy)
+  return createPrefabHeightReader(c.field, p, p.yaw)
+}
+
+function drop(c: DressCtx, id: PrefabId, s: number, lat: number, salt: number, scale = 1): void {
+  const p = placement(c, s, lat, true, -0.1)
+  const footprint = PREFAB_PADS[id]
+  const pad = footprint ? placementPad(c, p, footprint[0], footprint[1]) : null
+  const rootY = pad ? pad.top - 0.1 : p.y
+  const field = pad ? (): number => 0.1 : createPrefabHeightReader(c.field, { x: p.x, y: rootY, z: p.z }, p.yaw)
+  const pre = composePrefab(id, { seed: (SEED ^ ((salt * 0x77e1) >>> 0)) >>> 0, field })
+  put(c, pre, s, lat, true, -0.1)
+  if (scale !== 1) pre.scale.setScalar(scale)
+  if (pad) {
+    pad.mesh.position.y = (pad.top - rootY) / scale - 0.2
+    pre.add(pad.mesh)
+  }
+  if (intrudesShortcutSpur(pre)) c.g.remove(pre)
+}
+
+function intrudesShortcutSpur(root: THREE.Object3D): boolean {
+  const half = TRACK.shortcut.half
+  const laneWidth = half + 0.2
+  const box = new THREE.Box3()
+  const vertex = new THREE.Vector3()
+  let blocked = false
+  root.updateWorldMatrix(true, true)
+  root.traverse((o) => {
+    if (blocked || !o.visible || !(o as THREE.Mesh).isMesh) return
+    const mesh = o as THREE.Mesh
+    const geometry = mesh.geometry
+    if (!geometry) return
+    geometry.computeBoundingBox()
+    const bounds = geometry.boundingBox
+    if (!bounds) return
+    box.copy(bounds).applyMatrix4(mesh.matrixWorld)
+    const center = box.getCenter(new THREE.Vector3())
+    const radius = Math.hypot(box.max.x - box.min.x, box.max.z - box.min.z) / 2
+    const near = spurNear(center.x, center.z)
+    if (near === null || Math.abs(near.lat) - radius > laneWidth) return
+    const position = geometry.getAttribute('position')
+    if (!position) return
+    const stride = Math.max(1, Math.floor(position.count / 1024))
+    for (let i = 0; i < position.count; i += stride) {
+      vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld)
+      const lane = spurNear(vertex.x, vertex.z)
+      if (lane !== null && Math.abs(lane.lat) <= laneWidth && vertex.y >= lane.y - 0.1 && vertex.y <= lane.y + 1.5) {
+        blocked = true
+        return
+      }
+    }
+  })
+  return blocked
+}
+
+function clearOfShortcut(c: DressCtx, s: number, lat: number, pad: number): boolean {
+  const p = placement(c, s, lat, false, 0)
+  const near = spurNear(p.x, p.z)
+  return near === null || near.dist > pad
+}
+
+const YAWJ
+ = (rnd: Rand): number => rnd.range(-0.05, 0.05)
+
+/* ═════════════════════════════════ industrial ═══════════════════════════ */
+
+function dressIndustrial(c: DressCtx): void {
+  const { rnd } = c
+  const rng = c.spline.zoneRange('industrial')
+  /* The four authored pads get purpose-built yards (config §pads comments). */
+  const padAt = (cp: number): { s: number; lat: number } => ({ s: c.spline.sAtControl(cp), lat: (TRACK.pads.find((p) => p.cp === cp)?.lat ?? 30) })
+  // pad: container yard, works south — the crane wharf focal
+  {
+    const p = padAt(14)
+    const ground = localGround(c, p.s, p.lat, true, -0.08)
+    const wharf = new THREE.Group()
+    for (const [i, dx] of [[0, -14], [1, 10]] as const) {
+      const cr = makeGantryCrane(new Rand(SEED ^ (0xc0a7 + i)))
+      cr.position.set(dx, ground(dx, 0) - 0.1, 0)
+      cr.rotation.y = Math.PI / 2 + YAWJ(rnd)
+      wharf.add(cr)
+    }
+    for (let k = 0; k < 9; k++) {
+      const row = Math.floor(k / 3), col = k % 3
+      const tone = rnd.pick([0x2e6470, 0x8a5530, 0x42505c])
+      const seed = 21 + k
+      const stacked = k % 4 === 3
+      const cx = -6 + col * 6.6 + rnd.range(-0.25, 0.25), cz = -7 + row * 4.6 + rnd.range(-0.3, 0.3)
+      const ca = makeContainer(tone, seed)
+      ca.position.set(cx, ground(0, 0) + (stacked ? 2.7 : 0), cz)
+      ca.rotation.y = (row % 2 ? 1.57 : 0.04) + YAWJ(rnd)
+      wharf.add(ca)
+      if (stacked) {
+        const base = ca.clone()
+        base.position.set(cx, ground(0, 0), cz)
+        wharf.add(base)
+      }
+    }
+    for (const [dx, dz] of [[12, -8], [-16, -4]] as const) {
+      const p2 = makePipeStack(rnd)
+      p2.position.set(dx, ground(dx, dz), dz)
+      wharf.add(p2)
+    }
+    put(c, wharf, p.s, p.lat, true, -0.08)
+  }
+  // pad: warehouse apron east
+  {
+    const p = padAt(16)
+    const ground = localGround(c, p.s, p.lat, true, -0.06)
+    const grp = new THREE.Group()
+    for (const [i, dx] of [[0, -11], [1, 11]] as const) {
+      const w = buildBuilding('warehouse', new Rand(SEED ^ (0xd9a7 + i)), true)
+      w.position.set(dx, ground(dx, 4) - 0.05, 4)
+      w.rotation.y = Math.PI
+      grp.add(w)
+    }
+    const v = makeVan(rnd.pick([0x7a8288, 0x8a5530]), rnd)
+    v.position.set(-2, ground(-2, -4), -4)
+    v.rotation.y = 1.4 + YAWJ(rnd)
+    grp.add(v)
+    for (const [dx, dz] of [[6, -5], [16, -3]] as const) {
+      const cn = makeContainer(0x3a6f66, 40 + dx)
+      cn.position.set(dx, ground(dx, dz), dz)
+      cn.rotation.y = 0.1 + YAWJ(rnd)
+      grp.add(cn)
+    }
+    const ml = makeMastLight(rnd)
+    ml.position.set(-18, ground(-18, -2), -2)
+    grp.add(ml)
+    put(c, grp, p.s, p.lat, true, -0.06)
+  }
+  // pad: pipe/steel yard
+  {
+    const p = padAt(19)
+    const ground = localGround(c, p.s, p.lat, true, -0.06)
+    const grp = new THREE.Group()
+    for (let k = 0; k < 4; k++) {
+      const ps = makePipeStack(rnd)
+      ps.position.set(-10 + k * 7 + rnd.range(-0.6, 0.6), ground(0, 0), rnd.range(-5, 5))
+      ps.rotation.y = (k % 2 ? 1.57 : 0) + YAWJ(rnd)
+      grp.add(ps)
+    }
+    const ty = makeTyreStack(6, 0x2a2c30)
+    ty.position.set(13, ground(13, 4), 4)
+    grp.add(ty)
+    const bar = makeBarrierUnit(3)
+    bar.position.set(0, ground(0, -6), -6)
+    grp.add(bar)
+    put(c, grp, p.s, p.lat, true, -0.06)
+  }
+  // pad: plant apron below the bore — the REFINERY focal landmark
+  {
+    const p = padAt(21)
+    const ground = localGround(c, p.s, p.lat, true, -0.06)
+    const grp = new THREE.Group()
+    const fac = buildBuilding('factory', new Rand(SEED ^ 0xfa17), true)
+    fac.position.set(-6, ground(-6, 5) - 0.05, 5)
+    fac.rotation.y = Math.PI
+    grp.add(fac)
+    for (const [i, dx] of [[0, 9], [1, 14.5], [2, 4.2]] as const) {
+      const si = buildBuilding('silo', new Rand(SEED ^ (0x5110 + i)), true)
+      si.position.set(dx, ground(dx, 6) - 0.05, 6 + (i === 2 ? -3 : 0))
+      grp.add(si)
+    }
+    // twin flare stacks with a pipe-bridge to the plant
+    const S = new THREE.MeshStandardMaterial({ color: 0x9a958c, roughness: 0.75, metalness: 0.15 })
+    for (const [dx, h] of [[22, 21], [25.5, 16.5]] as const) {
+      const st = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.8, h, 10), S)
+      st.position.set(dx, ground(dx, 2) + h / 2 - 0.1, 2)
+      st.castShadow = true
+      grp.add(st)
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.1, 10), new THREE.MeshStandardMaterial({ color: 0xb0342a, roughness: 0.6 }))
+      band.position.set(dx, ground(dx, 2) + h - 1.4, 2)
+      grp.add(band)
+    }
+    const wt = makeWaterTower()
+    wt.position.set(-16, ground(-16, -2) - 0.1, -2)
+    grp.add(wt)
+    const rm = makeRadioMast(24)
+    rm.position.set(30, ground(30, -3) - 0.1, -3)
+    grp.add(rm)
+    const sg = makeSign('tyres', 2.6, 0.95)
+    sg.position.set(-20, ground(-20, -7), -7)
+    grp.add(sg)
+    put(c, grp, p.s, p.lat, true, -0.06)
+  }
+
+  /* Rhythm run between the pads: cluster prefabs, alternating sides, the
+   * RHYTHM-derived gaps keep it tight→loose, never a picket fence. */
+  const ids: PrefabId[] = ['IndustrialCluster_Yard', 'IndustrialCluster_Plant']
+  let side = rnd.chance(0.5) ? 1 : -1
+  for (let s = rng.s0 + 30, i = 0; s < rng.s1 - 26; i++) {
+    const step = 62 + rnd.range(-6, 10) + (i % 4 === 3 ? 26 : 0)
+    s += step
+    if (s >= rng.s1 - 26) break
+    drop(c, ids[i % 2], s, side * rnd.range(24, 38), i * 3 + 1)
+    side = -side
+  }
+  // roadside filler: container pairs and drum groups at the near verge,
+  // staggered sides so neither verge reads as a straight line of copies
+  side = 1
+  for (let s = rng.s0 + 18; s < rng.s1 - 14; s += rnd.range(44, 58)) {
+    const sideSeed = Math.round(s * 100) + (side > 0 ? 1 : 99991)
+    const lat = side * (11.5 + hash21(sideSeed, 17) * 2)
+    const grp = new THREE.Group()
+    const ground = localGround(c, s, lat, true, -0.04)
+    const n = rnd.int(1, 2)
+    for (let k = 0; k <= n; k++) {
+      const tone = rnd.pick([0x2e6470, 0x8a5530, 0x3a6f66])
+      const seed = Math.floor(s * 7 + k)
+      const stacked = rnd.chance(0.4)
+      const cx = k * 6.7, cz = rnd.range(-1.2, 1.2)
+      const ca = makeContainer(tone, seed)
+      ca.position.set(cx, ground(0, 0) + (stacked ? 2.65 : 0), cz)
+      ca.rotation.y = 0.06 + YAWJ(rnd)
+      grp.add(ca)
+      if (stacked) {
+        const base = ca.clone()
+        base.position.set(cx, ground(0, 0), cz)
+        grp.add(base)
+      }
+    }
+    if (rnd.chance(0.6)) {
+      const dm = makeDrum(rnd.pick([0xb2592b, 0x3f5a46]), rnd.chance(0.3))
+      dm.position.set(-5, ground(0, 0), 1.5)
+      grp.add(dm)
+    }
+    put(c, grp, s, lat, true, -0.04)
+    side = -side
+  }
+  // utility-pole runs follow the road like service infrastructure would —
+  // clamped short of the tunnel-apron carve: embedWeight pulls the corridor
+  // floor down through the apron fade window, and a pole seated out there
+  // stands over the cut void = floating furniture against open sky
+  const tz = c.spline.zoneRange('tunnel')
+  const poleStop = Math.min(rng.s1 - 8, tz.s0 - (TRACK.tunnel.apron + 16))
+  for (const sgn of [1, -1] as const) {
+    for (let s = rng.s0 + 10; s < poleStop; s += rnd.range(26, 34)) {
+      const up = makeUtilityPole(rnd)
+      put(c, up, s, sgn * rnd.range(9.4, 10.4), false).rotation.y = c.spline.frame(s).yaw + Math.PI / 2
+    }
+  }
+}
+
+/* ═════════════════════════════════ ridge (final sector) ═════════════════ */
+
+/** Instanced scatter that FOLLOWS the formed ground (rock/shrub treatment). */
+function scatter(c: DressCtx, mkGeo: (r: Rand) => THREE.BufferGeometry, seeds: number[], rng0: { s0: number; s1: number }, latMin: number, latMax: number, scMin: number, scMax: number, count: number, mat: THREE.Material, bothSides: boolean): void {
+  const { rnd } = c
+  const geos = seeds.map((sd) => mkGeo(new Rand(SEED ^ sd)))
+  const buckets: THREE.Matrix4[][] = geos.map(() => [])
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3()
+  let placed = 0, guard = 0
+  while (placed < count && guard++ < count * 6) {
+    const s = rnd.range(rng0.s0 + 6, rng0.s1 - 6)
+    const lat = (bothSides && rnd.chance(0.5) ? -1 : 1) * rnd.range(latMin, latMax)
+    const f = c.spline.frame(s)
+    const x = f.pos.x + f.side.x * lat, z = f.pos.z + f.side.z * lat
+    const y = c.field.height(x, z)
+    if (y < c.field.seaLevel - 0.5) continue
+    const k = rnd.int(0, geos.length - 1)
+    const scl = rnd.range(scMin, scMax)
+    e.set(rnd.range(-0.14, 0.14), rnd.next() * Math.PI * 2, rnd.range(-0.14, 0.14))
+    q.setFromEuler(e)
+    m4.compose(v.set(x, y - 0.07, z), q, sc.setScalar(scl))
+    buckets[k].push(m4.clone())
+    placed++
+  }
+  geos.forEach((geo, k) => {
+    if (!buckets[k].length) return
+    const im = new THREE.InstancedMesh(geo, mat, buckets[k].length)
+    buckets[k].forEach((m, j) => im.setMatrixAt(j, m))
+    im.instanceMatrix.needsUpdate = true
+    im.castShadow = true
+    im.name = 'ridge-scatter'
+    c.g.add(im)
+  })
+}
+
+function dressRidge(c: DressCtx): void {
+  const { rnd } = c
+  const rng = c.spline.zoneRange('final')
+  const fol = foliageVariants()
+  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 })
+  // scree: boulders half-sunk into the ridge flanks, both verges
+  scatter(c, (r) => rockGeometry(r, 7), [11, 23, 37], rng, 10, 52, 0.6, 2.4, 132, rockMat, true)
+  // shrub drifts hugging the same flanks (denser than the boulders)
+  const bushMat = fol[0]
+  scatter(c, (r) => bushGeometry(r), [51, 63], rng, 9.5, 44, 0.5, 1.35, 210, bushMat, true)
+  // a few conifers on the crest so the ridge line is not bare silhouette
+  const folB = fol[1]
+  for (let i = 0; i < 26; i++) {
+    const s = rnd.range(rng.s0 + 10, rng.s1 - 10)
+    const lat = (rnd.chance(0.5) ? -1 : 1) * rnd.range(14, 52)
+    const f = c.spline.frame(s)
+    const x = f.pos.x + f.side.x * lat, z = f.pos.z + f.side.z * lat
+    const y = c.field.height(x, z)
+    if (y < c.field.seaLevel) continue
+    const t = treeLOD(pineGeometry(rnd, 1), pineGeometry(rnd, 0), folB)
+    t.position.set(x, y - 0.08, z)
+    t.scale.setScalar(rnd.range(0.8, 1.35))
+    t.rotation.y = rnd.next() * 6.28
+    t.castShadow = true
+    c.g.add(t)
+  }
+  // ridge overlook terrace (authored pad cp41): rail + bench + signage, rocks ringed
+  {
+    const s = c.spline.sAtControl(41)
+    const ground = localGround(c, s, 36, true, -0.05)
+    const grp = new THREE.Group()
+    for (let k = 0; k < 5; k++) {
+      const bar = makeBarrierUnit(3)
+      bar.position.set(-7 + k * 3.4, ground(0, 0), -4)
+      grp.add(bar)
+    }
+    const b1 = makeBench()
+    b1.position.set(-2, ground(0, 0), 1.5)
+    b1.rotation.y = 0.05
+    grp.add(b1)
+    const bb = makeBillboard('harbour')
+    bb.position.set(9, ground(0, 0), 0)
+    bb.rotation.y = Math.PI / 2 + 0.1
+    grp.add(bb)
+    for (let k = 0; k < 5; k++) {
+      const rk = new THREE.Mesh(rockGeometry(new Rand(SEED ^ (81 + k)), k), rockMat)
+      rk.position.set(rnd.range(-12, 12), ground(0, 0) - 0.08, rnd.range(3, 8))
+      rk.scale.setScalar(rnd.range(0.6, 1.4))
+      rk.rotation.y = rnd.next() * 6.28
+      rk.castShadow = true
+      grp.add(rk)
+    }
+    put(c, grp, s, 36, true, -0.05)
+  }
+  // quarry yard on the valley bench (authored pad cp44): plant + stock + cones
+  {
+    const s = c.spline.sAtControl(44)
+    const ground = localGround(c, s, -30, true, -0.06)
+    const grp = new THREE.Group()
+    const fa = buildBuilding('factory', new Rand(SEED ^ 0xfa44), true)
+    fa.position.set(0, ground(0, 5) - 0.05, 5)
+    grp.add(fa)
+    const si = buildBuilding('silo', new Rand(SEED ^ 0x5144), true)
+    si.position.set(-12, ground(-12, 0) - 0.05, 0)
+    grp.add(si)
+    const ps = makePipeStack(rnd)
+    ps.position.set(10, ground(10, -3), -3)
+    grp.add(ps)
+    const cn = makeContainer(0x8a5530, 77)
+    cn.position.set(16, ground(16, 2), 2)
+    grp.add(cn)
+    const co = makeCones(rnd)
+    co.position.set(5, ground(5, -5), -5)
+    grp.add(co)
+    put(c, grp, s, -30, true, -0.06)
+  }
+  /* Elevated approaches: the two deck ends land on embankments — dress their
+   * verges with the same rock/shrub language so they do not read as flat. */
+  const ez = c.spline.zoneRange('elevated')
+  for (const [a, b] of [[ez.s0 - 10, ez.s0 + 118], [ez.s1 - 118, ez.s1 + 10]] as const) {
+    const win = { s0: a, s1: b }
+    scatter(c, (r) => rockGeometry(r, 5), [91, 103], win, 10.5, 34, 0.55, 1.7, 26, rockMat, true)
+    scatter(c, (r) => bushGeometry(r), [113, 127], win, 10, 28, 0.5, 1.2, 44, fol[0], true)
+  }
+}
+
+/* ═════════════════════════════════ start / finish ═══════════════════════ */
+
+function dressStartFinish(c: DressCtx): void {
+  const { rnd } = c
+  /* Grandstand + pit frontage on the pit/grandstand apron (authored pad
+   * cp57, lat −26): stepped deck facing the racing line. */
+  {
+    const s = c.spline.sAtControl(57)
+    const ground = localGround(c, s, -26, true, 0)
+    const grp = new THREE.Group()
+    const conc = new THREE.MeshStandardMaterial({ color: 0xa9a49a, roughness: 0.88 })
+    const ink = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.7 })
+    for (let t = 0; t < 6; t++) {
+      const tier = new THREE.Mesh(new THREE.BoxGeometry(34, 1.05, 1.7), conc)
+      tier.position.set(0, 0.52 + t * 1.05, t * 1.7)
+      tier.castShadow = true
+      tier.receiveShadow = true
+      grp.add(tier)
+    }
+    const back = new THREE.Mesh(new THREE.BoxGeometry(34, 7.2, 0.6), ink)
+    back.position.set(0, 3.4, 6 * 1.7 + 0.5)
+    back.castShadow = true
+    grp.add(back)
+    // canopy on four columns + a sponsor fascia board
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(35, 0.35, 9), ink)
+    roof.position.set(0, 7.9, 4.4)
+    roof.castShadow = true
+    grp.add(roof)
+    for (const dx of [-15, -5, 5, 15]) {
+      const col = new THREE.Mesh(new THREE.BoxGeometry(0.4, 7.7, 0.4), conc)
+      col.position.set(dx, 3.85, -1.2)
+      col.castShadow = true
+      grp.add(col)
+    }
+    const fas = makeBillboard('octane')
+    fas.position.set(0, 8.4, 0.8)
+    grp.add(fas)
+    // pit building: low long bay with control-box above, between track and stand
+    const pit = buildBuilding('civic', new Rand(SEED ^ 0xc17), true)
+    pit.scale.set(1.6, 0.72, 0.9)
+    pit.position.set(0, ground(0, -14) - 0.05, -14)
+    pit.rotation.y = Math.PI
+    grp.add(pit)
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(3.4, 4.4, 2.6), ink)
+    tower.position.set(13, ground(0, -13) + 4.2, -13)
+    tower.castShadow = true
+    grp.add(tower)
+    for (const dx of [-8, 0, 8]) {
+      const ml = makeMastLight(rnd)
+      ml.position.set(dx, ground(dx, -7), -7)
+      grp.add(ml)
+    }
+    put(c, grp, s, -26, true, 0)
+  }
+  /* Team-caravan apron (authored pad cp52): vans, banners, cones, seating */
+  {
+    const s = c.spline.sAtControl(52)
+    const ground = localGround(c, s, -28, true, -0.05)
+    const grp = new THREE.Group()
+    for (let k = 0; k < 3; k++) {
+      const v = makeVan(rnd.pick([0x7a8288, 0x4f6a7d, 0xb4ab9b]), rnd)
+      v.position.set(-9 + k * 9, ground(0, 0), 2 + (k % 2) * 3.2)
+      v.rotation.y = 1.55 + YAWJ(rnd)
+      grp.add(v)
+    }
+    for (const dx of [-14, 14]) {
+      const bb = makeBillboard(rnd.pick(['rush', 'tyreking']))
+      bb.position.set(dx, ground(0, -3), -3)
+      bb.rotation.y = Math.PI / 2 + 0.08
+      grp.add(bb)
+    }
+    const co = makeCones(rnd)
+    co.position.set(0, ground(0, -4), -4)
+    grp.add(co)
+    for (const dx of [-4, 4]) {
+      const bn = makeBench()
+      bn.position.set(dx, ground(0, 5), 5)
+      bn.rotation.y = Math.PI
+      grp.add(bn)
+    }
+    put(c, grp, s, -28, true, -0.05)
+  }
+  /* City frontage along the back straight (section_city's empty verges):
+   * staggered blocks both sides at a rhythm pitch + mast-light runs. */
+  for (const sgn of [1, -1] as const) {
+    let s = 2640, i = 0
+    while (s < 2952) {
+      const baseLat = sgn * rnd.range(58, 70)
+      const frontages = [baseLat, sgn * rnd.range(73, 84), sgn * rnd.range(87, 98)]
+      const lat = frontages.find((candidate) => clearOfShortcut(c, s, candidate, 16))
+      if (lat !== undefined) {
+        drop(c, i % 2 ? 'CityBlock_Street' : 'CityBlock_Corner', s, lat, 500 + i * 7 + (sgn > 0 ? 0 : 3))
+      }
+      s += 64 + rnd.range(-8, 14) + (i % 3 === 2 ? 22 : 0)
+      i++
+    }
+    for (let m = 2648; m < 2950; m += rnd.range(19, 25)) {
+      const ml = makeMastLight(rnd)
+      put(c, ml, m, sgn * rnd.range(9.6, 10.8), false).rotation.y = c.spline.frame(m).yaw + Math.PI / 2
+    }
+  }
+  /* Finishing-straight infield (s≈3050-3126 — section_finish's left third was
+   * a bare apron carried only by the gantry): three depth layers between the
+   * pit lane and the far skyline — pit/garage frontage, a hospitality row with
+   * a marquee focal, and a mid-rise sponsor-wall back. Starts clear of the
+   * shortcut's re-entry corridor (spur mouth at s≈3018). */
+  {
+    const TEAM = [0xb0182a, 0x1f4a8a, 0xd4a017, 0x2f7a46] as const
+    const steel = new THREE.MeshStandardMaterial({ color: 0x707880, metalness: 0.7, roughness: 0.5 })
+    const bay = (id: BuildingDesignId, s: number, lat: number, sy: number, sxz: number, salt: number): void => {
+      const b = buildBuilding(id, new Rand(SEED ^ salt), true)
+      b.scale.set(sxz, sy, sxz)
+      put(c, b, s, lat, true)
+    }
+    // near layer: pit/garage frontage on the apron behind the pit lane —
+    // low bays with tyre stacks, cones and bollards as lane-side detail
+    for (let s = 3074, k = 0; s < 3122; s += rnd.range(24, 30), k++) {
+      bay(k % 2 ? 'civic' : 'retail', s, -18.8 + rnd.range(-0.8, 0.8), 0.52, 0.78, 0x9a1 + k)
+      if (k % 2 === 0) put(c, makeTyreStack(rnd.int(3, 5)), s + 5.5, -11.3, false)
+      put(c, makeCones(rnd), s - 6.5, -11.6, false)
+      if (rnd.chance(0.55)) put(c, makeBollard(rnd.pick([0xd8d3c6, 0xb9b2a4])), s + 1.5, -10.9, false)
+    }
+    for (const [bs, bk] of [[3072, 'octane'], [3120, 'rush']] as const) put(c, makeBillboard(bk), bs, -14.6, true)
+    // middle layer: hospitality row — blocks, team motorhomes, bench frontage,
+    // the marquee focal opposite the gantry, gate signage at the row heads
+    for (let s = 3070; s < 3120; s += rnd.range(32, 44)) {
+      drop(c, rnd.chance(0.5) ? 'CityBlock_Street' : 'CityBlock_Corner', s, -24 + rnd.range(-2, 2.5), 700 + Math.round(s))
+    }
+    {
+      const grp = new THREE.Group()
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.3, 7.0), new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.62 }))
+      canopy.position.y = 3.9
+      grp.add(canopy)
+      for (const [px, pz] of [[-3.9, -3.0], [3.9, -3.0], [-3.9, 3.0], [3.9, 3.0]] as const) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.34, 3.9, 0.34), steel)
+        post.position.set(px, 1.95, pz)
+        grp.add(post)
+      }
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.6, 0.16), new THREE.MeshStandardMaterial({ color: TEAM[1], roughness: 0.7 }))
+      skirt.position.set(0, 4.1, -3.4)
+      grp.add(skirt)
+      for (const dx of [-5.9, 5.9]) {
+        const v = makeVan(rnd.pick([0x7a8288, 0x4f6a7d, 0xb4ab9b]), rnd)
+        v.position.set(dx, 0, 2.0)
+        v.rotation.y = 1.57 + YAWJ(rnd)
+        grp.add(v)
+      }
+      put(c, grp, 3116, -23.5, false, -0.06)
+    }
+    for (let s = 3074; s < 3116; s += rnd.range(15, 21)) put(c, makeBench(), s, -18.2, true)
+    put(c, makeSign('cafe', 2.2, 1.1), 3078, -16.8, true, 0)
+    put(c, makeSign('store', 2.0, 1.0), 3106, -16.8, true, 0)
+    // far layer: mid-rise sponsor-wall back with focal silhouettes and the
+    // infield flood rhythm; flagpoles bridge near and middle layers
+    for (let s = 3068, k = 0; s < 3126; s += rnd.range(38, 52), k++) {
+      bay(k % 2 ? 'apartment' : 'office', s, -35 + rnd.range(-3.5, 3.5), rnd.range(0.85, 1.15), 1.05, 0x9b7 + k)
+    }
+    put(c, makeWaterTower(), 3116, -42, false)
+    put(c, makeRadioMast(18), 3068, -44, false)
+    for (let m = 3070; m < 3122; m += rnd.range(22, 28)) {
+      put(c, makeMastLight(rnd), m, -28.5, false).rotation.y = c.spline.frame(m).yaw + Math.PI / 2
+    }
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0xd8d3c6, roughness: 0.6 })
+    const flagMats = TEAM.map((t) => new THREE.MeshStandardMaterial({ color: t, roughness: 0.72, side: THREE.DoubleSide }))
+    for (let f = 3078, k = 0; f < 3126; f += 10.5, k++) {
+      const pole = new THREE.Group()
+      const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 8.6, 0.12), poleMat)
+      shaft.position.y = 4.3
+      const flag = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.95, 0.06), flagMats[k % 4])
+      flag.position.set(0.8, 7.6, 0)
+      flag.rotation.z = -0.12
+      pole.add(shaft, flag)
+      put(c, pole, f, -16.2, false)
+    }
+  }
+  // right-hand (mountain-side) balance + entry-gate signage at the straight's head
+  drop(c, 'CityBlock_Corner', 3044, 27, 611)
+  drop(c, 'CityBlock_Street', 3102, 33, 612, 0.8)
+  // entry-gate signage at the straight's head
+  const s2 = makeSign('shortcut', 2.6, 1.3)
+  put(c, s2, 3018, -9.2, true, 0)
+  const s3 = makeSign('speed', 1.3, 1.3, false)
+  put(c, s3, 2632, 9.2, true, 0)
+
+}
+
+

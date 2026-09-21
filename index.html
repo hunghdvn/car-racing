@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#05070d" />
+    <title>Velocity Rush — Arcade 3D Racing</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene" aria-label="Velocity Rush 3D scene"></canvas>
+
+      <!-- ======================= HUD ======================= -->
+      <div id="hud" class="hidden">
+        <div id="hud-topleft">
+          <div id="position-panel">
+            <span id="position-value">1</span><span id="position-total">/6</span>
+            <span id="position-label">POSITION</span>
+          </div>
+          <div id="lap-panel">
+            <div id="lap-time">0:00.00</div>
+            <div id="best-time">BEST —</div>
+          </div>
+        </div>
+
+        <div id="hud-topright">
+          <div id="progress-wrap">
+            <svg id="progress-ring" viewBox="0 0 120 120">
+              <circle id="progress-bg" cx="60" cy="60" r="52" />
+              <circle id="progress-fg" cx="60" cy="60" r="52" />
+            </svg>
+            <div id="progress-pct">0%</div>
+            <div id="progress-label">LAP 1/1</div>
+          </div>
+          <div id="minimap-wrap"><canvas id="minimap" width="168" height="168"></canvas></div>
+        </div>
+
+        <div id="hud-bottomright">
+          <div id="speed-wrap">
+            <div id="speed-value">0</div>
+            <div id="speed-unit">KM/H</div>
+          </div>
+          <div id="rpm-bar"><div id="rpm-fill"></div></div>
+        </div>
+
+        <div id="hud-bottomleft">
+          <div id="nitro-label">NITRO</div>
+          <div id="nitro-segments"></div>
+          <div id="gear-indicator">D</div>
+        </div>
+
+        <div id="popup-stack"></div>
+        <div id="wrong-way" class="hidden">WRONG WAY</div>
+        <div id="drift-score" class="hidden">DRIFT <span id="drift-points">0</span><span id="drift-mult">x1</span></div>
+      </div>
+
+      <!-- ==================== COUNTDOWN ==================== -->
+      <div id="countdown" class="hidden"><div id="countdown-num">3</div></div>
+      <div id="flash"></div>
+      <div id="vignette-nitro"></div>
+
+      <!-- ==================== LOADING ==================== -->
+      <div id="loading">
+        <div id="loading-logo">VELOCITY<span>RUSH</span></div>
+        <div id="loading-sub">Building the world...</div>
+        <div id="loading-bar"><div id="loading-fill"></div></div>
+        <div id="loading-step">Booting renderer</div>
+        <div id="loading-tip">Hold DRIFT and steer against the corner to chain longer drifts for faster Nitro.</div>
+      </div>
+
+      <!-- ==================== TITLE ==================== -->
+      <div id="title-screen" class="hidden">
+        <div id="title-logo">VELOCITY<span>RUSH</span></div>
+        <div id="title-tag">COAST CIRCUIT • SINGLE LAP TIME TRIAL VS 5 RIVALS</div>
+        <button id="btn-start" class="btn-primary">START RACE</button>
+        <div id="car-picker">
+          <div id="car-picker-label">PAINT</div>
+          <div id="paint-swatches"></div>
+        </div>
+        <div id="title-controls">
+          <span><b>W/↑</b> Gas</span><span><b>S/↓</b> Brake</span><span><b>A D / ← →</b> Steer</span>
+          <span><b>Space</b> Drift</span><span><b>Shift</b> Nitro</span><span><b>R</b> Respown</span><span><b>P</b> Pause</span>
+        </div>
+        <div id="title-credit">Original asset • Real-time 3D WebGL • 60 FPS target</div>
+      </div>
+
+      <!-- ==================== RESULTS ==================== -->
+      <div id="results-screen" class="hidden">
+        <div id="results-panel">
+          <div id="results-title">FINISH</div>
+          <div id="results-position-wrap">
+            <div id="results-medal">1ST</div>
+            <div id="results-time-wrap">
+              <div id="results-time">0:00.00</div>
+              <div id="results-time-label">RACE TIME</div>
+            </div>
+          </div>
+          <div id="results-standings"></div>
+          <div id="results-buttons">
+            <button id="btn-restart" class="btn-primary">RESTART <span class="hint">Enter</span></button>
+            <button id="btn-menu" class="btn-secondary">MAIN MENU</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== PAUSE ==================== -->
+      <div id="pause-screen" class="hidden">
+        <div id="pause-panel">
+          <div id="pause-title">PAUSED</div>
+          <button id="btn-resume" class="btn-primary">RESUME</button>
+          <button id="btn-restart-pause" class="btn-secondary">RESTART RACE</button>
+          <button id="btn-menu-pause" class="btn-secondary">MAIN MENU</button>
+        </div>
+      </div>
+
+      <!-- ==================== ERRORS ==================== -->
+      <div id="error-screen" class="hidden">
+        <div id="error-panel">
+          <div id="error-title">RUNTIME ERROR</div>
+          <pre id="error-body"></pre>
+          <button id="btn-reload" class="btn-primary">RELOAD</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
