@@ -1,7 +1,24 @@
 node_modules/
 dist/
 build/
-shots/
+# Visual acceptance battery (§22) and reproducible Gate-P evidence are tracked;
+# ad-hoc debug captures and transient probe output stay local.
+shots/*
+!shots/car_*.png
+!shots/state_*.png
+!shots/grid.png
+!shots/slice.png
+!shots/coast_dunes.png
+!shots/section_*.png
+!shots/tunnel_contrast.png
+!shots/deck_structure.png
+!shots/finish_line.png
+!shots/kit_*.png
+!shots/materials_matrix.png
+!shots/perf_gate-*.json
+!shots/perf_low-*.json
+!shots/perf_tiers-*.json
+!shots/perf_review-*.json
 *.log
 .DS_Store
 .vite/
