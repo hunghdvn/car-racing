@@ -1,12 +1,54 @@
+import { BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, Vector3 } from 'three'
 import { TRACK, VEHICLE } from '../../src/config'
 import { assert, assertNear, assertFinite, test } from '../harness'
 import { cornerTarget, laneSteer, flatCar, rig, SIM_DT } from '../rig'
 import { PlayerVehicle } from '../../src/vehicles/PlayerVehicle'
-import { rampSlopeAt } from '../../src/world/RoadBuilder'
+import { markingSurfaceLift, rampSlopeAt } from '../../src/world/RoadBuilder'
+import { createPrefabHeightReader, type HeightReader } from '../../src/world/ComposeKit'
+import { forceUpWinding, sanitizeGeometry } from '../../src/util'
 import type { InputState } from '../../src/core/Input'
 
 /* Scenarios on the REAL corridor: geometric ramp launches, barrier clamp,
  * OBB obstacles, water/out-of-bounds respawn. */
+
+test('markings: painted road lines ride the kicker lift instead of sinking into its slab', () => {
+  const surfaceOffset = 0.014
+  const outside = markingSurfaceLift(TRACK.ramp.sStart - 20, surfaceOffset)
+  const onRamp = markingSurfaceLift((TRACK.ramp.sStart + TRACK.ramp.sLip) / 2, surfaceOffset)
+  assertNear(outside, surfaceOffset, 1e-9, 'markings outside the kicker stay on the base road surface')
+  assert(onRamp > surfaceOffset + 0.4, `markings on the kicker slab are raised above it (${onRamp.toFixed(3)})`)
+})
+
+test('prefab placement: children sample ground relative to their placed root', () => {
+  const field: HeightReader = {
+    height: (x, z) => 1 + 3 * Math.abs(x) + 4 * Math.abs(z),
+    natural: (x, z) => -1 + 3 * Math.abs(x) + 4 * Math.abs(z),
+    seaLevel: -100,
+  }
+  const rootGround = field.height(10, 30)
+  const reader = createPrefabHeightReader(field, { x: 10, y: rootGround, z: 30 }, 0)
+  const embedded = createPrefabHeightReader(field, { x: 10, y: rootGround + 0.2, z: 30 }, 0)
+  assertNear(reader(0, 0), 0, 1e-9, 'the root of a planted prefab is its own ground reference')
+  assertNear(embedded(0, 0), 0, 1e-9, 'terrain below the planted root is treated as flush, never a negative foundation')
+  assertNear(reader(1, 0), 3, 1e-9, 'local +x must advance along the unrotated world +x axis')
+  assertNear(reader(0, 1), 4, 1e-9, 'local +z must advance along the unrotated world +z axis')
+  const rotated = createPrefabHeightReader(field, { x: 0, y: 1, z: 0 }, -Math.PI / 2)
+  assertNear(rotated(1, 0), 4, 1e-8, 'yawed prefabs must sample terrain through their local XZ axes')
+  assertNear(rotated(0, 1), 3, 1e-8, 'yawed prefabs must not confuse local x with local z')
+})
+
+test('winding: forceUpWinding re-orients the normals of a down-facing road ribbon', () => {
+  const geo = new BufferGeometry()
+  geo.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1], 3))
+  geo.setIndex(new Uint32BufferAttribute([0, 1, 3, 0, 3, 2], 1))
+  sanitizeGeometry(geo)
+  forceUpWinding(geo, new Vector3(0, 1, 0))
+  const normal = geo.getAttribute('normal')
+  assert(normal !== null, 'the sanitised ribbon carries vertex normals')
+  let maxY = -Infinity
+for (let i = 0; i < normal.count; i++) maxY = Math.max(maxY, normal.getY(i))
+  assert(maxY > 0.9, `a flipped-up ribbon must expose an upward vertex normal (${maxY.toFixed(3)})`)
+})
 
 test('ramp: the built kicker launches the car geometrically; landing settles on suspension', () => {
   const r = rig()
@@ -70,6 +112,26 @@ test('barrier: the guard window clamps and bounces the corridor side', () => {
   assert(restLat <= lim + 0.02, `resting position never rests beyond the line (${restLat.toFixed(3)} ≤ ${lim.toFixed(2)})`)
   assert(pv.phys.speed < 22, `contact scrubbed speed (${pv.phys.speed.toFixed(1)} m/s)`)
   assertFinite(pv.phys.speed, 'speed finite after contact')
+})
+
+test('barrier: a car pinned to the guardrail scrubs its along-wall speed without driver input', () => {
+  const { pv, probe } = flatCar()
+  probe.wall = 10
+  const lim = probe.wall - VEHICLE.vehicleHalf
+  // Press the car against the rail while its velocity is already aligned with it.
+  // With no throttle/brake, only the wall's tangential contact friction should remove the slide.
+  pv.phys.resetAt(lim + 0.05, 0, 0, 20)
+  const input: InputState = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false }
+  let t = 0
+  let pinned = true
+  while (t < 2) {
+    pv.update(SIM_DT, input)
+    if (Math.abs(probe.corridor(pv.phys.x, pv.phys.z).lat) <= lim - 0.02) pinned = false
+    t += SIM_DT
+  }
+  assert(pinned, 'the car stayed pressed against the guardrail throughout the test')
+  assert(pv.phys.speed < 10, `wall contact removed the along-wall slide (${pv.phys.speed.toFixed(1)} m/s after 2 s)`)
+  assertFinite(pv.phys.speed, 'speed finite after sustained guardrail contact')
 })
 
 test('ramp slope is single-source: launch vy comes from rampSlopeAt at the lip probe', () => {
@@ -232,4 +294,45 @@ test('cornerTarget: curvature speed cap keeps the pilot inside the grip circle',
     }
   }
   assert(worst < 0.95, `peak cornering demand ${worst.toFixed(2)} of max grip — pilot is feasible`)
+})
+
+test('tunnel: the engineered bore stays carved through the portal-apron approach', () => {
+  const r = rig()
+  const tz = r.spline.zoneRange('tunnel')
+  for (let s = tz.s0 + 4; s <= tz.s0 + 28; s += 4) {
+    for (const lat of [-3, 0, 3]) {
+      const f = r.spline.frame(s)
+      const x = f.pos.x + f.side.x * lat
+      const z = f.pos.z + f.side.z * lat
+      const h = r.field.height(x, z)
+      const bed = r.spline.bedY(s, lat)
+      assert(h < bed + 0.25, `tunnel ridge fills the bore at s=${s.toFixed(1)} lat=${lat}: terrain ${h.toFixed(2)} vs bed ${bed.toFixed(2)}`)
+    }
+  }
+})
+
+test('spline: nearest reports the same driver-right lat sign as the road frame', () => {
+  const { spline } = rig()
+  for (const s of [150, 500, 1005, 2694, 3088]) {
+    const f = spline.frame(s)
+    const right = spline.nearest(f.pos.x + f.side.x * 3, f.pos.z + f.side.z * 3)
+    const left = spline.nearest(f.pos.x - f.side.x * 3, f.pos.z - f.side.z * 3)
+    assert(right.lat > 2.5, `driver-right probe at s=${s} must read +lat (${right.lat.toFixed(2)})`)
+    assert(left.lat < -2.5, `driver-left probe at s=${s} must read -lat (${left.lat.toFixed(2)})`)
+  }
+})
+
+test('pads: authored build-site pads cannot carpet the drivable asphalt lane', () => {
+  const r = rig()
+  for (const s of [2694, 3066]) {
+    const roadY = r.spline.roadY(s)
+    for (const lat of [-TRACK.halfWidth + 0.5, -3, -1.5, 0, 1.5, 3, TRACK.halfWidth - 0.5]) {
+      const f = r.spline.frame(s)
+      const x = f.pos.x + f.side.x * lat
+      const z = f.pos.z + f.side.z * lat
+      const h = r.field.height(x, z)
+      const surface = r.spline.surfaceY(s, lat)
+      assert(h < surface - 0.015, `a pad lifts the road-bed at s=${s.toFixed(1)} lat=${lat.toFixed(2)}: terrain ${h.toFixed(3)} vs surface ${surface.toFixed(3)}`)
+    }
+  }
 })

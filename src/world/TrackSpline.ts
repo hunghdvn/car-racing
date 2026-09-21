@@ -225,7 +225,7 @@ export class TrackSpline {
     // (nearest() runs once per height-field vertex and per shore-bake texel)
     const row = this.lut[bi]
     const tl = Math.hypot(row.tx, row.tz) || 1
-    const lat = (x - row.x) * (row.tz / tl) + (z - row.z) * (-row.tx / tl)
+    const lat = (x - row.x) * (-row.tz / tl) + (z - row.z) * (row.tx / tl)
     return { s: row.s, lat, d2: best.d2 }
   }
 

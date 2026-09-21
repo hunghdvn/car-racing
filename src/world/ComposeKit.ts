@@ -22,6 +22,21 @@ import type { CoastField } from './Terrain'
 
 export interface HeightReader { height(x: number, z: number): number; natural(x: number, z: number): number; seaLevel: number }
 
+/** Prefab authors place children in local XZ. Sample the world terrain
+ *  relative to the prefab's already-planted root, never the world origin. */
+export function createPrefabHeightReader(
+  field: HeightReader,
+  root: { x: number; y: number; z: number },
+  yaw: number,
+): (x: number, z: number) => number {
+  const cos = Math.cos(yaw), sin = Math.sin(yaw)
+  return (lx, lz) => {
+    const wx = root.x + cos * lx + sin * lz
+    const wz = root.z - sin * lx + cos * lz
+    return Math.max(0, field.height(wx, wz) - root.y)
+  }
+}
+
 export type PrefabId =
   | 'CityBlock_Street' | 'CityBlock_Corner'
   | 'IndustrialCluster_Yard' | 'IndustrialCluster_Plant'
@@ -627,9 +642,11 @@ export function composeSection(spline: TrackSpline, field: HeightReader, layout:
     const f = spline.frame(clamp(pl.s, 1, spline.length - 1))
     const p = new THREE.Vector3().copy(f.pos).addScaledVector(f.side, pl.lat)
     const rnd = new Rand(SEED ^ ((pl.seedSalt ?? 1) * 0x9e37) >>> 0)
-    const pre = composePrefab(pl.id, { seed: (SEED ^ ((pl.seedSalt ?? 7) * 131)) >>> 0, field: (x, z) => field.height(x, z) })
-    pre.position.set(p.x, field.height(p.x, p.z) - 0.1, p.z)
-    pre.rotation.y = (pl.yaw ?? f.yaw + Math.PI / 2) + rnd.range(-0.02, 0.02)
+    const rootY = field.height(p.x, p.z) - 0.1
+    const yaw = (pl.yaw ?? f.yaw + Math.PI / 2)
+    const pre = composePrefab(pl.id, { seed: (SEED ^ ((pl.seedSalt ?? 7) * 131)) >>> 0, field: createPrefabHeightReader(field, { x: p.x, y: rootY, z: p.z }, yaw) })
+    pre.position.set(p.x, rootY, p.z)
+    pre.rotation.y = yaw + rnd.range(-0.02, 0.02)
     g.add(pre)
   }
   return g
@@ -649,19 +666,26 @@ export function dressSlice(opts: SliceLayoutOpts): THREE.Group {
   const { spline, field } = opts
   const g = new THREE.Group()
   g.name = 'slice-composition'
-  const flat = (x: number, z: number): number => field.height(x, z)
   const drop = (id: PrefabId, x: number, z: number, yaw: number, salt: number, yOff = -0.08): void => {
-    const pre = composePrefab(id, { seed: (SEED ^ (salt * 0x2545ff11)) >>> 0, field: flat })
-    pre.position.set(x, flat(x, z) + yOff, z)
+    const rootY = field.height(x, z) + yOff
+    const pre = composePrefab(id, { seed: (SEED ^ (salt * 0x2545ff11)) >>> 0, field: createPrefabHeightReader(field, { x, y: rootY, z }, yaw) })
+    pre.position.set(x, rootY, z)
     pre.rotation.y = yaw
     g.add(pre)
+  }
+  const dropOnTrack = (id: PrefabId, s: number, lat: number, yawOffset: number, salt: number, yOff = -0.08): void => {
+    const f = spline.frame(clamp(s, 1, spline.length - 1))
+    const x = f.pos.x + f.side.x * lat
+    const z = f.pos.z + f.side.z * lat
+    drop(id, x, z, f.yaw + Math.PI / 2 + yawOffset, salt, yOff)
   }
   // city block fronting the authored pad; corner block east of it
   drop('CityBlock_Street', 48, 26, 0.02, 11)
   drop('CityBlock_Corner', 96, 22, -0.1, 12)
-  // industrial spine at the far (west) end — kills the empty road tail
+  // industrial spine at the far (west) end — kills the empty road tail while
+  // keeping its authored footprint clear of the circuit corridor
   drop('IndustrialCluster_Yard', -64, 36, 0.03, 13)
-  drop('IndustrialCluster_Plant', -148, 30, 0.06, 14)
+  dropOnTrack('IndustrialCluster_Plant', 12.7, 35, 0.06, 14)
   // designed-open coast: dune clusters on the sea verge (the §10 exception)
   drop('CoastalCliff_Dune', -20, -34, 0.5, 15)
   drop('CoastalCliff_Dune', 40, -37, -0.7, 16)

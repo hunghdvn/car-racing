@@ -5,7 +5,7 @@ import { TrackSpline } from './TrackSpline'
 import { CoastField } from './Terrain'
 import { RoadBuilder, rampLiftAt, rampSlopeAt } from './RoadBuilder'
 import { buildWater, animateWater, type ShoreMap } from './Water'
-import { dressSlice, composePrefab, type PrefabId } from './ComposeKit'
+import { dressSlice, composePrefab, createPrefabHeightReader, type PrefabId } from './ComposeKit'
 import { dressCircuit } from './CircuitDressing'
 import { placeVegetation } from './VegetationKit'
 import { placeProps } from './PropKit'
@@ -87,11 +87,13 @@ function buildNorthCity(spline: TrackSpline, field: CoastField): THREE.Group {
   for (let s = rng.s0 + 112; s < rng.s1 - 100; s += 50, i++) {
     const f = spline.frame(s)
     const drop = (id: PrefabId, lat: number, sc: number, salt: number): void => {
-      const pre = composePrefab(id, { seed: (SEED ^ ((salt * 0x9e37) >>> 0)) >>> 0, field: (x: number, z: number) => field.height(x, z) })
       const x = f.pos.x + f.side.x * lat, z = f.pos.z + f.side.z * lat
-      pre.position.set(x, field.height(x, z) - 0.1, z)
+      const rootY = field.height(x, z) - 0.1
+      const yaw = f.yaw + (lat > 0 ? Math.PI / 2 : -Math.PI / 2)
+      const pre = composePrefab(id, { seed: (SEED ^ ((salt * 0x9e37) >>> 0)) >>> 0, field: createPrefabHeightReader(field, { x, y: rootY, z }, yaw) })
+      pre.position.set(x, rootY, z)
       pre.scale.setScalar(sc)
-      pre.rotation.y = f.yaw + (lat > 0 ? Math.PI / 2 : -Math.PI / 2)
+      pre.rotation.y = yaw
       g.add(pre)
     }
     const flip = i % 2 ? 1 : -1

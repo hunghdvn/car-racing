@@ -2,13 +2,14 @@ import * as THREE from 'three'
 import { Debug } from '../core/Debug'
 import type { ShotPose } from '../core/Debug'
 import { Renderer } from '../core/Renderer'
-import { KIT, RACE, QUALITY } from '../config'
+import { KIT, RACE, QUALITY, TRACK } from '../config'
 import { Rand } from '../util'
 import { buildBuilding, type BuildingDesignId } from '../world/BuildingKit'
 import { composePrefab } from '../world/ComposeKit'
 import { makeBollard, makeCones, makeDrum, makePallet, makeCrates, makeTyreStack, makeBin, makeHydrant, makeBench, makePlanter, makeSign, makeTrafficLight, makeUtilityPole, makeStreetlight, makeMastLight, makeContainer, makeBarrierUnit, makePipeStack, makeVan, makeSignGantry, makeBillboard, makeRadioMast, makeWaterTower, makeGantryCrane } from '../world/PropKit'
 import { palmGeometry, pineGeometry, bushGeometry, rockGeometry, broadleafGeometry, treeLOD } from '../world/VegetationKit'
 import { roadPose, heroShot } from '../world/TrackSlice'
+import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
 import type { Game } from '../game/Game'
@@ -34,7 +35,7 @@ import type { Game } from '../game/Game'
 /** install every dev probe + pose the harness drivers require on a live game */
 export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs: number): void {
   const { view, car, slice } = game
-  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY }
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal }
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = buildMs
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the

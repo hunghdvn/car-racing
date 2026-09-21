@@ -125,6 +125,176 @@ try {
   await wait(400)
   rec('restart-clean', phaseR === 'countdown' || phaseR === 'racing', `restart from finished → phase=${phaseR}`)
 
+  // A camera-side visual acceptance check: hand-placed dressing may flank the
+  // circuit, but its solid bodies may not stand across the painted asphalt lane.
+  const corridorBlockers = await page.evaluate(() => {
+    const dbg = window.__dbg
+    const g = dbg.game
+    const TH = dbg.THREE
+    dbg.scene.updateWorldMatrix(true, false)
+    dbg.scene.updateWorldMatrix(false, true)
+    g.slice.group.traverse((o) => {
+      if (o.isLOD) {
+        o.autoUpdate = false
+        for (const lvl of o.levels) if (lvl && lvl.object) lvl.object.visible = true
+      }
+    })
+    dbg.scene.updateWorldMatrix(true, false)
+    dbg.scene.updateWorldMatrix(false, true)
+    const box = new TH.Box3(), vertex = new TH.Vector3(), surface = new TH.Vector3(), im4 = new TH.Matrix4()
+    const offenders = []
+    const sampleVerts = (o, matrix) => {
+      const pos = o.geometry.getAttribute('position')
+      if (!pos) return null
+      const stride = Math.max(1, Math.floor(pos.count / 4096))
+      for (let i = 0; i < pos.count; i += stride) {
+        vertex.fromBufferAttribute(pos, i).applyMatrix4(matrix)
+        const near = g.slice.spline.nearest(vertex.x, vertex.z)
+        const f = g.slice.spline.frame(near.s)
+        const lat = (vertex.x - f.pos.x) * f.side.x + (vertex.z - f.pos.z) * f.side.z
+        if (Math.abs(lat) <= dbg.TRACK.halfWidth + 0.05) {
+          const clampedLat = Math.max(-dbg.TRACK.halfWidth, Math.min(dbg.TRACK.halfWidth, lat))
+          const surfaceY = g.slice.spline.surfacePoint(near.s, clampedLat, 0, surface).y
+          if (vertex.y >= surfaceY - 0.1 && vertex.y <= surfaceY + 1.5) {
+            return { s: +near.s.toFixed(1), lat: +lat.toFixed(2), y: +vertex.y.toFixed(2), surfaceY: +surfaceY.toFixed(2) }
+          }
+        }
+      }
+      return null
+    }
+    const walk = (o) => {
+      if (o.visible && o.isMesh && o.geometry) {
+        let visible = true, path = '', node = o
+        while (node) {
+          if (!node.visible) { visible = false; break }
+          if (node.name) path = `${node.name}/${path}`
+          node = node.parent
+        }
+        path = path.replace(/\/$/, '')
+        const isDressing = /(circuit-dressing|slice-composition|north-city)/.test(path)
+        const isRoadOrGround = /(terrain|water|sky|road)/.test(path)
+        if (visible && isDressing && !isRoadOrGround) {
+          if (o.isInstancedMesh) {
+            for (let i = 0; i < o.count; i++) {
+              o.getMatrixAt(i, im4)
+              const hit = sampleVerts(o, new TH.Matrix4().copy(o.matrixWorld).multiply(im4))
+              if (hit) {
+                offenders.push({ path, ...hit })
+                break
+              }
+            }
+          } else {
+            o.geometry.computeBoundingBox()
+            const geoBox = o.geometry.boundingBox
+            if (geoBox) {
+              box.copy(geoBox).applyMatrix4(o.matrixWorld)
+              const radius = Math.hypot(box.max.x - box.min.x, box.max.z - box.min.z) / 2
+              const center = box.getCenter(new TH.Vector3())
+              const nearCenter = g.slice.spline.nearest(center.x, center.z)
+              const centerFrame = g.slice.spline.frame(nearCenter.s)
+              const centerLat = (center.x - centerFrame.pos.x) * centerFrame.side.x + (center.z - centerFrame.pos.z) * centerFrame.side.z
+              if (Math.abs(centerLat) - radius <= dbg.TRACK.halfWidth + 0.3) {
+                const hit = sampleVerts(o, o.matrixWorld)
+                if (hit) offenders.push({ path, ...hit })
+              }
+            }
+          }
+        }
+      }
+      for (const child of o.children) walk(child)
+    }
+    walk(g.slice.group)
+    offenders.sort((a, b) => a.s - b.s)
+    return offenders.slice(0, 12)
+  })
+  const blockerDetail = corridorBlockers.length === 0
+    ? 'no hand-placed dressing intrudes the asphalt lane'
+    : `dressing blocks the lane: ${corridorBlockers.map((o) => `${o.path} @s=${o.s} lat=${o.lat}`).join('; ')}`
+  rec('road-visual-corridor-clear', corridorBlockers.length === 0, blockerDetail)
+
+  const shortcutBlockers = await page.evaluate(() => {
+    const dbg = window.__dbg
+    const g = dbg.game
+    const TH = dbg.THREE
+    dbg.scene.updateWorldMatrix(true, false)
+    dbg.scene.updateWorldMatrix(false, true)
+    g.slice.group.traverse((o) => {
+      if (o.isLOD) {
+        o.autoUpdate = false
+        for (const lvl of o.levels) if (lvl && lvl.object) lvl.object.visible = true
+      }
+    })
+    dbg.scene.updateWorldMatrix(true, false)
+    dbg.scene.updateWorldMatrix(false, true)
+    const half = dbg.TRACK.shortcut.half
+    const laneWidth = half + 0.05
+    const box = new TH.Box3(), vertex = new TH.Vector3(), im4 = new TH.Matrix4()
+    const offenders = []
+    const laneAt = (x, z) => {
+      const lane = dbg.spurNear(x, z)
+      return lane !== null && Math.abs(lane.lat) <= laneWidth ? lane : null
+    }
+    const sampleVerts = (o, matrix) => {
+      const pos = o.geometry.getAttribute('position')
+      if (!pos) return null
+      const stride = Math.max(1, Math.floor(pos.count / 2048))
+      for (let i = 0; i < pos.count; i += stride) {
+        vertex.fromBufferAttribute(pos, i).applyMatrix4(matrix)
+        const lane = laneAt(vertex.x, vertex.z)
+        if (lane && vertex.y >= lane.y - 0.1 && vertex.y <= lane.y + 1.5) {
+          return { s: +lane.s.toFixed(1), lat: +lane.lat.toFixed(2), x: +vertex.x.toFixed(1), z: +vertex.z.toFixed(1), y: +vertex.y.toFixed(2), laneY: +lane.y.toFixed(2) }
+        }
+      }
+      return null
+    }
+    const walk = (o) => {
+      if (o.visible && o.isMesh && o.geometry) {
+        let visible = true, path = '', node = o
+        while (node) {
+          if (!node.visible) { visible = false; break }
+          if (node.name) path = `${node.name}/${path}`
+          node = node.parent
+        }
+        path = path.replace(/\/$/, '')
+        const isDressing = /(circuit-dressing|slice-composition|north-city)/.test(path)
+        const isRoadOrGround = /(terrain|water|sky|road|shortcut|spur)/.test(path)
+        if (visible && isDressing && !isRoadOrGround) {
+          if (o.isInstancedMesh) {
+            for (let i = 0; i < o.count; i++) {
+              o.getMatrixAt(i, im4)
+              const hit = sampleVerts(o, new TH.Matrix4().copy(o.matrixWorld).multiply(im4))
+              if (hit) {
+                offenders.push({ path, ...hit })
+                break
+              }
+            }
+          } else {
+            o.geometry.computeBoundingBox()
+            const geoBox = o.geometry.boundingBox
+            if (geoBox) {
+              box.copy(geoBox).applyMatrix4(o.matrixWorld)
+              const radius = Math.hypot(box.max.x - box.min.x, box.max.z - box.min.z) / 2
+              const center = box.getCenter(new TH.Vector3())
+              const centerLane = laneAt(center.x, center.z)
+              if (centerLane !== null && Math.abs(centerLane.lat) - radius <= laneWidth + 0.3) {
+                const hit = sampleVerts(o, o.matrixWorld)
+                if (hit) offenders.push({ path, ...hit })
+              }
+            }
+          }
+        }
+      }
+      for (const child of o.children) walk(child)
+    }
+    walk(g.slice.group)
+    offenders.sort((a, b) => a.s - b.s)
+    return offenders.slice(0, 12)
+  })
+  const shortcutBlockerDetail = shortcutBlockers.length === 0
+    ? 'no hand-placed dressing intrudes the shortcut lane'
+    : `dressing blocks the shortcut: ${shortcutBlockers.map((o) => `${o.path} @spurS=${o.s} lat=${o.lat} x=${o.x} z=${o.z}`).join('; ')}`
+  rec('shortcut-visual-corridor-clear', shortcutBlockers.length === 0, shortcutBlockerDetail)
+
   const diag = await page.evaluate(() => window.__perfDiag())
   rec('renders-live', diag && diag.calls > 500 && diag.tris > 50000, `live render chain tier=${diag.tier} calls=${diag.calls} tris=${diag.tris} fps=${diag.fps}`)
 

@@ -5,6 +5,7 @@ import { Rand, clamp, lerp, smoothstep, fbm2, mergeGeometries, sanitizeGeometry,
 const UP = new THREE.Vector3(0, 1, 0)
 import { asphaltMaps, concreteMaps, curbStripeTexture, gravelMaps, patchDecalTexture, kickerFaceTexture, finishBannerTexture, billboardFaceTexture, signFaceTexture } from '../assets/Textures'
 import { rockGeometry } from './VegetationKit'
+import { makeSpurControlPoints } from './SpurKit'
 import type { TrackSpline } from './TrackSpline'
 
 /* ------------------------------------------------------------------------- *
@@ -36,6 +37,11 @@ export function rampLiftAt(s: number): number {
   if (s < r.sStart || s > r.sLip) return 0
   return r.height * smoothstep(r.sStart, r.sLip, s)
 }
+/** Painted decals must inherit the same kicker lift as the asphalt slab. */
+export function markingSurfaceLift(s: number, surfaceOffset: number): number {
+  return surfaceOffset + rampLiftAt(s)
+}
+
 /** d(lift)/ds — for car pitch on the kicker. */
 export function rampSlopeAt(s: number): number {
   const r = TRACK.ramp
@@ -406,7 +412,7 @@ export class RoadBuilder {
     const p = new THREE.Vector3()
     const pts: number[] = [], uv = [0, 0, 1, 0, 1, 1, 0, 1]
     const corners: [number, number][] = [[s - len / 2, lat - wide / 2], [s - len / 2, lat + wide / 2], [s + len / 2, lat + wide / 2], [s + len / 2, lat - wide / 2]]
-    for (const [cs, cl] of corners) { this.spline.surfacePoint(cs, cl, lift, p); pts.push(p.x, p.y, p.z) }
+    for (const [cs, cl] of corners) { this.spline.surfacePoint(cs, cl, markingSurfaceLift(cs, lift), p); pts.push(p.x, p.y, p.z) }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
@@ -418,7 +424,6 @@ export class RoadBuilder {
   buildMarkings(sFrom: number, sTo: number): THREE.Mesh {
     const hw = TRACK.halfWidth
     const white: THREE.BufferGeometry[] = []
-    const faded: THREE.BufferGeometry[] = []
     // dash lattices are keyed to the GLOBAL station grid so chunk boundaries
     // never drop or duplicate a bar (each chunk owns the lattice points in it)
     const lattice = (from: number, step: number, pad: number, end: number): number[] => {
@@ -430,9 +435,10 @@ export class RoadBuilder {
       }
       return out
     }
-    for (const side of [1, -1]) for (const s of lattice(sFrom, 4, 2, sTo)) white.push(this.bar(s, side * (hw - 0.42), 4.06, 0.15, 0.014))
+    for (const side of [1, -1]) for (const s of lattice(sFrom, 4, 2, sTo)) {
+      if (!this.atSpurMouth(s)) white.push(this.bar(s, side * (hw - 0.42), 4.06, 0.15, 0.014))
+    }
     for (const s of lattice(sFrom, 7, 3, sTo)) if (!this.atSpurMouth(s + 1.7)) white.push(this.bar(s + 1.7, 0, 3.4, 0.15, 0.014))
-    for (const s of lattice(sFrom, 8, 2, sTo)) faded.push(this.bar(s + 2, hw * 0.45, 4, 0.14, 0.012))
     // landing-zone transverse bars after the lip (spec §7 landing zone)
     const r = TRACK.ramp
     if (r.landingS >= sFrom && r.landingS < sTo) {
@@ -457,14 +463,11 @@ export class RoadBuilder {
         white.push(geo)
       }
     }
-    const geo = mergeGeometries([
-      ...white.map((geometry) => ({ geometry, materialIndex: 0 })),
-      ...faded.map((geometry) => ({ geometry, materialIndex: 1 })),
-    ])
+    const geo = mergeGeometries(white.map((geometry) => ({ geometry })))
     const pm = (color: number, po: number): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({
       color, roughness: 0.68, metalness: 0, polygonOffset: true, polygonOffsetFactor: po, polygonOffsetUnits: po,
     })
-    const mesh = new THREE.Mesh(geo, [pm(0xe6e4da, -3), pm(0x9b9a92, -2)])
+    const mesh = new THREE.Mesh(geo, pm(0xe6e4da, -3))
     mesh.name = 'road-markings'
     return mesh
   }
@@ -1345,7 +1348,7 @@ export class RoadBuilder {
     const L = this.spline.length
     for (const m of this.spurStations()) {
       const d = Math.abs(s - m)
-      if (Math.min(d, L - d) < 10) return true
+      if (Math.min(d, L - d) < 18) return true
     }
     return false
   }
@@ -1354,9 +1357,8 @@ export class RoadBuilder {
     const g = new THREE.Group()
     g.name = 'shortcut'
     const half = TRACK.shortcut.half
-    const pts = TRACK.shortcut.pts.map(([x, z, y]) => new THREE.Vector3(x, y, z))
-    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal')
-    const raw = curve.getPoints(Math.round(pts.length * 46))
+    const pts = this.field ? makeSpurControlPoints(this.field) : TRACK.shortcut.pts.map(([x, z, y]) => new THREE.Vector3(x, y, z))
+    const raw = pts
     const acc: number[] = [0]
     for (let i = 1; i < raw.length; i++) acc.push(acc[i - 1] + raw[i].distanceTo(raw[i - 1]))
     const total = acc[acc.length - 1]
@@ -1466,7 +1468,8 @@ export class RoadBuilder {
     const cones = new THREE.InstancedMesh(coneGeo, this.mat('cone', () => new THREE.MeshStandardMaterial({ color: 0xe2622a, roughness: 0.6 })) as THREE.Material, 10)
     cones.castShadow = true
     let nc = 0
-    for (const [sC, latA] of [[gap * 0.45, half + 0.5], [gap * 0.72, half + 0.5], [gap * 1.05, half + 0.5], [total - gap * 0.5, -half - 0.5], [total - gap * 0.8, -half - 0.5]] as const) {
+    const furnitureFrom = 30
+    for (const [sC, latA] of [[furnitureFrom, half + 0.5], [furnitureFrom + 6, half + 0.5], [furnitureFrom + 12, half + 0.5], [total - furnitureFrom, -half - 0.5], [total - furnitureFrom - 6, -half - 0.5]] as const) {
       const fr = at(sC)
       const sx = -fr.tz, sz = fr.tx
       const x = fr.p.x + sx * latA, z = fr.p.z + sz * latA
@@ -1481,43 +1484,15 @@ export class RoadBuilder {
     cones.name = 'shortcut-cones'
     g.add(cones)
 
-    // chicane through the mid-lane: alternating painted boards with a cone at
-    // the gate, so the spur forces a real lane change instead of being open tarmac
-    const boardGeo = new THREE.BoxGeometry(1.7, 0.66, 0.1)
-    boardGeo.translate(0, 0.33, 0)
-    const boards = new THREE.InstancedMesh(boardGeo, this.mat('spurChicane', () => new THREE.MeshStandardMaterial({ color: 0xe9e7df, roughness: 0.62 })) as THREE.Material, 5)
-    boards.castShadow = true
-    for (let k = 0; k < 5; k++) {
-      const sC = total * (0.3 + k * 0.1)
-      const lat = (k % 2 ? 1 : -1) * half * 0.55
-      const fr = at(sC)
-      const sx = -fr.tz, sz = fr.tx
-      e.set(0, fr.yaw + (k % 2 ? 0.55 : -0.55), 0)
-      q.setFromEuler(e)
-      m4.compose(new THREE.Vector3(fr.p.x + sx * lat, fr.p.y + 0.03, fr.p.z + sz * lat), q, sc)
-      boards.setMatrixAt(k, m4)
-      if (nc < 10) {
-        const gl = lat + (k % 2 ? half * 0.5 : -half * 0.5)
-        const cx = fr.p.x + sx * gl, cz = fr.p.z + sz * gl
-        e.set(0, fr.yaw, 0)
-        q.setFromEuler(e)
-        m4.compose(new THREE.Vector3(cx, fr.p.y + 0.02, cz), q, sc)
-        cones.setMatrixAt(nc++, m4)
-      }
-    }
-    boards.count = 5
-    boards.instanceMatrix.needsUpdate = true
-    boards.name = 'shortcut-chicane'
     cones.count = nc
     cones.instanceMatrix.needsUpdate = true
-    g.add(boards)
 
-    // mouth gates: twin posts, a lintel with hazard collars and the route sign,
-    // so the spur reads as gated, signed infrastructure at both junctions
+    // The mouth gates sit clear of the main-line overlap; the spur lane itself
+    // remains open so it reads as an alternate racing line, not a chicane.
     const inkG = this.mat('spurGateInk', () => new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.7 })) as THREE.Material
     const haz = this.mat('spurGateHaz', () => new THREE.MeshStandardMaterial({ color: 0xf2b23c, roughness: 0.6 })) as THREE.Material
     const gateSign = this.mat('spurGateSign', () => new THREE.MeshStandardMaterial({ map: signFaceTexture('shortcut'), roughness: 0.55, side: THREE.DoubleSide })) as THREE.Material
-    for (const sG of [gap * 0.5, total - gap * 0.5] as const) {
+    for (const sG of [furnitureFrom, total - furnitureFrom]) {
       const fr = at(sG)
       const sx = -fr.tz, sz = fr.tx
       const gy = fr.p.y
@@ -1537,14 +1512,14 @@ export class RoadBuilder {
       gput(new THREE.BoxGeometry(2 * (half + 1.15) + 0.5, 0.34, 0.3), inkG, 0, 4.02)
       gput(new THREE.BoxGeometry(2 * (half + 1.15) + 0.5, 0.14, 0.34), haz, 0, 3.78)
       const sign = new THREE.Mesh(new THREE.BoxGeometry(3.3, 1.65, 0.07), gateSign)
-      sign.position.set(fr.p.x, gy + 2.95, fr.p.z)
+      sign.position.set(fr.p.x, gy + 3.75, fr.p.z)
       sign.rotation.set(0, fr.yaw + Math.PI, 0)
       sign.castShadow = true
       sign.name = 'shortcut-sign'
       g.add(sign)
     }
 
-    const arrow = this.shortcutArrow(at(gap * 1.35), half * 0.62)
+    const arrow = this.shortcutArrow(at(furnitureFrom + 4), half * 0.62)
     arrow.name = 'shortcut-arrow'
     g.add(arrow)
     return g

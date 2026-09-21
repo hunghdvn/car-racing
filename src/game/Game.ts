@@ -6,13 +6,13 @@ import { Input, type InputAction, type InputState } from '../core/Input'
 import { ParticleManager } from '../core/ParticleManager'
 import { SkidMarks } from '../core/SkidMarks'
 import { Audio, type AudioDrive } from '../core/Audio'
-import { UIManager, type HudData, freshShortcut, shortcutEnterEdge, distToPolyline, countdownCueFor, rpmFor } from '../ui/UIManager'
+import { UIManager, type HudData, freshShortcut, shortcutEnterEdge, countdownCueFor, rpmFor } from '../ui/UIManager'
 import { buildCar, type CarModel } from '../assets/CarModel'
 import { ChaseCamera, type CarView } from '../camera/ChaseCamera'
 import { AI, FX, GRAPHICS, PAINTS, QUALITY, SKIDS, TRACK, VEHICLE, type PaintDef } from '../config'
 import { clamp, clamp01 } from '../util'
 import { buildTrackSlice, type Slice } from '../world/TrackSlice'
-import { RoadSurfaceProbe } from '../vehicles/TrackProbe'
+import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
@@ -84,8 +84,6 @@ export class Game {
   private readonly skidAcc = [0, 0]
   private readonly rearScratch = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }]
   private readonly shortcut = freshShortcut()
-  private readonly shortcutXs: Float32Array
-  private readonly shortcutZs: Float32Array
   private readonly mapPlayer = { x: 0, z: 0 }
   private readonly mapAi: { x: number; z: number }[] = []
   private mapAiCount = 0
@@ -142,8 +140,6 @@ export class Game {
       this.rearWheels.push({ x: holder.position.x, z: holder.position.z })
     }
     for (let i = 0; i < AI.count; i++) this.mapAi.push({ x: 0, z: 0 })
-    this.shortcutXs = new Float32Array(TRACK.shortcut.pts.map((p) => p[0]))
-    this.shortcutZs = new Float32Array(TRACK.shortcut.pts.map((p) => p[2]))
   }
 
   /** Release a frozen shot pose held by the dev harness (see core/Debug host). */
@@ -396,8 +392,7 @@ export class Game {
   /** shortcut spur probe: grants the configured bonus once per traversal */
   private shortcutCheck(): void {
     const p = this.player.phys
-    const inside = this.director.phase === 'racing' && p.grounded
-      && distToPolyline(this.shortcutXs, this.shortcutZs, p.x, p.z) < TRACK.shortcut.half
+    const inside = this.director.phase === 'racing' && p.grounded && isShortcutLane(p.x, p.z)
     if (shortcutEnterEdge(this.shortcut, inside) && this.shortcut.armed) {
       this.shortcut.armed = false
       this.player.addShortcutBonus()

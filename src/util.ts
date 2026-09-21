@@ -356,6 +356,7 @@ export function forceUpWinding(geo: THREE.BufferGeometry, up: THREE.Vector3, tol
   const idx = geo.getIndex() as THREE.BufferAttribute | null
   if (!idx || idx.count < 3) return
   const arr = new Uint32Array(idx.count)
+  let changed = false
   for (let f = 0; f < idx.count; f += 3) {
     const ia = idx.getX(f), ib = idx.getX(f + 1), ic = idx.getX(f + 2)
     arr[f] = ia; arr[f + 1] = ib; arr[f + 2] = ic
@@ -364,9 +365,11 @@ export function forceUpWinding(geo: THREE.BufferGeometry, up: THREE.Vector3, tol
     const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
     const l = Math.hypot(fx, fy, fz) || 1
     const d = (fx * up.x + fy * up.y + fz * up.z) / l
-    if (d < -tol) { arr[f + 1] = ic; arr[f + 2] = ib }
+    if (d < -tol) { arr[f + 1] = ic; arr[f + 2] = ib; changed = true }
   }
+  if (!changed) return
   geo.setIndex(new THREE.Uint32BufferAttribute(arr, 1))
+  if (geo.getAttribute('normal')) crNormals(geo)
 }
 
 /**

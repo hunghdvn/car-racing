@@ -179,8 +179,11 @@ export class CoastField {
     }
     if (zone === 'tunnel') {
       const rng = this.spline.zoneRange('tunnel')
-      const endD = Math.min(s - rng.s0, rng.s1 - s)
-      return 1 - smoothstep(TRACK.tunnel.apron * 0.7, TRACK.tunnel.apron + 14, endD)
+      // The bore itself is an engineered tunnel, not an open cut: keep the road
+      // bed fully embedded across the whole shell and let the approach taper
+      // begin only after the tube has ended.
+      const outside = Math.max(rng.s0 - s, s - rng.s1)
+      return 1 - smoothstep(TRACK.tunnel.apron * 0.7, TRACK.tunnel.apron + 14, outside)
     }
     return 1
   }
