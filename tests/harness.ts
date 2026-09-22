@@ -1,9 +1,9 @@
 /* minimal node-runnable test harness (no deps; driven by scripts/tests.mjs) */
 
-export interface TestCase { name: string; fn: () => void }
+export interface TestCase { name: string; fn: () => void | Promise<void> }
 export const suite: TestCase[] = []
 
-export function test(name: string, fn: () => void): void {
+export function test(name: string, fn: () => void | Promise<void>): void {
   suite.push({ name, fn })
 }
 
@@ -24,7 +24,7 @@ export async function runAll(): Promise<boolean> {
   for (const t of suite) {
     const t0 = Date.now()
     try {
-      t.fn()
+      await t.fn()
       console.log(`  ok   ${t.name} (${Date.now() - t0} ms)`)
       pass++
     } catch (e) {

@@ -59,14 +59,18 @@
 - Create: `scripts/pr-policy.mjs`
 - Create: `scripts/check-pr-policy.mjs`
 - Create: `tests/cases/community.test.ts`
-- Modify: `tests/all.ts:1-14`
+- Create: `tests/cases/policy-entry.test.ts`
+- Modify: `tests/all.ts:1-17`
+- Modify: `tests/harness.ts` (async test bodies)
 - Test: `tests/cases/community.test.ts`
+- Test: `tests/cases/policy-entry.test.ts`
 
 **Interfaces:**
 - Consumes: nothing.
 - Produces:
   - `evaluatePullRequestPolicy(body: string, files: string[]): { pass: boolean; description: string }`
-  - exact constants `QWEN_MODEL_ID`, `CODE_ATTESTATION`, `MODEL_ID_FIELD`, `DOCS_ONLY_DECLARATION`, `REQUIRED_STATUS_CONTEXT`, `MAX_CHANGED_FILES`.
+  - `runPolicy({ env, fetcher = globalThis.fetch, log = console }): Promise<number>` — testable entry-point seam; direct CLI execution reads `process.env` and sets `process.exitCode`.
+  - exact constants `QWEN_MODEL_ID`, `CODE_ATTESTATION`, `MODEL_ID_FIELD`, `DOCS_ONLY_DECLARATION`, `REQUIRED_STATUS_CONTEXT`, `MAX_CHANGED_FILES`, `OVERSIZED_DESCRIPTION`.
 
 - [ ] **Step 1: Write the failing policy test**
 
@@ -208,6 +212,7 @@ export const MODEL_ID_FIELD = `- Model ID: ${QWEN_MODEL_ID}`
 export const DOCS_ONLY_DECLARATION = '- [x] This pull request changes documentation/content only.'
 export const REQUIRED_STATUS_CONTEXT = 'Qwen provenance'
 export const MAX_CHANGED_FILES = 300
+export const OVERSIZED_DESCRIPTION = 'Pull request is too large for reliable provenance classification'
 
 const DOCUMENT_EXTENSIONS = ['.md']
 
@@ -230,7 +235,7 @@ export function evaluatePullRequestPolicy(body, files) {
   }
 
   if (safeFiles.length > MAX_CHANGED_FILES) {
-    return { pass: false, description: 'Pull request is too large for reliable provenance classification' }
+    return { pass: false, description: OVERSIZED_DESCRIPTION }
   }
 
   const isDocsOnly = safeFiles.every(matchesDocumentExtension)
@@ -281,23 +286,18 @@ Create `scripts/check-pr-policy.mjs` with exactly:
 ```js
 import {
   evaluatePullRequestPolicy,
+  MAX_CHANGED_FILES,
+  OVERSIZED_DESCRIPTION,
   REQUIRED_STATUS_CONTEXT,
 } from './pr-policy.mjs'
 
-const api = process.env.GITHUB_API_URL ?? 'https://api.github.com'
-const serverUrl = process.env.GITHUB_SERVER_URL ?? 'https://github.com'
-const repository = process.env.GITHUB_REPOSITORY
-const token = process.env.GITHUB_TOKEN
-const prNumber = process.env.PR_NUMBER
-const prSha = process.env.PR_SHA
-const prBody = process.env.PR_BODY ?? ''
-const targetUrl = `${serverUrl}/${repository}/actions/workflows/qwen-policy.yml`
+const REQUEST_TIMEOUT_MS = 10000
 
-function requireConfig(name, value) {
-  if (!value) throw new Error(`Missing required environment variable ${name}`)
+function requireConfig(env, name) {
+  if (!env[name]) throw new Error(`Missing required environment variable ${name}`)
 }
 
-function requestHeaders() {
+function requestHeaders(token) {
   return {
     authorization: `Bearer ${token}`,
     accept: 'application/vnd.github+json; api-version=2022-11-28',
@@ -306,66 +306,389 @@ function requestHeaders() {
   }
 }
 
-async function fetchChangedFiles() {
-  const files = []
-  let page = 1
-
-  while (true) {
-    const url = `${api}/repos/${repository}/pulls/${prNumber}/files?per_page=100&page=${page}`
-    const response = await fetch(url, { headers: requestHeaders() })
-    if (!response.ok) throw new Error(`Cannot list pull-request files (${response.status})`)
-
-    const batch = await response.json()
-    if (!Array.isArray(batch) || batch.length === 0) break
-
-    for (const entry of batch) files.push(entry.filename)
-    if (files.length > 300 || batch.length < 100) break
-    page += 1
+async function withTimeout(fetcher, url, init) {
+  let timer
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`GitHub API request timed out after ${REQUEST_TIMEOUT_MS} ms`)), REQUEST_TIMEOUT_MS)
+    })
+    return await Promise.race([Promise.resolve().then(() => fetcher(url, init)), timeout])
+  } finally {
+    clearTimeout(timer)
   }
-
-  return files
 }
 
-async function postStatus(state, description) {
-  const url = `${api}/repos/${repository}/statuses/${prSha}`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: requestHeaders(),
-    body: JSON.stringfy({
+export async function runPolicy({ env, fetcher = globalThis.fetch, log = console } = {}) {
+  const api = env.GITHUB_API_URL ?? 'https://api.github.com'
+  const serverUrl = env.GITHUB_SERVER_URL ?? 'https://github.com'
+  const repository = env.GITHUB_REPOSITORY
+  const token = env.GITHUB_TOKEN
+  const prNumber = env.PR_NUMBER
+  const prSha = env.PR_SHA
+  const prBody = env.PR_BODY ?? ''
+  const targetUrl = `${serverUrl}/${repository}/actions/workflows/qwen-policy.yml`
+
+  async function requestJson(url, label) {
+    let response
+    try {
+      response = await withTimeout(fetcher, url, { headers: requestHeaders(token) })
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(`GitHub API request failed (${label}): ${detail}`)
+    }
+    if (!response.ok) throw new Error(`Cannot ${label} (${response.status})`)
+    return await response.json()
+  }
+
+  async function fetchPullMeta(label) {
+    const url = `${api}/repos/${repository}/pulls/${prNumber}`
+    const pr = await requestJson(url, label)
+    const sha = pr && typeof pr.head?.sha === 'string' ? pr.head.sha : ''
+    const total = pr ? pr.changed_files : undefined
+    if (!sha) throw new Error('Pull-request metadata is missing a head SHA')
+    if (!Number.isInteger(total) || total < 0) {
+      throw new Error('Pull-request metadata is missing a valid changed_files total')
+    }
+    return { sha, total }
+  }
+
+  async function fetchChangedFiles() {
+    const files = []
+    let page = 1
+
+    while (true) {
+      const url = `${api}/repos/${repository}/pulls/${prNumber}/files?per_page=100&page=${page}`
+      const batch = await requestJson(url, 'list pull-request files')
+      if (!Array.isArray(batch)) throw new Error('Pull-request file listing is not an array')
+      if (batch.length === 0) break
+
+      for (const entry of batch) {
+        const filename = entry && typeof entry.filename === 'string' ? entry.filename : ''
+        if (!filename) throw new Error('Pull-request file listing contains an unnamed file')
+        files.push(filename)
+      }
+      if (files.length >= MAX_CHANGED_FILES || batch.length < 100) break
+      page += 1
+    }
+
+    return files
+  }
+
+  async function postStatus(state, description) {
+    const url = `${api}/repos/${repository}/statuses/${prSha}`
+    const body = JSON.stringify({
       state,
       context: REQUIRED_STATUS_CONTEXT,
       description: description.slice(0, 145),
       target_url: targetUrl,
-    }),
-  })
+    })
+    let response
+    try {
+      response = await withTimeout(fetcher, url, { method: 'POST', headers: requestHeaders(token), body })
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(`GitHub API request failed (post the Qwen provenance status): ${detail}`)
+    }
+    if (!response.ok) throw new Error(`Cannot post the Qwen provenance status (${response.status})`)
+  }
 
-  if (!response.ok) throw new Error(`Cannot post the Qwen provenance status (${response.status})`)
+  async function finish(result) {
+    await postStatus(result.pass ? 'success' : 'failure', result.description)
+    log.log(`Qwen provenance: ${result.pass ? 'PASS' : 'FAIL'} — ${result.description}`)
+    return result.pass ? 0 : 1
+  }
+
+  try {
+    for (const name of ['GITHUB_REPOSITORY', 'GITHUB_TOKEN', 'PR_NUMBER', 'PR_SHA']) requireConfig(env, name)
+
+    const meta = await fetchPullMeta('read pull-request metadata')
+    if (meta.sha !== prSha) {
+      throw new Error(`Pull-request head SHA mismatch: expected ${prSha}, found ${meta.sha}`)
+    }
+
+    if (meta.total > MAX_CHANGED_FILES) {
+      return await finish({ pass: false, description: OVERSIZED_DESCRIPTION })
+    }
+
+    const files = await fetchChangedFiles()
+    if (files.length !== meta.total) {
+      throw new Error(`Pull-request file listing mismatch: listed ${files.length} of ${meta.total} changed_files`)
+    }
+
+    const rechecked = await fetchPullMeta('recheck pull-request metadata')
+    if (rechecked.sha !== prSha) {
+      throw new Error('Pull-request head SHA changed while collecting the file listing')
+    }
+
+    return await finish(evaluatePullRequestPolicy(prBody, files))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown provenance policy failure'
+    try {
+      await postStatus('failure', message)
+    } catch (statusError) {
+      log.error(`Could not report provenance failure: ${String(statusError)}`)
+    }
+    log.error(`Qwen provenance policy error: ${message}`)
+    return 1
+  }
 }
 
-requireConfig('GITHUB_REPOSITORY', repository)
-requireConfig('GITHUB_TOKEN', token)
-requireConfig('PR_NUMBER', prNumber)
-requireConfig('PR_SHA', prSha)
-
-try {
-  const files = await fetchChangedFiles()
-  const result = evaluatePullRequestPolicy(prBody, files)
-  await postStatus(result.pass ? 'success' : 'failure', result.description)
-  console.log(`Qwen provenance: ${result.pass ? 'PASS' : 'FAIL'} — ${result.description}`)
-  process.exitCode = result.pass ? 0 : 1
-} catch (error) {
-  const message = error instanceof Error ? error.message : 'Unknown provenance policy failure'
-  try {
-    await postStatus('failure', message)
-  } catch (statusError) {
-    console.error(`Could not report provenance failure: ${String(statusError)}`)
-  }
-  console.error(`Qwen provenance policy error: ${message}`)
-  process.exitCode = 1
+if (String(process.argv[1] ?? '').split('/').at(-1) === 'check-pr-policy.mjs') {
+  process.exitCode = await runPolicy({ env: process.env })
 }
 ```
 
-- [ ] **Step 6: Validate the script syntax and rerun tests**
+- [ ] **Step 6: Cover the Actions entry point**
+
+Replace `tests/harness.ts` with exactly:
+
+```ts
+/* minimal node-runnable test harness (no deps; driven by scripts/tests.mjs) */
+
+export interface TestCase { name: string; fn: () => void | Promise<void> }
+export const suite: TestCase[] = []
+
+export function test(name: string, fn: () => void | Promise<void>): void {
+  suite.push({ name, fn })
+}
+
+export function assert(cond: boolean, msg: string): void {
+  if (!cond) throw new Error(`assert failed — ${msg}`)
+}
+
+export function assertNear(v: number, target: number, tol: number, msg: string): void {
+  assert(Math.abs(v - target) <= tol, `${msg} — got ${v.toFixed(4)}, want ${target} ±${tol}`)
+}
+
+export function assertFinite(v: number, msg: string): void {
+  assert(Number.isFinite(v), `${msg} — got ${v}`)
+}
+
+export async function runAll(): Promise<boolean> {
+  let pass = 0, fail = 0
+  for (const t of suite) {
+    const t0 = Date.now()
+    try {
+      await t.fn()
+      console.log(`  ok   ${t.name} (${Date.now() - t0} ms)`)
+      pass++
+    } catch (e) {
+      console.log(`  FAIL ${t.name}: ${(e as Error).message}`)
+      fail++
+    }
+  }
+  console.log(`\n${pass} passed, ${fail} failed`)
+  return fail === 0
+}
+```
+
+Create `tests/cases/policy-entry.test.ts` with exactly:
+
+```ts
+import { assert, test } from '../harness'
+import {
+  CODE_ATTESTATION,
+  DOCS_ONLY_DECLARATION,
+  MAX_CHANGED_FILES,
+  MODEL_ID_FIELD,
+  REQUIRED_STATUS_CONTEXT,
+} from '../../scripts/pr-policy.mjs'
+import { runPolicy } from '../../scripts/check-pr-policy.mjs'
+
+type FetchCall = { url: string; method: string; payload: Record<string, string> | undefined }
+type Plan = { total: number; meta?: unknown[]; pages?: unknown[]; status?: unknown }
+
+const BASE = {
+  GITHUB_API_URL: 'https://api.github.com',
+  GITHUB_SERVER_URL: 'https://github.com',
+  GITHUB_REPOSITORY: 'hunghdvn/car-racing',
+  GITHUB_TOKEN: 'test-token',
+  PR_NUMBER: '42',
+  PR_SHA: 'cafebab312345678',
+}
+
+const silentLog = { log: () => undefined, error: () => undefined }
+
+const codeBody = (extra: string[] = []) => [CODE_ATTESTATION, MODEL_ID_FIELD, ...extra].join('\n')
+const docsBody = () => DOCS_ONLY_DECLARATION
+
+function jsonResponse(status: number, payload: unknown) {
+  const ok = status >= 200 && status < 300
+  return { ok, status, json: async () => payload }
+}
+
+function queueReader(initial: unknown[], fallback: unknown) {
+  const queue = [...initial]
+  return () => {
+    if (queue.length > 1) return queue.shift()
+    if (queue.length === 1) return queue[0]
+    return fallback
+  }
+}
+
+function makeFetcher(plan: Plan) {
+  const calls: FetchCall[] = []
+  const nextMeta = queueReader(plan.meta ?? [], { head: { sha: BASE.PR_SHA }, changed_files: plan.total })
+  const nextFiles = queueReader(plan.pages ?? [[]], [])
+  const fetcher = async (url: string, init: Record<string, unknown> = {}) => {
+    const method = String(init.method ?? 'GET')
+    const payload = typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, string>) : undefined
+    calls.push({ url, method, payload })
+    let result: unknown
+    if (method === 'POST') result = plan.status
+    else if (url.includes('/files?')) {
+      const batch = nextFiles()
+      result = Array.isArray(batch)
+        ? batch.map((entry: unknown) => (typeof entry === 'string' ? { filename: entry } : entry))
+        : batch
+    }
+    else if (url.includes('/pulls/')) result = nextMeta()
+    else throw new Error(`Unexpected request: ${url}`)
+    if (result instanceof Error) throw result
+    if (typeof result === 'number') return jsonResponse(result, {})
+    return jsonResponse(200, result)
+  }
+  return { calls, fetcher }
+}
+
+function statusPosts(calls: FetchCall[]) {
+  return calls.filter((call) => call.method === 'POST')
+}
+
+function assertPosted(calls: FetchCall[], state: string, description: string) {
+  const posts = statusPosts(calls)
+  assert(posts.length === 1, `exactly one status post, got ${posts.length}`)
+  const post = posts[0]
+  assert(post.url.endsWith(`/statuses/${BASE.PR_SHA}`), `status targets the pinned PR SHA, got ${post.url}`)
+  assert(post.payload?.state === state, `status state ${state}, got ${post.payload?.state}`)
+  assert(post.payload?.context === REQUIRED_STATUS_CONTEXT, `status context, got ${post.payload?.context}`)
+  assert(post.payload?.description === description, `status description, got ${post.payload?.description}`)
+  assert(String(post.payload?.target_url).includes('/actions/workflows/qwen-policy.yml'), 'status target URL')
+}
+
+function run(plan: Plan, overrides: Record<string, string> = {}) {
+  const { calls, fetcher } = makeFetcher(plan)
+  const env = { ...BASE, PR_BODY: codeBody(), ...overrides }
+  const done = runPolicy({ env, fetcher, log: silentLog })
+  return { calls, done }
+}
+
+test('entry point posts success for a compliant code PR', async () => {
+  const { calls, done } = run({ total: 2, pages: [['src/core/Input.ts', 'styles.css']] })
+  const exitCode = await done
+  assert(exitCode === 0, `exit 0, got ${exitCode}`)
+  assertPosted(calls, 'success', 'Code contribution provenance accepted')
+})
+
+test('entry point posts success for a docs-only PR', async () => {
+  const { calls, done } = run({ total: 1, pages: [['docs/guide.md']] }, { PR_BODY: docsBody() })
+  const exitCode = await done
+  assert(exitCode === 0, `exit 0, got ${exitCode}`)
+  assertPosted(calls, 'success', 'Documentation-only contribution accepted')
+})
+
+test('entry point posts failure when the attestation is missing', async () => {
+  const { calls, done } = run({ total: 1, pages: [['src/index.ts']] }, { PR_BODY: MODEL_ID_FIELD })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assertPosted(calls, 'failure', 'Missing Qwen attestation')
+})
+
+test('entry point fails closed when the reported head SHA mismatches PR_SHA', async () => {
+  const { calls, done } = run({
+    total: 2,
+    meta: [{ head: { sha: 'deadd00dbeef' }, changed_files: 2 }],
+    pages: [['src/a.ts', 'src/b.ts']],
+  })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assert(!calls.some((call) => call.url.includes('/files?')), 'the file listing is not fetched after a SHA mismatch')
+  assertPosted(calls, 'failure', `Pull-request head SHA mismatch: expected ${BASE.PR_SHA}, found deadd00dbeef`)
+})
+
+test('entry point fails closed when the head SHA changes before the recheck', async () => {
+  const { calls, done } = run({
+    total: 2,
+    meta: [
+      { head: { sha: BASE.PR_SHA }, changed_files: 2 },
+      { head: { sha: 'deadd00dbeef' }, changed_files: 2 },
+    ],
+    pages: [['src/a.ts', 'src/b.ts']],
+  })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assert(calls.some((call) => call.url.includes('/files?')), 'the file listing was collected before the recheck')
+  assertPosted(calls, 'failure', 'Pull-request head SHA changed while collecting the file listing')
+})
+
+test('entry point rejects oversized PRs without trusting the file listing', async () => {
+  const { calls, done } = run({ total: MAX_CHANGED_FILES + 1, pages: [['README.md', 'docs/guide.md']] })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assert(!calls.some((call) => call.url.includes('/files?')), 'the capped file listing is never fetched')
+  assertPosted(calls, 'failure', 'Pull request is too large for reliable provenance classification')
+})
+
+test('entry point fails closed when the file listing is shorter than the total', async () => {
+  const { calls, done } = run({ total: 3, pages: [['src/a.ts', 'src/b.ts']] })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assertPosted(calls, 'failure', 'Pull-request file listing mismatch: listed 2 of 3 changed_files')
+})
+
+test('entry point fails closed when the file listing is longer than the total', async () => {
+  const { calls, done } = run({ total: 2, pages: [['src/a.ts', 'src/b.ts', 'src/c.ts']] })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assertPosted(calls, 'failure', 'Pull-request file listing mismatch: listed 3 of 2 changed_files')
+})
+
+test('entry point fails closed on a network error', async () => {
+  const { calls, done } = run({ total: 2, meta: [new Error('network down')], pages: [['src/a.ts', 'src/b.ts']] })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assertPosted(calls, 'failure', 'GitHub API request failed (read pull-request metadata): network down')
+})
+
+test('entry point fails closed on a server error response', async () => {
+  const { calls, done } = run({ total: 2, pages: [500] })
+  const exitCode = await done
+  assert(exitCode === 1, `exit 1, got ${exitCode}`)
+  assertPosted(calls, 'failure', 'Cannot list pull-request files (500)')
+})
+
+test('a failing status post still yields a non-zero exit', async () => {
+  const { calls, done } = run({ total: 2, pages: [['src/a.ts', 'src/b.ts']], status: 422 })
+  const exitCode = await done
+  assert(exitCode !== 0, `non-zero exit, got ${exitCode}`)
+  assert(statusPosts(calls).length === 2, 'the policy post and the fail-closed post were both attempted')
+})
+```
+
+Replace `tests/all.ts` with exactly:
+
+```ts
+import { runAll } from './harness'
+import './cases/camera.test'
+import './cases/drive.test'
+import './cases/track.test'
+import './cases/shortcut.test'
+import './cases/lap.test'
+import './cases/ai.test'
+import './cases/fx.test'
+import './cases/ui.test'
+import './cases/perf.test'
+import './cases/assets.test'
+import './cases/community.test'
+import './cases/policy-entry.test'
+
+const ok = await runAll()
+process.exit(ok ? 0 : 1)
+```
+
+Expected: `106 passed, 0 failed` and exit 0. The tests inject a fake fetcher, perform no network I/O, and assert the posted status `state`, `context`, and `description`.
+
+- [ ] **Step 7: Validate the script syntax and rerun tests**
 
 Run:
 
@@ -377,14 +700,14 @@ npm run test
 
 Expected: syntax checks silent and all tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add scripts/pr-policy.mjs scripts/check-pr-policy.mjs tests/cases/community.test.ts tests/all.ts
+git add scripts/pr-policy.mjs scripts/check-pr-policy.mjs tests/cases/community.test.ts tests/cases/policy-entry.test.ts tests/harness.ts tests/all.ts
 git commit -m "feat: validate Qwen pull-request provenance"
 ```
 
-Expected: one commit on `feature/open-source-governance` containing only those four files.
+Expected: one commit on `feature/open-source-governance` containing only those six files.
 
 ---
 
@@ -734,7 +1057,7 @@ npm run test
 npm run typecheck
 ```
 
-Expected: `100 passed, 0 failed`, typecheck passes. Stop if not.
+Expected: `111 passed, 0 failed`, typecheck passes. Stop if not.
 
 - [ ] **Step 10: Commit**
 
@@ -1106,7 +1429,7 @@ npm run test
 npm run typecheck
 ```
 
-Expected: `104 passed, 0 failed`, typecheck passes.
+Expected: `115 passed, 0 failed`, typecheck passes.
 
 - [ ] **Step 8: Commit**
 
@@ -1166,13 +1489,18 @@ test('CI runs every repository gate on Node 22', () => {
 
 test('provenance check uses the trusted base workflow and default token', () => {
   assert(policy.includes('pull_request_target:'), 'pull_request_target trigger')
+  assert(policy.includes('- ready_for_review'), 'ready_for_review activity type')
   assert(policy.includes('actions/checkout@v7'), 'trusted checkout v7')
+  assert(policy.includes('ref: ${{ github.base_ref }}'), 'checkout pins the trusted base ref')
   assert(policy.includes('node scripts/check-pr-policy.mjs'), 'policy entry point')
-  assert(policy.includes('pull-requests: write'), 'PR file read permission')
+  assert(policy.includes('pull-requests: read'), 'PR read-only permission')
+  assert(!policy.includes('pull-requests: write'), 'no PR write permission')
   assert(policy.includes('statuses: write'), 'commit status permission')
   assert(policy.includes('GITHUB_TOKEN: ${{ github.token }}'), 'default GitHub token')
   assert(policy.includes('PR_BODY: ${{ github.event.pull_request.body }}'), 'PR body input')
+  assert(policy.includes('PR_NUMBER: ${{ github.event.pull_request.number }}'), 'PR number input')
   assert(policy.includes('PR_SHA: ${{ github.event.pull_request.head.sha }}'), 'PR SHA input')
+  assert(policy.includes('GITHUB_REPOSITORY: ${{ github.repository }}'), 'repository input')
   assert(policy.includes('GITHUB_API_URL: ${{ github.api_url }}'), 'API URL input')
   assert(policy.includes('GITHUB_SERVER_URL: ${{ github.server_url }}'), 'server URL input')
 })
@@ -1193,6 +1521,7 @@ import './cases/ui.test'
 import './cases/perf.test'
 import './cases/assets.test'
 import './cases/community.test'
+import './cases/policy-entry.test'
 import './cases/governance.test'
 import './cases/workflows.test'
 
@@ -1315,11 +1644,11 @@ on:
       - edited
       - synchronize
       - reopened
-      - ready-for-review
+      - ready_for_review
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   statuses: write
 
 jobs:
@@ -1329,6 +1658,8 @@ jobs:
     steps:
       - name: Checkout the default policy code
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.base_ref }}
       - name: Set up Node
         uses: actions/setup-node@v7
       - name: Evaluate the pull-request attestation
@@ -1353,7 +1684,7 @@ npm run typecheck
 npm run build
 ```
 
-Expected: `106 passed, 0 failed`; typecheck/build pass.
+Expected: `117 passed, 0 failed`; typecheck/build pass.
 
 - [ ] **Step 6: Run the full existing gates**
 

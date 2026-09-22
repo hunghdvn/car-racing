@@ -4,6 +4,7 @@ export const MODEL_ID_FIELD = `- Model ID: ${QWEN_MODEL_ID}`
 export const DOCS_ONLY_DECLARATION = '- [x] This pull request changes documentation/content only.'
 export const REQUIRED_STATUS_CONTEXT = 'Qwen provenance'
 export const MAX_CHANGED_FILES = 300
+export const OVERSIZED_DESCRIPTION = 'Pull request is too large for reliable provenance classification'
 
 const DOCUMENT_EXTENSIONS = ['.md']
 
@@ -26,7 +27,7 @@ export function evaluatePullRequestPolicy(body, files) {
   }
 
   if (safeFiles.length > MAX_CHANGED_FILES) {
-    return { pass: false, description: 'Pull request is too large for reliable provenance classification' }
+    return { pass: false, description: OVERSIZED_DESCRIPTION }
   }
 
   const isDocsOnly = safeFiles.every(matchesDocumentExtension)
