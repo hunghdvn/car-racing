@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a focused behavior change for maintainer review.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user or maintainer need is currently unmet?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the requested outcome and acceptance evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Explicitly out of scope
+      description: List adjacent work this proposal must not include.
+    validations:
+      required: true
+  - type: checkboxes
+    id: policy
+    attributes:
+      label: Contribution model
+      description: New code must be authored with Qwen3.8-flash-next.
+      options:
+        - label: I accept the Qwen-only code authorship policy.
+          required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or prototype
+      description: Screenshots, recording, logs, test results, or performance data.
+    validations:
+      required: false
