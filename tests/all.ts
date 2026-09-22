@@ -11,6 +11,7 @@ import './cases/perf.test'
 import './cases/assets.test'
 import './cases/community.test'
 import './cases/governance.test'
+import './cases/workflows.test'
 
 const ok = await runAll()
 process.exit(ok ? 0 : 1)
