@@ -21,10 +21,12 @@ import { existsSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { resolve } from 'node:path'
 
+const VITE_CLI = resolve(import.meta.dirname, '../node_modules/vite/bin/vite.js')
+
 /** Build the dev-harness variant into a unique, empty outDir (reproducible ~1s). */
 export function buildHarness(root) {
   const outDir = `build/harness/${process.pid}-${Date.now().toString(36)}`
-  const r = spawnSync('npx', ['--yes', 'vite', 'build', '--outDir', outDir, '--emptyOutDir', '--logLevel', 'error'], {
+  const r = spawnSync(process.execPath, [VITE_CLI, 'build', '--outDir', outDir, '--emptyOutDir', '--logLevel', 'error'], {
     cwd: root,
     stdio: 'ignore',
     env: { ...process.env, VR_HARNESS: '1' },
@@ -53,7 +55,11 @@ export function freePort() {
  */
 export function startPreview(root, outDir, basePort) {
   const urlFor = (port) => `http://localhost:${port}/`
-  const spawnAt = (port) => spawn('npx', ['--yes', 'vite', 'preview', '--port', String(port), '--strictPort', '--outDir', outDir], { cwd: root, stdio: 'ignore' })
+  const spawnAt = (port) => spawn(process.execPath, [VITE_CLI, 'preview', '--port', String(port), '--strictPort', '--outDir', outDir], { cwd: root, stdio: 'ignore' })
+  const killServer = (server) => {
+    if (!server) return
+    try { server.kill() } catch { /* already gone */ }
+  }
   // start eagerly on the requested base; the wait-for-up loop retries regardless.
   const state = { server: spawnAt(basePort), port: basePort }
   let closed = false
@@ -65,21 +71,19 @@ export function startPreview(root, outDir, basePort) {
     async restartOnBusy() {
       try {
         const res = await fetch(this.url)
-        return res.ok
-      } catch {
-        // the base port was taken by an orphan — rebind to a discovered free port
-        const port = await freePort()
-        try { state.server.kill() } catch { /* already gone */ }
-        state.server = spawnAt(port)
-        state.port = port
-        this.url = urlFor(port)
-        return false
-      }
+        if (res.ok) return true
+      } catch { /* base port is dead or orphaned */ }
+      const port = await freePort()
+      killServer(state.server)
+      state.server = spawnAt(port)
+      state.port = port
+      this.url = urlFor(port)
+      return false
     },
     close() {
       if (closed) return
       closed = true
-      try { state.server.kill() } catch { /* already gone */ }
+      killServer(state.server)
       try { rmSync(resolve(root, outDir), { recursive: true, force: true }) } catch { /* best effort */ }
     },
   }
