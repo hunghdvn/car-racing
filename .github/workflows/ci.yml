@@ -35,6 +35,8 @@ jobs:
         run: npm run test
       - name: Production build
         run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
       - name: No-leak audit
         run: npm run noleak
 
