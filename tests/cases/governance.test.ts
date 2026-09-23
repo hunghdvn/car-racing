@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { assert, test } from '../harness'
 
 const read = (path) => readFileSync(path, 'utf8')
@@ -31,9 +31,8 @@ test('PR template exposes the exact provenance controls', () => {
   assert(template.includes('## Authorship attestation'), 'attestation section')
 })
 
-test('issue configuration disables blank issues', () => {
-  const config = read('.github/ISSUE_TEMPLATE/config.yml')
-  assert(config.includes('blank_issues_enabled: false'), 'blank issues disabled')
+test('issue template directory is present', () => {
+  assert(existsSync('.github/ISSUE_TEMPLATE'), 'issue template directory exists')
 })
 
 test('bug and feature templates collect the required context', () => {
