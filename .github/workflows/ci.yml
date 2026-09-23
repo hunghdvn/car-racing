@@ -73,9 +73,11 @@ jobs:
         run: npm ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
+      - name: Audit committed visual battery
+        run: npm run audit
       - name: Capture visual battery
         run: npm run shots
-      - name: Audit visual battery
+      - name: Audit regenerated visual battery
         run: npm run audit
       - name: Upload shots on failure
         if: failure()

@@ -51,6 +51,7 @@ if (!up) { await prev.restartOnBusy(); up = await probeUp() } // base port was a
 if (!up) { console.error('[shots] preview server did not come up'); prev.close(); process.exit(1) }
 const url = `${prev.url}${query}`
 let browser = null
+let captureFailures = 0
 try {
 
 browser = await chromium.launch({ headless: true, args: ['--use-angle=1', '--enable-unsafe-experimental-webgpu-discard'] })
@@ -71,12 +72,26 @@ const probe = await page.evaluate(() => (window).__probe?.() ?? '(no probe)')
 console.log('[probe]', JSON.stringify(probe))
 const names = await page.evaluate(() => window.__vr.list())
 const wanted = process.argv.slice(2)
-const list = wanted.length ? wanted.filter((n) => names.includes(n)) : names
-if (!list.length) console.log('[shots] nothing to capture; registered:', names.join(', '))
+const missing = wanted.filter((n) => !names.includes(n))
+if (missing.length) {
+  console.error(`[shots] unknown requested shot(s): ${missing.join(', ')}`)
+  prev.close()
+  process.exit(1)
+}
+const list = wanted.length ? wanted : names
+if (!list.length) {
+  console.error('[shots] no registered shots to capture')
+  prev.close()
+  process.exit(1)
+}
 for (const name of list) {
   const mode = Number(process.env.RENDER_MODE ?? 0)
   const dataUrl = await page.evaluate((a) => window.__vr.shot(a.n, a.m), { n: name, m: mode })
-  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) { console.log(`[shots] ${name}: no image (${String(dataUrl).slice(0, 60)})`); continue }
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) {
+    console.error(`[shots] ${name}: no image (${String(dataUrl).slice(0, 60)})`)
+    captureFailures++
+    continue
+  }
   writeFileSync(resolve(OUT, `${name}.png`), Buffer.from(dataUrl.split(',')[1], 'base64'))
   console.log(`[shots] wrote shots/${name}.png`)
   const p2 = await page.evaluate(() => (window).__probe?.() ?? null)
@@ -89,4 +104,9 @@ for (const name of list) {
 } finally {
   if (browser) { try { await browser.close() } catch { /* best effort */ } }
   prev.close()
+}
+
+if (captureFailures > 0) {
+  console.error(`[shots] RESULT: FAIL (${captureFailures} registered shot(s) produced no image)`)
+  process.exit(1)
 }

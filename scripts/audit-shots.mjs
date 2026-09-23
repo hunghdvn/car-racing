@@ -10,7 +10,7 @@
  * Decodes each shots/*.png into a 2D canvas in the browser and reads pixels.
  * Usage: node scripts/audit-shots.mjs [name ...]
  */
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { buildHarness, startPreview } from './_harness.mjs'
 
@@ -28,6 +28,7 @@ const { chromium } = await import('playwright')
 let browser = null
 let fails = 0
 let audited = 0
+let requested = 0
 try {
   browser = await chromium.launch({ headless: true, args: ['--use-angle=1'] })
   const page = await browser.newPage({ viewport: { width: 800, height: 500 } })
@@ -35,13 +36,27 @@ try {
   await page.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
   // audit exactly the frames the current registry produces (stale dir files are
   // historical Phase-1/dev evidence and are not part of the §22 battery).
-  const registry = await page.evaluate(() => (window.__vr ? window.__vr.list() : []))
+  const vr = await page.evaluate(() => Boolean(window.__vr))
+  if (!vr) {
+    console.error('[audit] FLAG the screenshot registry did not boot')
+    fails++
+  }
+  const registry = vr ? await page.evaluate(() => window.__vr.list()) : []
   const wanted = process.argv.slice(2)
-  const all = wanted.length ? wanted : registry.length ? registry : readdirSync(SHOTS).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4))
+  const all = wanted.length ? wanted : registry
+  if (!wanted.length && registry.length === 0) {
+    console.error('[audit] FLAG the screenshot registry is empty')
+    fails++
+  }
   const names = all.filter((n) => !n.startsWith('_dbg') && !n.startsWith('perf_') && !n.startsWith('live_'))
+  requested = names.length
   for (const name of names) {
     let buf
-    try { buf = readFileSync(resolve(SHOTS, `${name}.png`)) } catch { continue }
+    try { buf = readFileSync(resolve(SHOTS, `${name}.png`)) } catch {
+      console.error(`  FLAG ${name.padEnd(20)} registered shot is missing shots/${name}.png`)
+      fails++
+      continue
+    }
     const b64 = buf.toString('base64')
     const stats = await page.evaluate(async (durl) => {
       const img = new Image()
@@ -86,6 +101,10 @@ try {
 } finally {
   if (browser) { try { await browser.close() } catch { /* best effort */ } }
   prev.close()
+}
+if (requested === 0 || audited !== requested) {
+  console.error(`[audit] FLAG only ${audited}/${requested} selected frames could be audited`)
+  fails++
 }
 console.log(`[audit] RESULT: ${fails === 0 ? 'ALL CLEAN' : fails + ' FLAGGED'} (${audited} frames)`)
 process.exit(fails === 0 ? 0 : 1)
