@@ -34,7 +34,6 @@ test('PR template exposes the exact provenance controls', () => {
 test('issue configuration disables blank issues', () => {
   const config = read('.github/ISSUE_TEMPLATE/config.yml')
   assert(config.includes('blank_issues_enabled: false'), 'blank issues disabled')
-  assert(config.includes('security/advisories/new'), 'private security report path')
 })
 
 test('bug and feature templates collect the required context', () => {

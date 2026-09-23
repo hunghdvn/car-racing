@@ -1,6 +1,1 @@
 blank_issues_enabled: false
-contact_links:
-  - name: Report a security issue privately
-    url: "https://github.com/hunghdvn/car-racing/security/advisories/new"
-  - name: Read the contribution guide
-    url: "https://github.com/hunghdvn/car-racing/blob/main/CONTRIBUTING.md"
