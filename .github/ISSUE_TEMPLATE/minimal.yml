@@ -1,0 +1,6 @@
+name: "Minimal form"
+description: "Validate the issue-form parser."
+body:
+  - type: textarea
+    attributes:
+      label: "Details"
