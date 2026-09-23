@@ -31,9 +31,22 @@ test('PR template exposes the exact provenance controls', () => {
   assert(template.includes('## Authorship attestation'), 'attestation section')
 })
 
-test('issue configuration disables blank issues', () => {
+test('issue configuration disables blank issues and publishes safe links', () => {
   const config = read('.github/ISSUE_TEMPLATE/config.yml')
   assert(config.includes('blank_issues_enabled: false'), 'blank issues disabled')
+  assert(config.includes('Report a security issue privately'), 'private security link label')
+  assert(config.includes('https://github.com/hunghdvn/car-racing/security/advisories/new'), 'private security link target')
+  assert(config.includes('Read the contribution guide'), 'contribution guide link label')
+  assert(config.includes('/blob/main/CONTRIBUTING.md'), 'contribution guide link target')
+})
+
+test('issue templates are the approved structured YAML forms', () => {
+  for (const path of [
+    '.github/ISSUE_TEMPLATE/bug-report.yml',
+    '.github/ISSUE_TEMPLATE/feature-request.yml',
+  ]) {
+    assert(read(path).startsWith('name:'), `${path} is an issue form`)
+  }
 })
 
 test('bug and feature templates collect the required context', () => {
@@ -82,6 +95,12 @@ test('CONTRIBUTING states the Qwen-only code rule and required gates', () => {
   for (const command of ['npm run test', 'npm run build', 'npm run noleak', 'npm run shots', 'npm run audit']) {
     assert(guide.includes(command), command)
   }
+})
+
+test('CONTRIBUTING explains YAML issue-form observability', () => {
+  const guide = read('CONTRIBUTING.md')
+  assert(guide.includes('.github/ISSUE_TEMPLATE/*.yml'), 'structured YAML form location')
+  assert(guide.includes('platform limitation'), 'GraphQL absence classification')
 })
 
 test('code of conduct covers false provenance and private reporting', () => {
