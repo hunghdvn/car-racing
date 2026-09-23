@@ -1,0 +1,2 @@
+This controlled-change marker validates a code-like pull request without a Qwen attestation.
+It is intentionally not merged.
