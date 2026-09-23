@@ -36,7 +36,11 @@ contradictory.
 
 1. Search existing issues and pull requests.
 2. Open an issue before a substantive behavioral change and wait for maintainer
-   direction.
+   direction. Use the structured YAML issue forms in
+   `.github/ISSUE_TEMPLATE/*.yml`; GitHub renders them in the new-issue picker,
+   but its public template-listing APIs enumerate only Markdown templates, so an
+   empty GraphQL `issueTemplates` result is a platform limitation, not evidence
+   that the forms are inactive.
 3. Keep one focused change per pull request. Do not bundle refactoring with a
    feature or bug fix.
 4. State the files, behavior, and validation evidence you intend to deliver.
