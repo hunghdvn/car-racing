@@ -1,9 +1,21 @@
 {
   "name": "velocity-rush",
-  "private": true,
+  "private": false,
   "version": "1.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Velocity Rush - arcade 3D browser racing game",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hunghdvn/car-racing.git"
+  },
+  "homepage": "https://github.com/hunghdvn/car-racing#readme",
+  "keywords": [
+    "arcade-racing",
+    "3d",
+    "webgl",
+    "threejs"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

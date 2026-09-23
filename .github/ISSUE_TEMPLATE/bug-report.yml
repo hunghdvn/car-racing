@@ -1,0 +1,54 @@
+name: Bug report
+description: Report reproducible behavior that differs from the expected result.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening this issue, run:
+        `npm run test`, `npm run typecheck`, `npm run build`, `npm run noleak`,
+        `npm run functional`, `npm run shots`, and `npm run audit`.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproducible steps
+      description: Include a fresh clone URL and exact commands if possible.
+      placeholder: "1. npm ci\n2. npm run dev\n3. ..."
+    validations:
+      required: true
+  - type: input
+    id: frequency
+    attributes:
+      label: Frequency
+      description: Every time, sometimes, or first run only?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Browser and operating system
+      description: Include browser version, OS, and GPU/renderer stack.
+      placeholder: Chrome 140, macOS 26, Apple M2 / Metal
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or console output
+      placeholder: Paste the exact command output or browser console trace.
+    validations:
+      required: true
