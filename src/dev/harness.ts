@@ -12,6 +12,7 @@ import { roadPose, heroShot } from '../world/TrackSlice'
 import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
+import type { CarId } from '../vehicles/CarSpecs'
 import type { Game } from '../game/Game'
 
 /* ---------------------------------------------------------------------------
@@ -61,6 +62,10 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
     releasePose: () => game.releasePose(),
   })
 
+  /* dev-only: switch the player body (garage spec §8) for the model-shot battery */
+  ;(globalThis as unknown as { __selectModel?: (id: string) => string }).__selectModel =
+    (id: string) => { game.selectModel(id as CarId); return game.selectedSpec.id }
+
   /* query-driven debug material/culling levers (dev-only; forbidden by default) */
   const qp: Record<string, string> = {}
   for (const kv of location.search.slice(1).split('&')) { const i = kv.indexOf('='); if (i > 0) qp[kv.slice(0, i)] = kv.slice(i + 1) }
@@ -92,7 +97,7 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
 
   /* ---------------- deterministic validation poses (Gate A/C batteries) ---- */
   const anchor = roadPose(slice.spline, slice.spline.sFromX(30), 0)
-  const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean } = {}): ShotPose => {
+  const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean; model?: string } = {}): ShotPose => {
     const cy = Math.cos(anchor.yaw), sy = Math.sin(anchor.yaw)
     const rot = (v: [number, number, number]): [number, number, number] => [
       anchor.pos[0] + v[0] * cy + v[2] * sy,
@@ -414,6 +419,14 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
         freezeSim: true, tag: 'gate-m',
       })
     }
+  }
+
+  /* ---------------- per-model body shots (registered LAST) ------------------- */
+  // End-registration matters: shots.mjs captures in registry order on one page, so
+  // every pre-existing pose renders before the first selectModel call and the
+  // hero/grid/state battery stays untouched; each model shot sets its own body on arrival.
+  for (const id of ['hero', 'hyper', 'grip', 'drift']) {
+    Debug.registerPose(`car_${id}`, onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26, { model: id }))
   }
 
   /* ---------------- dev probes (removed with the harness, spec §23.4) ------ */

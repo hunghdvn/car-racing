@@ -602,7 +602,7 @@ export function buildCar(paintHex: number, spec: CarSpec = HERO_SPEC): CarModel 
     const gt = spec.kit.spoiler === 'gt'
     for (const side of [-1, 1]) {
       const strut = new THREE.Mesh(new THREE.BoxGeometry(0.040, gt ? 0.20 : 0.120, 0.120), paint)
-      strut.position.set(side * 0.56, 0.755, 2.06)
+      strut.position.set(side * 0.56, gt ? 0.80 : 0.755, 2.06)
       group.add(named(strut, `spoiler-strut-${side < 0 ? 'l' : 'r'}`))
     }
     const blade = new THREE.Mesh(gt ? roundedPlateGeo(1.44, 0.05, 0.032, 0.013) : roundedPlateGeo(1.34, 0.045, 0.03, 0.012), paint)

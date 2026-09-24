@@ -496,6 +496,10 @@ export class Game {
   applyPose(p: ShotPose): void {
     this.simFrozen = !!p.freezeSim
     this.frozenPose = p.freezeSim ? p : null
+    // frozen-capture model switch (dev shots): the harness pose carries the body id.
+    // set after frozenPose so selectModel's re-apply line re-enters with the car
+    // already rebuilt, and terminates via selectModel's same-id early-return.
+    if (p.player?.model && p.player.model !== this.selectedSpec.id) this.selectModel(p.player.model as CarId)
     // approved frames are pose-driven: transient effects never leak into a
     // frozen capture (and pose-capture clearing doubles as the restart hook)
     this.fx.clearAll()

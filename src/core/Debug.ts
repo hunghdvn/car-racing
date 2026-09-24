@@ -30,6 +30,8 @@ export interface ShotPose {
     susp?: number
     /** extra body roll beyond `bank` (rad) — drift skid lean */
     lean?: number
+    /** frozen-capture model switch (dev shots): id resolved via getSpec */
+    model?: string
   }
   freezeSim?: boolean
   parkAi?: boolean
