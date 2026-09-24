@@ -15,7 +15,8 @@ import { buildTrackSlice, type Slice } from '../world/TrackSlice'
 import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
-import { BASE_TUNING } from '../vehicles/CarTuning'
+import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
+import { getSpec, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -42,8 +43,10 @@ export class Game {
   readonly sky: Sky
   readonly slice: Slice
   readonly probe: RoadSurfaceProbe
-  readonly car: CarModel
-  readonly visual: VehicleVisual
+  car: CarModel
+  visual: VehicleVisual
+  selectedSpec: CarSpec
+  paintHex: number
   readonly player: PlayerVehicle
   readonly input: Input
   readonly chase: ChaseCamera
@@ -89,7 +92,7 @@ export class Game {
   private readonly mapAi: { x: number; z: number }[] = []
   private mapAiCount = 0
 
-  constructor(canvas: HTMLCanvasElement, paintHex: number = PAINTS[1].color) {
+  constructor(canvas: HTMLCanvasElement, paintHex: number = PAINTS[1].color, modelId: CarId = 'hero') {
     this.view = new Renderer(canvas)
     this.sky = new Sky()
     this.view.attachSky(this.sky)
@@ -97,7 +100,9 @@ export class Game {
     this.slice.group.name = 'track-slice'
     this.view.scene.add(this.slice.group)
     this.probe = new RoadSurfaceProbe(this.slice.spline, this.slice.field)
-    this.car = buildCar(paintHex)
+    this.paintHex = paintHex
+    this.selectedSpec = getSpec(modelId)
+    this.car = buildCar(paintHex, this.selectedSpec)
     this.car.group.name = 'player-car'
     this.view.scene.add(this.car.group)
     this.visual = new VehicleVisual(this.car)
@@ -132,15 +137,43 @@ export class Game {
       onRestart: () => this.beginRace(),
       onResume: () => this.setPaused(false),
       onMenu: () => this.toMenu(),
-      onPaint: (hex) => this.car.setPaint(hex),
+      onPaint: (hex) => { this.paintHex = hex; this.car.setPaint(hex) },
+      onModel: (id) => this.selectModel(id),
     })
     this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
     this.ui.bindTrack(this.slice.spline)
+    this.captureRearWheels()
+    for (let i = 0; i < AI.count; i++) this.mapAi.push({ x: 0, z: 0 })
+  }
+
+  /** rear-wheel skid/smoke anchors, captured from the current car model's locals */
+  private captureRearWheels(): void {
+    this.rearWheels.length = 0
     for (const w of this.car.wheels) if (!w.front) {
       const holder: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       this.rearWheels.push({ x: holder.position.x, z: holder.position.z })
     }
-    for (let i = 0; i < AI.count; i++) this.mapAi.push({ x: 0, z: 0 })
+  }
+
+  /** title-screen model switch (garage spec §8): rebuild mesh+visual, retune */
+  selectModel(id: CarId): void {
+    const spec = getSpec(id)
+    if (spec.id === this.selectedSpec.id) return
+    // spec §9: not exposed during a race — the cards are title-screen only
+    if (this.director.phase === 'countdown' || this.director.phase === 'racing') return
+    this.view.scene.remove(this.car.group)
+    this.car.group.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose() }
+    })
+    this.selectedSpec = spec
+    this.car = buildCar(this.paintHex, spec)
+    this.car.group.name = 'player-car'
+    this.view.scene.add(this.car.group)
+    this.visual = new VehicleVisual(this.car)
+    this.captureRearWheels()
+    this.player.phys.setTuning(resolveTuning(spec.stat))
+    if (this.frozenPose) this.applyPose(this.frozenPose) // keep a live capture in sync
   }
 
   /** Release a frozen shot pose held by the dev harness (see core/Debug host). */

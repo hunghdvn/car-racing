@@ -156,3 +156,20 @@ test('ai: the brain pace-caps against its own car\'s top speed', () => {
   assertNear(hyper.tuning.topSpeed, VEHICLE.topSpeed * 1.12, 1e-6, 'hyper tuning wired to the car')
   assert(hyper.phys.tuning === hyper.tuning, 'the physics runs the AI car\'s record')
 })
+
+import { statBarsFor, STAT_AXIS_LABELS } from '../../src/ui/UIManager'
+
+test('garage: stat bars normalize across the catalog to [0,1] on every axis', () => {
+  assert(STAT_AXIS_LABELS.length === 5, 'top speed / acceleration / grip / drift / brake')
+  for (const s of CAR_SPECS) {
+    const bars = statBarsFor(s, CAR_SPECS)
+    assert(bars.length === 5 && bars.every((b) => b >= 0 && b <= 1), `${s.id} in range`)
+  }
+})
+
+test('garage: the spread reads — extremes take the rails on their axis', () => {
+  const top = CAR_SPECS.map((s) => statBarsFor(s, CAR_SPECS)[0])
+  assert(Math.max(...top) - Math.min(...top) > 0.8, 'top-speed axis spans near the full bar')
+  const slowest = CAR_SPECS[top.indexOf(Math.min(...top))]
+  assert(slowest.id === 'grip', 'grip is the slowest — the bias is real')
+})

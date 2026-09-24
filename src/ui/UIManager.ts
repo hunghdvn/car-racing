@@ -1,6 +1,8 @@
 import { AUDIO, NITRO, PAINTS, UI, VEHICLE } from '../config'
 import type { PaintDef } from '../config'
 import { fmtTime, hexToCss } from '../util'
+import { CAR_SPECS, getSpec, readModelSelection, writeModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { resolveTuning } from '../vehicles/CarTuning'
 
 /* ------------------------------------------------------------------------- *
  * DOM wiring for the shipped screens (spec §15): loading progress, title +
@@ -168,6 +170,30 @@ export function buildCarNames(paints: readonly PaintDef[], playerCarId: number):
   return paints.map((p, i) => (i === playerCarId ? 'YOU' : p.name.toUpperCase()))
 }
 
+export const STAT_AXIS_LABELS = ['TOP SPEED', 'ACCELERATION', 'GRIP', 'DRIFT', 'BRAKE'] as const
+
+/** normalised bar fractions (0..1) for one spec across the catalog spread;
+ *  the DRIFT axis averages the two drift fields' individually-normalised values */
+export function statBarsFor(spec: CarSpec, all: readonly CarSpec[]): number[] {
+  const get = (s: CarSpec) => resolveTuning(s.stat)
+  const axis = (pick: (t: ReturnType<typeof get>) => number) => {
+    const vals = all.map((s) => pick(get(s)))
+    const lo = Math.min(...vals), hi = Math.max(...vals)
+    return (s: CarSpec) => (hi - lo < 1e-9 ? 0.5 : (pick(get(s)) - lo) / (hi - lo))
+  }
+  const f = [
+    axis((t) => t.topSpeed), axis((t) => t.engineAccel), axis((t) => t.gripMax),
+    axis((t) => t.brakeForce),
+  ]
+  const driftLo = Math.min(...all.map((s) => resolveTuning(s.stat).driftYawBoost))
+  const driftSpan = Math.max(1e-9, Math.max(...all.map((s) => resolveTuning(s.stat).driftYawBoost)) - driftLo)
+  const yawLo = Math.min(...all.map((s) => resolveTuning(s.stat).yawResponse))
+  const yawSpan = Math.max(1e-9, Math.max(...all.map((s) => resolveTuning(s.stat).yawResponse)) - yawLo)
+  const t0 = get(spec)
+  return [f[0](spec), f[1](spec), f[2](spec), f[3](spec),
+    ((t0.driftYawBoost - driftLo) / driftSpan + (t0.yawResponse - yawLo) / yawSpan) / 2]
+}
+
 export type UiMode = 'title' | 'racing'
 
 /**
@@ -210,6 +236,7 @@ export interface UiHost {
   onResume(): void
   onMenu(): void
   onPaint(hex: number): void
+  onModel(id: CarId): void
 }
 
 interface PopupTicket { node: HTMLElement; bornAt: number }
@@ -297,6 +324,7 @@ export class UIManager {
     this.swatchHost = this.$('paint-swatches')
     this.buildButtons()
     this.buildSwatches(PAINTS, PAINTS[1].color)
+    this.buildModelCards(readModelSelection())
     this.buildNitroSegments()
   }
 
@@ -377,6 +405,40 @@ export class UIManager {
       })
       this.swatchHost.appendChild(b)
     }
+  }
+
+  /** garage model cards (car-models spec §8 title screen) */
+  private buildModelCards(selectedId: CarId): void {
+    const host = this.$('model-cards')
+    if (!host) return
+    host.textContent = ''
+    for (const s of CAR_SPECS) {
+      const b = this.doc.createElement('button')
+      b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
+      b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
+      b.addEventListener('click', () => {
+        for (const c of Array.from(host.children)) c.classList.remove('selected')
+        b.classList.add('selected')
+        writeModelSelection(s.id)
+        this.host.onModel(s.id)
+      })
+      host.appendChild(b)
+    }
+    this.renderModelStats(selectedId)
+  }
+
+  /** five normalised stat bars for the selected model (spec §8 garage) */
+  private renderModelStats(id: CarId): void {
+    const host = this.$('model-stats')
+    if (!host) return
+    host.textContent = ''
+    const bars = statBarsFor(getSpec(id), CAR_SPECS)
+    STAT_AXIS_LABELS.forEach((label, i) => {
+      const row = this.doc.createElement('div')
+      row.className = 'stat-row'
+      row.innerHTML = `<span>${label}</span><div class="stat-bar"><i style="width:${Math.round(bars[i] * 100)}%"></i></div>`
+      host.appendChild(row)
+    })
   }
 
   private buildNitroSegments(): void {
