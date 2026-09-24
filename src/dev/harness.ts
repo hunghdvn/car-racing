@@ -12,7 +12,8 @@ import { roadPose, heroShot } from '../world/TrackSlice'
 import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
-import type { CarId } from '../vehicles/CarSpecs'
+import { buildCar, validateCarShape } from '../assets/CarModel'
+import { CAR_SPECS, type CarId } from '../vehicles/CarSpecs'
 import type { Game } from '../game/Game'
 
 /* ---------------------------------------------------------------------------
@@ -65,6 +66,19 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   /* dev-only: switch the player body (garage spec §8) for the model-shot battery */
   ;(globalThis as unknown as { __selectModel?: (id: string) => string }).__selectModel =
     (id: string) => { game.selectModel(id as CarId); return game.selectedSpec.id }
+
+  /* dev-only: validate the car catalog at load (car-models spec §9) — build each
+     spec once so a malformed station table breaks loudly in the harness build.
+     Mirrors the node-side gate's semantics (reuse validateCarShape, no re-implement). */
+  for (const spec of CAR_SPECS) {
+    try {
+      validateCarShape(spec.shape)
+      buildCar(0x1f8fe0, spec)
+      console.log(`[car-catalog] ${spec.id} (${spec.name}) validated`)
+    } catch (e) {
+      console.error(`[car-catalog] ${spec.id} (${spec.name}) FAILED to build`, e)
+    }
+  }
 
   /* query-driven debug material/culling levers (dev-only; forbidden by default) */
   const qp: Record<string, string> = {}

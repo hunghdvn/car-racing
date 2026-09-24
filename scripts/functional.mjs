@@ -336,6 +336,74 @@ try {
     return { available: g.audio.available, threw }
   })
   rec('audio-after-gesture', audio.available && !audio.threw, `unlock→available=${audio.available}, sfx-threw=${audio.threw ?? 'none'} (listen pass is a human acceptance item)`)
+
+  // ---- car-models final-fix coverage (spec §10 items 2/4/5) ---------------
+  // buildCar/selectModel/the scene need the real canvas + the harness dev
+  // globals, so the per-model kit / AI-field / standings / garage behaviour is
+  // audited here (the node suite runs headless — buildCar cannot execute there).
+  // A dedicated boot carrying a persisted model selection lets the BOOT path
+  // itself (not only selectModel) be checked for physics + mesh + grid.
+  const EXPECT_SPOKES = { hero: 20, hyper: 48, grip: 32, drift: 24 } // spokeCountForStyle(style)*4, per CarSpecs.ts
+  const EXPECT_STANDINGS = ['YOU', 'APEX GRIP', 'SOLARIS HYPER', 'SLIDE KING', 'VELOCITY GT', 'APEX GRIP']
+  const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
+  const mp = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+  await mp.addInitScript(() => { try { localStorage.setItem('vr.model', 'drift') } catch { /* private mode */ } })
+  await mp.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await mp.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await mp.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await mp.evaluate(() => new Promise((r) => setTimeout(r, 400)))
+
+  const boot = await mp.evaluate(() => {
+    const g = window.__dbg.game
+    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
+    const byName = (name) => window.__dbg.scene.children.find((o) => o.name === name)
+    return {
+      aiSpecIds: g.ai.map((a) => a.spec.id),
+      aiSpokes: [0, 1, 2, 3, 4].map((i) => spokeTotal(byName(`ai-car-${i}`))),
+      playerSpokes: spokeTotal(g.car.group),
+      playerTop: g.player.phys.tuning.topSpeed,
+      heroRef: g.ai.find((a) => a.spec.id === 'hero')?.tuning?.topSpeed ?? null,
+      selectedId: g.selectedSpec.id,
+      standings: g.ui.standingNames ? Array.from(g.ui.standingNames) : null,
+    }
+  })
+
+  // §10.2 / C2: the AI field renders the ASSIGNED models, not five hero clones
+  // (every wheel of a hero build reads 20 spokes; a mixed grid cannot).
+  const aiFieldOk = boot.aiSpecIds.join(',') === 'grip,hyper,drift,hero,grip'
+    && boot.aiSpokes.every((n, i) => n === EXPECT_SPOKES[boot.aiSpecIds[i]])
+  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-spoke totals ${JSON.stringify(boot.aiSpokes)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(Object.values(EXPECT_SPOKES))}); five hero clones would all read 20`)
+
+  // C1: a persisted model must retune the BOOT physics, not just the mesh.
+  const bootDriftOk = boot.selectedId === 'drift'
+    && boot.playerSpokes === EXPECT_SPOKES.drift
+    && boot.heroRef != null
+    && Math.abs(boot.playerTop - boot.heroRef * 0.96) < 1e-6
+  rec('boot-retunes-physics', bootDriftOk, `stored 'drift' → selected=${boot.selectedId}, mesh spokes=${boot.playerSpokes} (drift=${EXPECT_SPOKES.drift}), topSpeed=${boot.playerTop?.toFixed?.(3)} vs hero ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
+
+  // §10.5: standings carry the model names, never the paint names.
+  const standingsOk = Array.isArray(boot.standings)
+    && boot.standings.length === EXPECT_STANDINGS.length
+    && boot.standings.every((n, i) => n === EXPECT_STANDINGS[i])
+    && !boot.standings.some((n) => PAINT_NAMES.includes(n))
+  rec('standings-are-model-names', standingsOk, `standings ${JSON.stringify(boot.standings)} (expect ${JSON.stringify(EXPECT_STANDINGS)})`)
+
+  // §10.4: the garage onModel seam rebuilds the live player group + retunes it.
+  const garage = await mp.evaluate(() => {
+    const g = window.__dbg.game
+    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
+    const before = spokeTotal(g.car.group)
+    const id = window.__selectModel('hyper')
+    const after = spokeTotal(g.car.group)
+    const top = g.player.phys.tuning.topSpeed
+    window.__selectModel('hero')
+    const back = spokeTotal(g.car.group)
+    return { before, id, after, top, back }
+  })
+  const garageOk = garage.id === 'hyper' && garage.before === EXPECT_SPOKES.drift
+    && garage.after === EXPECT_SPOKES.hyper && garage.back === EXPECT_SPOKES.hero
+    && boot.heroRef != null && Math.abs(garage.top - boot.heroRef * 1.12) < 1e-6
+  rec('garage-rebuilds-on-model', garageOk, `drift(${garage.before})→hyper(${garage.after}, top ${garage.top?.toFixed?.(3)})→hero(${garage.back}); selectModel returned '${garage.id}'`)
 } finally {
   if (browser) { try { await browser.close() } catch { /* best effort */ } }
   prev.close()

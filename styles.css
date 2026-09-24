@@ -151,6 +151,8 @@ body { font-family: var(--font-ui); color: var(--ink); user-select: none; -webki
 .model-card b { display: block; font-family: var(--font-display); font-size: 13px; letter-spacing: 2px; color: var(--ink); }
 .model-card i { display: block; font-style: normal; font-size: 9px; letter-spacing: 3px; color: var(--amber); margin-top: 2px; }
 .model-card.selected { border-color: var(--cyan); box-shadow: 0 0 18px rgba(53,226,255,.5); }
+#model-cards.locked { pointer-events: none; opacity: .5; }
+#model-cards.locked .model-card { cursor: default; }
 #model-stats { display: flex; flex-direction: column; gap: 3px; align-items: center; margin-top: 8px; }
 .stat-row { display: flex; align-items: center; gap: 8px; font-size: 9px; letter-spacing: 2px; color: var(--ink-dim); }
 .stat-row span { width: 92px; text-align: right; }

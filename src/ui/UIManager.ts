@@ -276,6 +276,7 @@ export class UIManager {
   private readonly minimap: HTMLCanvasElement | null
   private readonly mctx: CanvasRenderingContext2D | null
   private readonly swatchHost: HTMLElement | null
+  private readonly modelCards: HTMLElement | null
 
   private mode: UiMode = 'title'
   private prevPhase: HudData['phase'] = 'idle'
@@ -324,6 +325,7 @@ export class UIManager {
     this.minimap = this.$('minimap') as HTMLCanvasElement | null
     this.mctx = this.minimap ? this.minimap.getContext('2d') : null
     this.swatchHost = this.$('paint-swatches')
+    this.modelCards = this.$('model-cards')
     this.buildButtons()
     this.buildSwatches(PAINTS, PAINTS[1].color)
     this.buildModelCards(readModelSelection())
@@ -492,6 +494,11 @@ export class UIManager {
     } else {
       this.show(this.countdownEl, false)
     }
+
+    /* garage cards are a title-screen affordance: lock the row through a live
+       race so a mid-race MAIN MENU (where the director keeps running behind the
+       board) can not leave them clickable while selectModel only no-ops. */
+    this.modelCards?.classList.toggle('locked', hud.phase === 'countdown' || hud.phase === 'racing')
 
     if (!hud.active) return
 

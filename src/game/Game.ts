@@ -107,6 +107,11 @@ export class Game {
     this.view.scene.add(this.car.group)
     this.visual = new VehicleVisual(this.car)
     this.player = new PlayerVehicle(this.probe)
+    // a persisted / boot-selected model must drive as it looks: retune the
+    // physics from the chosen spec here too, since selectModel's same-id guard
+    // makes its setTuning unreachable for the already-selected card. On the
+    // hero path resolveTuning({}) is bit-identical to the VehiclePhysics default.
+    this.player.phys.setTuning(resolveTuning(this.selectedSpec.stat))
     this.input = new Input()
     this.input.onAction = (a) => this.onInputAction(a)
     /* the AI field: distinct paints, per-car model + visual + brain, one
@@ -114,13 +119,17 @@ export class Game {
     const playerPaint = PAINTS.find((pt) => pt.color === paintHex)
     const aiPaints: PaintDef[] = PAINTS.filter((pt) => pt !== playerPaint).slice(0, AI.count)
     for (let i = 0; i < AI.count; i++) {
-      const model = buildCar(aiPaints[i % aiPaints.length].color)
+      const ai = new AIVehicle(i, this.slice.spline, this.probe)
+      // the mesh is driven from the brain's own spec so CAR.aiModels is read at
+      // exactly one site — a field built from the hero default would visually
+      // contradict the per-slot standings labels.
+      const model = buildCar(aiPaints[i % aiPaints.length].color, ai.spec)
       model.group.name = `ai-car-${i}`
       model.group.position.set(0, -600, 0) // parked off-scene until the grid
       this.view.scene.add(model.group)
       this.aiCars.push(model)
       this.aiVisuals.push(new VehicleVisual(model))
-      this.ai.push(new AIVehicle(i, this.slice.spline, this.probe))
+      this.ai.push(ai)
     }
     const competitors: Competitor[] = [{ id: 0, phys: this.player.phys }, ...this.ai.map((a, i) => ({ id: i + 1, phys: a.phys }))]
     this.director = new RaceDirector(competitors, this.slice.spline.length)
@@ -160,7 +169,10 @@ export class Game {
     const spec = getSpec(id)
     if (spec.id === this.selectedSpec.id) return
     // spec §9: not exposed during a race — the cards are title-screen only
-    if (this.director.phase === 'countdown' || this.director.phase === 'racing') return
+    if (this.director.phase === 'countdown' || this.director.phase === 'racing') {
+      if (__VR_HARNESS__) console.log(`[garage] selectModel('${id}') ignored — the sim is ${this.director.phase}`)
+      return
+    }
     this.view.scene.remove(this.car.group)
     this.car.group.traverse((o) => {
       const m = o as THREE.Mesh

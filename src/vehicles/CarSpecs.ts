@@ -39,8 +39,9 @@ export interface CarSpec {
 
 /* Hero silhouette, verbatim from the shipped car (car-models spec §5). The
  * loft machinery lives in CarModel.ts; data lives here so the catalog is the
- * single runtime source and the module edge stays one-way (CarModel imports
- * only types from this module). */
+ * single runtime source and the module edge stays one-way: CarModel consumes
+ * this module (the CarSpec/CarShape types plus the HERO_SPEC / spokeCountForStyle
+ * values) and this module never reaches back into it. */
 const BODY_STATIONS: CarStation[] = [
   { z: -2.265, hw: 0.742, by: 0.268, ty: 0.700, rt: 0.150, rb: 0.110 },
   { z: -2.075, hw: 0.832, by: 0.288, ty: 0.782, rt: 0.135, rb: 0.080 },
