@@ -106,3 +106,23 @@ test('catalog: wheel spoke counts per style', () => {
 test('catalog: headless localStorage guard returns hero', () => {
   assert(readModelSelection() === 'hero', 'no storage in node — fallback, no throw')
 })
+
+import { CAR_SPECS as CS } from '../../src/vehicles/CarSpecs'
+
+const stationFingerprint = (s: (typeof CS)[number]): string => {
+  const b = s.shape.bodyStations
+  return `${b[0].z.toFixed(3)}|${b[b.length - 1].z.toFixed(3)}|${Math.max(...b.map((v) => v.hw)).toFixed(3)}|${Math.min(...b.map((v) => v.ty)).toFixed(3)}`
+}
+
+test('shapes: all four silhouettes are distinct', () => {
+  assert(new Set(CS.map(stationFingerprint)).size === 4, 'each model lofts a different body')
+})
+
+test('shapes: hyper is longer+lower, grip more compact, drift wider', () => {
+  const L = (id: string) => { const s = CS.find((c) => c.id === id)!; const b = s.shape.bodyStations; return { len: b[b.length - 1].z - b[0].z, maxHw: Math.max(...b.map((v) => v.hw)), minTy: Math.min(...b.map((v) => v.ty)) } }
+  const hero = L('hero')
+  assert(L('hyper').len > hero.len + 0.1, 'hyper is longer')
+  assert(L('hyper').minTy < hero.minTy, 'hyper is lower')
+  assert(L('grip').len < hero.len - 0.05, 'grip is more compact')
+  assert(L('drift').maxHw > hero.maxHw + 0.02, 'drift is wider')
+})
