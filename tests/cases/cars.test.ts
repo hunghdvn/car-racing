@@ -1,6 +1,8 @@
 import { assert, assertNear, test } from '../harness'
 import { VEHICLE, CAR } from '../../src/config'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
+import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, type CarKit } from '../../src/vehicles/CarSpecs'
+import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe } from '../rig'
 import type { CarTuning } from '../../src/vehicles/CarTuning'
@@ -74,4 +76,33 @@ test('physics: same seed + same tuning replays bit-identical', () => {
     return p.x + p.z + p.yaw
   }
   assert(run() === run(), 'trajectory identity')
+})
+
+test('catalog: the four models exist in order', () => {
+  assert(CAR_SPECS.map((s) => s.id).join(',') === 'hero,hyper,grip,drift', 'catalog order')
+  assert(CAR_SPECS.every((s) => s.name.length > 0 && s.class.length > 0), 'every model is named and classed')
+})
+
+test('catalog: hero is today\'s car — stations verbatim and stats resolved base', () => {
+  const t = resolveTuning(HERO_SPEC.stat)
+  for (const k of Object.keys(VEHICLE) as (keyof typeof VEHICLE)[]) assert(t[k] === BASE_TUNING[k], String(k))
+  assert(HERO_SPEC.kit.spoiler === 'low' && HERO_SPEC.kit.splitter === 'std', 'hero kit matches the shipped look')
+  assert(HERO_SPEC.kit.wheelRadiusMul === 1 && HERO_SPEC.kit.trackMul === 1, 'hero geometry is base')
+})
+
+test('catalog: getSpec falls back to hero for unknown ids', () => {
+  assert(getSpec('nope') === HERO_SPEC && getSpec('drift').id === 'drift', 'lookup + guard')
+})
+
+test('catalog: every shape lofts cleanly (browser-free geometry gate)', () => {
+  for (const s of CAR_SPECS) validateCarShape(s.shape)
+})
+
+test('catalog: wheel spoke counts per style', () => {
+  const t: Record<CarKit['wheelStyle'], number> = { 'five-spoke': 5, 'multi-spoke': 8, 'mesh': 12, 'teardrop': 6 }
+  for (const k of Object.keys(t) as CarKit['wheelStyle'][]) assert(spokeCountForStyle(k) === t[k], k)
+})
+
+test('catalog: headless localStorage guard returns hero', () => {
+  assert(readModelSelection() === 'hero', 'no storage in node — fallback, no throw')
 })

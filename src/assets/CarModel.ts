@@ -3,6 +3,7 @@ import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, roundedPlateGeo, tireTreadNormal } from './Textures'
+import type { CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -89,7 +90,7 @@ function getProfile(rt: number, rb: number, ts: number): Pt[] {
   return p
 }
 
-function interpStations(sts: Station[], z: number): Station {
+function interpStations(sts: readonly Station[], z: number): Station {
   let i = 0
   while (i < sts.length - 2 && sts[i + 1].z < z) i++
   const i0 = Math.max(0, i), i1 = Math.min(sts.length - 1, i + 1)
@@ -185,7 +186,7 @@ function ensureOutwardWinding(geo: THREE.BufferGeometry): void {
  * Columns = interpolated stations along z; ring = rounded-shoulder profile.
  * Fully closed tube (ring wrap-around included) + optional end caps.
  */
-function buildHull(stations: Station[], samples: number, opts: { caps?: boolean; vScale?: number; hwScale?: number } = {}): THREE.BufferGeometry {
+function buildHull(stations: readonly Station[], samples: number, opts: { caps?: boolean; vScale?: number; hwScale?: number } = {}): THREE.BufferGeometry {
   const z0 = stations[0].z, z1 = stations[stations.length - 1].z
   const hwScale = opts.hwScale ?? 1
   const vScale = opts.vScale ?? 0.5
@@ -244,6 +245,19 @@ function buildHull(stations: Station[], samples: number, opts: { caps?: boolean;
   crNormals(geo)
   geo.computeBoundingSphere()
   return geo
+}
+
+/** Browser-free geometry gate (spec §9): lofts both hulls of a shape and
+ *  lets buildHull's ring/non-uniform guard throw. Dev/test only. */
+export function validateCarShape(shape: CarShape): void {
+  const a = buildHull(shape.bodyStations, 52, { caps: true })
+  const b = buildHull(shape.cabinStations, 30, { caps: true })
+  for (const g of [a, b]) {
+    const n = g.getAttribute('normal')
+    for (let i = 0; i < n.count; i++) {
+      if (!Number.isFinite(n.getX(i) + n.getY(i) + n.getZ(i))) throw new Error('[car] degenerate normal in catalog shape')
+    }
+  }
 }
 
 /* -------------------------------- materials ------------------------------- */
@@ -366,7 +380,7 @@ function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.
 
 /* ---------------------------------- body ---------------------------------- */
 
-const BODY_STATIONS: Station[] = [
+export const BODY_STATIONS: Station[] = [
   { z: -2.265, hw: 0.742, by: 0.268, ty: 0.700, rt: 0.150, rb: 0.110 },
   { z: -2.075, hw: 0.832, by: 0.288, ty: 0.782, rt: 0.135, rb: 0.080 },
   { z: -1.735, hw: 0.888, by: 0.315, ty: 0.868, rt: 0.105, rb: 0.050 },
@@ -381,7 +395,7 @@ const BODY_STATIONS: Station[] = [
   { z:  2.265, hw: 0.712, by: 0.390, ty: 0.678, rt: 0.135, rb: 0.095 },
 ]
 
-const CABIN_STATIONS: Station[] = [
+export const CABIN_STATIONS: Station[] = [
   { z: -0.980, hw: 0.740, by: 0.750, ty: 0.990, rt: 0.070, rb: 0.090, ts: 0.80 },
   { z: -0.640, hw: 0.760, by: 0.765, ty: 1.058, rt: 0.065, rb: 0.090, ts: 0.84 },
   { z: -0.200, hw: 0.770, by: 0.778, ty: 1.084, rt: 0.060, rb: 0.090, ts: 0.88 },
