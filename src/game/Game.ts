@@ -15,6 +15,7 @@ import { buildTrackSlice, type Slice } from '../world/TrackSlice'
 import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
+import { BASE_TUNING } from '../vehicles/CarTuning'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -77,7 +78,7 @@ export class Game {
   private prevNitroActive = false
   private readonly uiData: HudData = {
     phase: 'idle', active: false, speed: 0, reverse: false, nitroLevel: 0, nitroActive: false,
-    position: 0, total: 6, raceTime: 0, topSpeedRef: VEHICLE.topSpeed, progress: 0, countdown: 0,
+    position: 0, total: 6, raceTime: 0, topSpeedRef: BASE_TUNING.topSpeed, progress: 0, countdown: 0,
     standings: [], headingDot: 1, drifting: false,
   }
   private readonly rearWheels: { x: number; z: number }[] = []
@@ -133,7 +134,7 @@ export class Game {
       onMenu: () => this.toMenu(),
       onPaint: (hex) => this.car.setPaint(hex),
     })
-    this.ui.setStandingNames(['YOU', ...aiPaints.map((pt) => pt.name.toUpperCase())])
+    this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
     this.ui.bindTrack(this.slice.spline)
     for (const w of this.car.wheels) if (!w.front) {
       const holder: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
@@ -418,7 +419,7 @@ export class Game {
     d.position = this.director.positionOf(0)
     d.total = 1 + this.ai.length
     d.raceTime = this.director.simTime
-    d.topSpeedRef = this.player.nitroActive ? VEHICLE.nitroTopSpeed : VEHICLE.topSpeed
+    d.topSpeedRef = this.player.nitroActive ? this.player.phys.tuning.nitroTopSpeed : this.player.phys.tuning.topSpeed
     const st = this.director.standingFor(0)
     d.progress = st ? st.fraction : 0
     d.countdown = this.director.countdown

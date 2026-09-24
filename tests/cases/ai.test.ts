@@ -4,6 +4,7 @@ import { cornerTarget, laneSteer, rig, SIM_DT } from '../rig'
 import { PlayerVehicle } from '../../src/vehicles/PlayerVehicle'
 import { AIVehicle, aiSlotSeed, stepAIField, type AIContext, type RivalView } from '../../src/vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type RaceStanding } from '../../src/game/RaceDirector'
+import { HERO_SPEC } from '../../src/vehicles/CarSpecs'
 import { VehicleVisual, bindAIFieldVisuals } from '../../src/vehicles/Vehicle'
 import type { CarModel } from '../../src/assets/CarModel'
 import type { InputState } from '../../src/core/Input'
@@ -26,7 +27,9 @@ function buildField(): Field {
   const L = spline.length
   const player = new PlayerVehicle(probe)
   const cars: AIVehicle[] = []
-  for (let i = 0; i < AI.count; i++) cars.push(new AIVehicle(i, spline, probe))
+  // the pre-model-field cases were authored hero-everywhere: pin the explicit
+  // spec so the calibration gates below keep measuring the hero record
+  for (let i = 0; i < AI.count; i++) cars.push(new AIVehicle(i, spline, probe, HERO_SPEC))
   const grid: { s: number; lat: number }[] = []
   const g0 = gridSlot(0, L)
   player.resetTo(g0.s, 0, g0.lat)

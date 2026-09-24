@@ -1,10 +1,11 @@
 import { assert, assertNear, test } from '../harness'
 import { VEHICLE, CAR } from '../../src/config'
+import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
 import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
-import { FlatProbe } from '../rig'
+import { FlatProbe, rig } from '../rig'
 import type { CarTuning } from '../../src/vehicles/CarTuning'
 
 test('tuning: BASE_TUNING is the verbatim VEHICLE constant set', () => {
@@ -139,4 +140,19 @@ test('kit: the hero kit reproduces the shipped part set exactly', () => {
   const k = HERO_SPEC.kit
   assert(k.splitter === 'std' && k.spoiler === 'low' && k.diffuserFins === 4, 'front/aero/rear on')
   assert(k.hoodVent && k.sideIntakes && !k.roofScoop, 'greebles on, scoop off')
+})
+
+test('ai: slot model assignment follows the config table', () => {
+  const r = rig()
+  for (let slot = 0; slot < CAR.aiModels.length; slot++) {
+    const ai = new AIVehicle(slot, r.spline, r.probe)
+    assert(ai.spec.id === CAR.aiModels[slot], `slot ${slot} drives ${CAR.aiModels[slot]}`)
+  }
+})
+
+test('ai: the brain pace-caps against its own car\'s top speed', () => {
+  const r = rig()
+  const hyper = new AIVehicle(1, r.spline, r.probe) // 'hyper' per the table
+  assertNear(hyper.tuning.topSpeed, VEHICLE.topSpeed * 1.12, 1e-6, 'hyper tuning wired to the car')
+  assert(hyper.phys.tuning === hyper.tuning, 'the physics runs the AI car\'s record')
 })
