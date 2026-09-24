@@ -422,11 +422,12 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   }
 
   /* ---------------- per-model body shots (registered LAST) ------------------- */
-  // End-registration matters: shots.mjs captures in registry order on one page, so
-  // every pre-existing pose renders before the first selectModel call and the
-  // hero/grid/state battery stays untouched; each model shot sets its own body on arrival.
+  // `car_model_*` keeps these clear of the pre-existing `car_drift` drift-STATE pose
+  // (Gate-C battery). End-registration matters: shots.mjs captures in registry order
+  // on one page, so every pre-existing pose renders before the first selectModel call
+  // and the hero/grid/state battery stays untouched; each model shot sets its own body.
   for (const id of ['hero', 'hyper', 'grip', 'drift']) {
-    Debug.registerPose(`car_${id}`, onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26, { model: id }))
+    Debug.registerPose(`car_model_${id}`, onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26, { model: id }))
   }
 
   /* ---------------- dev probes (removed with the harness, spec §23.4) ------ */
