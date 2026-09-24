@@ -6,6 +6,7 @@ import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, 
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
+import { statBarsFor, STAT_AXIS_LABELS } from '../../src/ui/UIManager'
 import type { CarTuning } from '../../src/vehicles/CarTuning'
 
 test('tuning: BASE_TUNING is the verbatim VEHICLE constant set', () => {
@@ -157,8 +158,6 @@ test('ai: the brain pace-caps against its own car\'s top speed', () => {
   assert(hyper.phys.tuning === hyper.tuning, 'the physics runs the AI car\'s record')
 })
 
-import { statBarsFor, STAT_AXIS_LABELS } from '../../src/ui/UIManager'
-
 test('garage: stat bars normalize across the catalog to [0,1] on every axis', () => {
   assert(STAT_AXIS_LABELS.length === 5, 'top speed / acceleration / grip / drift / brake')
   for (const s of CAR_SPECS) {
@@ -172,4 +171,15 @@ test('garage: the spread reads — extremes take the rails on their axis', () =>
   assert(Math.max(...top) - Math.min(...top) > 0.8, 'top-speed axis spans near the full bar')
   const slowest = CAR_SPECS[top.indexOf(Math.min(...top))]
   assert(slowest.id === 'grip', 'grip is the slowest — the bias is real')
+})
+
+test('garage: bars are index-aligned with the labels — DRIFT is the drift mean, BRAKE is brake', () => {
+  const drift = STAT_AXIS_LABELS.indexOf('DRIFT')
+  const brake = STAT_AXIS_LABELS.indexOf('BRAKE')
+  const bars = (id: string) => statBarsFor(getSpec(id), CAR_SPECS)
+  // the drift-biased spec owns the DRIFT axis; the brake-biased spec owns BRAKE
+  assert(bars('drift')[drift] > bars('grip')[drift], 'slide king out-slides the corner-gripper on the drift bar')
+  const brakeAxis = CAR_SPECS.map((s) => statBarsFor(s, CAR_SPECS)[brake])
+  assert(bars('grip')[brake] === Math.max(...brakeAxis), 'apex grip takes the brake rail')
+  assert(bars('drift')[brake] < bars('grip')[brake], 'the drift bar is not the brake bar wearing its label')
 })

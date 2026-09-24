@@ -172,8 +172,9 @@ export function buildCarNames(paints: readonly PaintDef[], playerCarId: number):
 
 export const STAT_AXIS_LABELS = ['TOP SPEED', 'ACCELERATION', 'GRIP', 'DRIFT', 'BRAKE'] as const
 
-/** normalised bar fractions (0..1) for one spec across the catalog spread;
- *  the DRIFT axis averages the two drift fields' individually-normalised values */
+/** normalised bar fractions (0..1) for one spec across the catalog spread,
+ *  index-aligned with STAT_AXIS_LABELS; the DRIFT axis averages the two
+ *  drift fields' individually-normalised values */
 export function statBarsFor(spec: CarSpec, all: readonly CarSpec[]): number[] {
   const get = (s: CarSpec) => resolveTuning(s.stat)
   const axis = (pick: (t: ReturnType<typeof get>) => number) => {
@@ -190,8 +191,9 @@ export function statBarsFor(spec: CarSpec, all: readonly CarSpec[]): number[] {
   const yawLo = Math.min(...all.map((s) => resolveTuning(s.stat).yawResponse))
   const yawSpan = Math.max(1e-9, Math.max(...all.map((s) => resolveTuning(s.stat).yawResponse)) - yawLo)
   const t0 = get(spec)
-  return [f[0](spec), f[1](spec), f[2](spec), f[3](spec),
-    ((t0.driftYawBoost - driftLo) / driftSpan + (t0.yawResponse - yawLo) / yawSpan) / 2]
+  return [f[0](spec), f[1](spec), f[2](spec),
+    ((t0.driftYawBoost - driftLo) / driftSpan + (t0.yawResponse - yawLo) / yawSpan) / 2,
+    f[3](spec)]
 }
 
 export type UiMode = 'title' | 'racing'
@@ -420,6 +422,7 @@ export class UIManager {
         for (const c of Array.from(host.children)) c.classList.remove('selected')
         b.classList.add('selected')
         writeModelSelection(s.id)
+        this.renderModelStats(s.id)
         this.host.onModel(s.id)
       })
       host.appendChild(b)
