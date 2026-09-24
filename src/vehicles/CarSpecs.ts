@@ -1,6 +1,5 @@
 import { globalObject } from '../core/globals'
 import type { CarStat } from './CarTuning'
-import { BODY_STATIONS, CABIN_STATIONS } from '../assets/CarModel'
 
 /* ------------------------------------------------------------------------- *
  * The car catalog (car-models spec §5): four models, each one a resolved
@@ -37,6 +36,35 @@ export interface CarSpec {
   shape: CarShape
   kit: CarKit
 }
+
+/* Hero silhouette, verbatim from the shipped car (car-models spec §5). The
+ * loft machinery lives in CarModel.ts; data lives here so the catalog is the
+ * single runtime source and the module edge stays one-way (CarModel imports
+ * only types from this module). */
+const BODY_STATIONS: CarStation[] = [
+  { z: -2.265, hw: 0.742, by: 0.268, ty: 0.700, rt: 0.150, rb: 0.110 },
+  { z: -2.075, hw: 0.832, by: 0.288, ty: 0.782, rt: 0.135, rb: 0.080 },
+  { z: -1.735, hw: 0.888, by: 0.315, ty: 0.868, rt: 0.105, rb: 0.050 },
+  { z: -1.310, hw: 0.990, by: 0.350, ty: 0.890, rt: 0.075, rb: 0.032 },
+  { z: -0.950, hw: 0.972, by: 0.355, ty: 0.902, rt: 0.055, rb: 0.030 },
+  { z: -0.450, hw: 0.960, by: 0.358, ty: 0.892, rt: 0.045, rb: 0.028 },
+  { z:  0.060, hw: 0.958, by: 0.358, ty: 0.872, rt: 0.040, rb: 0.028 },
+  { z:  0.560, hw: 0.962, by: 0.358, ty: 0.882, rt: 0.050, rb: 0.030 },
+  { z:  1.105, hw: 0.992, by: 0.352, ty: 0.902, rt: 0.090, rb: 0.040 },
+  { z:  1.625, hw: 0.920, by: 0.360, ty: 0.906, rt: 0.120, rb: 0.068 },
+  { z:  1.985, hw: 0.845, by: 0.365, ty: 0.822, rt: 0.135, rb: 0.095 },
+  { z:  2.265, hw: 0.712, by: 0.390, ty: 0.678, rt: 0.135, rb: 0.095 },
+]
+
+const CABIN_STATIONS: CarStation[] = [
+  { z: -0.980, hw: 0.740, by: 0.750, ty: 0.990, rt: 0.070, rb: 0.090, ts: 0.80 },
+  { z: -0.640, hw: 0.760, by: 0.765, ty: 1.058, rt: 0.065, rb: 0.090, ts: 0.84 },
+  { z: -0.200, hw: 0.770, by: 0.778, ty: 1.084, rt: 0.060, rb: 0.090, ts: 0.88 },
+  { z:  0.300, hw: 0.768, by: 0.780, ty: 1.093, rt: 0.060, rb: 0.090, ts: 0.90 },
+  { z:  0.700, hw: 0.744, by: 0.775, ty: 1.060, rt: 0.065, rb: 0.095, ts: 0.88 },
+  { z:  1.060, hw: 0.690, by: 0.756, ty: 1.000, rt: 0.080, rb: 0.100, ts: 0.82 },
+  { z:  1.280, hw: 0.618, by: 0.726, ty: 0.942, rt: 0.095, rb: 0.110, ts: 0.76 },
+]
 
 const BASE_KIT: CarKit = {
   splitter: 'std', spoiler: 'low', diffuserFins: 4, hoodVent: true, roofScoop: false,

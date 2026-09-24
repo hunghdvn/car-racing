@@ -126,3 +126,17 @@ test('shapes: hyper is longer+lower, grip more compact, drift wider', () => {
   assert(L('grip').len < hero.len - 0.05, 'grip is more compact')
   assert(L('drift').maxHw > hero.maxHw + 0.02, 'drift is wider')
 })
+
+test('builder: buildCar exposes the spec-driven signature', async () => {
+  const m = await import('../../src/assets/CarModel').catch(() => null)
+  // node has no canvas, so buildCar itself runs only under the harness; the
+  // node contract is the export shape plus the validated shapes gate:
+  assert(typeof m?.buildCar === 'function' && m.buildCar.length >= 1, 'spec parameter present')
+})
+
+test('kit: the hero kit reproduces the shipped part set exactly', () => {
+  // data-level pin: hero kit toggles match the mesh blocks that exist today
+  const k = HERO_SPEC.kit
+  assert(k.splitter === 'std' && k.spoiler === 'low' && k.diffuserFins === 4, 'front/aero/rear on')
+  assert(k.hoodVent && k.sideIntakes && !k.roofScoop, 'greebles on, scoop off')
+})

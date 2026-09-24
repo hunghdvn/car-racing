@@ -31,7 +31,8 @@ export function carPaintMaps(seed = 7): { normalMap: THREE.Texture; roughnessMap
         const rnd = new Rand(seed)
         for (let i = 0; i < w * hh; i++) {
           const v = 88 + Math.floor(rnd.next() * 42)
-          img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v
+          const flake = rnd.next() < 0.004 ? 235 : v
+          img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = flake
           img.data[i * 4 + 3] = 255
         }
         ctx.putImageData(img, 0, 0)

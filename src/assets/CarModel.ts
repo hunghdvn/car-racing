@@ -3,7 +3,7 @@ import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, roundedPlateGeo, tireTreadNormal } from './Textures'
-import type { CarShape } from '../vehicles/CarSpecs'
+import { HERO_SPEC, spokeCountForStyle, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -270,7 +270,7 @@ const shared = {
     return new THREE.MeshStandardMaterial({ color: 0xd6dde6, metalness: 1, roughness: 0.11 })
   },
   alloy(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x98a8c0, metalness: 0.65, roughness: 0.26, roughnessMap: alloyRoughness() })
+    return new THREE.MeshStandardMaterial({ color: 0x98a8c0, metalness: 0.65, roughness: 0.2, roughnessMap: alloyRoughness() })
   },
   dark(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.55, metalness: 0.25 })
@@ -278,27 +278,28 @@ const shared = {
   darkSoft(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x0e1013, roughness: 0.9, metalness: 0 })
   },
-  glass(): THREE.MeshPhysicalMaterial {
-    return new THREE.MeshPhysicalMaterial({ color: 0x151c25, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.52, ior: 1.5 })
+  glass(tint: number): THREE.MeshPhysicalMaterial {
+    return new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0x151c25).multiplyScalar(1 - tint * 0.6), roughness: 0.02, metalness: 0, transparent: true, opacity: 0.42, ior: 1.45 })
   },
   disc(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x555b63, metalness: 0.9, roughness: 0.42 })
   },
-  caliper(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0xc23a28, roughness: 0.4, metalness: 0.3 })
+  caliper(hex: number): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({ color: hex, roughness: 0.4, metalness: 0.3 })
   },
 }
 
 /* --------------------------------- wheels --------------------------------- */
 
 /**
- * Proper sports-coupe wheel (spec §6 / §4.1): dimensions come from VEHICLE.
- * Built around its own +Y axle (outboard face at +Y), then the axle is baked
- * onto world X with sideSign so both left/right wheels face outboard.
+ * Proper sports-coupe wheel (spec §6 / §4.1): dimensions come from the
+ * per-car kit. Built around its own +Y axle (outboard face at +Y), then the
+ * axle is baked onto world X with sideSign so both left/right wheels face
+ * outboard.
  */
-function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.Group } {
-  const R = VEHICLE.wheelRadius
-  const hw = VEHICLE.wheelWidth / 2
+function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number, radius: number, caliperHex: number): { root: THREE.Group; spin: THREE.Group } {
+  const R = radius
+  const hw = width / 2
   const spin = new THREE.Group()
 
   const tp: THREE.Vector2[] = [
@@ -327,7 +328,7 @@ function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.
 
   // Caliper — clamped at the 3-o'clock position, INBOARD of the dish so it
   // peeks through spoke gaps without being buried under the dish.
-  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper())
+  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper(caliperHex))
   cal.geometry.translate(0, hw * 0.20, R * 0.575)
   cal.name = 'brake-caliper'
 
@@ -345,12 +346,14 @@ function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.
   lip.name = 'wheel-lip'
   spin.add(lip)
 
-  // Five spokes — OUTBOARD of the dish (hw*0.68 vs dish at hw*0.30), extending
+  // Spokes — OUTBOARD of the dish (hw*0.68 vs dish at hw*0.30), extending
   // radially from near the hub centre (R*0.05) past the dish edge (R*0.42) to
   // near the rim (R*0.57), so the alloy alloy profile is legible from the side.
-  for (let k = 0; k < 5; k++) {
-    const ang = (k * Math.PI * 2) / 5
-    const sp = new THREE.Mesh(roundedPlateGeo(0.072, R * 0.50, 0.024, 0.014), shared.alloy())
+  // Dense styles (>=8 spokes) get shorter plates so the pattern reads.
+  const spokeLen = R * 0.50 * (spokeCount >= 8 ? 0.8 : 1)
+  for (let k = 0; k < spokeCount; k++) {
+    const ang = (k * Math.PI * 2) / spokeCount
+    const sp = new THREE.Mesh(roundedPlateGeo(0.072, spokeLen, 0.024, 0.014), shared.alloy())
     sp.geometry.rotateX(Math.PI / 2)
     sp.geometry.rotateY(ang)
     sp.geometry.translate(Math.sin(ang) * R * 0.30, hw * 0.68, Math.cos(ang) * R * 0.30)
@@ -380,48 +383,23 @@ function buildWheelAssembly(sideSign: 1 | -1): { root: THREE.Group; spin: THREE.
 
 /* ---------------------------------- body ---------------------------------- */
 
-export const BODY_STATIONS: Station[] = [
-  { z: -2.265, hw: 0.742, by: 0.268, ty: 0.700, rt: 0.150, rb: 0.110 },
-  { z: -2.075, hw: 0.832, by: 0.288, ty: 0.782, rt: 0.135, rb: 0.080 },
-  { z: -1.735, hw: 0.888, by: 0.315, ty: 0.868, rt: 0.105, rb: 0.050 },
-  { z: -1.310, hw: 0.990, by: 0.350, ty: 0.890, rt: 0.075, rb: 0.032 },
-  { z: -0.950, hw: 0.972, by: 0.355, ty: 0.902, rt: 0.055, rb: 0.030 },
-  { z: -0.450, hw: 0.960, by: 0.358, ty: 0.892, rt: 0.045, rb: 0.028 },
-  { z:  0.060, hw: 0.958, by: 0.358, ty: 0.872, rt: 0.040, rb: 0.028 },
-  { z:  0.560, hw: 0.962, by: 0.358, ty: 0.882, rt: 0.050, rb: 0.030 },
-  { z:  1.105, hw: 0.992, by: 0.352, ty: 0.902, rt: 0.090, rb: 0.040 },
-  { z:  1.625, hw: 0.920, by: 0.360, ty: 0.906, rt: 0.120, rb: 0.068 },
-  { z:  1.985, hw: 0.845, by: 0.365, ty: 0.822, rt: 0.135, rb: 0.095 },
-  { z:  2.265, hw: 0.712, by: 0.390, ty: 0.678, rt: 0.135, rb: 0.095 },
-]
-
-export const CABIN_STATIONS: Station[] = [
-  { z: -0.980, hw: 0.740, by: 0.750, ty: 0.990, rt: 0.070, rb: 0.090, ts: 0.80 },
-  { z: -0.640, hw: 0.760, by: 0.765, ty: 1.058, rt: 0.065, rb: 0.090, ts: 0.84 },
-  { z: -0.200, hw: 0.770, by: 0.778, ty: 1.084, rt: 0.060, rb: 0.090, ts: 0.88 },
-  { z:  0.300, hw: 0.768, by: 0.780, ty: 1.093, rt: 0.060, rb: 0.090, ts: 0.90 },
-  { z:  0.700, hw: 0.744, by: 0.775, ty: 1.060, rt: 0.065, rb: 0.095, ts: 0.88 },
-  { z:  1.060, hw: 0.690, by: 0.756, ty: 1.000, rt: 0.080, rb: 0.100, ts: 0.82 },
-  { z:  1.280, hw: 0.618, by: 0.726, ty: 0.942, rt: 0.095, rb: 0.110, ts: 0.76 },
-]
-
 // Wrap glazing band: same loft topology as the cabin, its ring mapped into a
 // mid-height band and slightly inflated, so the painted roof frame above and
 // the beltline below stay visible. Closed ring → no open tube seams.
-function glassBandGeo(): THREE.BufferGeometry {
-  const z0 = CABIN_STATIONS[0].z, z1 = CABIN_STATIONS[CABIN_STATIONS.length - 1].z
+function glassBandGeo(cabins: readonly Station[]): THREE.BufferGeometry {
+  const z0 = cabins[0].z, z1 = cabins[cabins.length - 1].z
   const S = 24, uMin = 0.24, uMax = 0.90
   const pos: number[] = [], uv: number[] = [], idx: number[] = []
   const cols: Pt[][] = []
   for (let iz = 0; iz < S; iz++) {
     const z = THREE.MathUtils.lerp(z0, z1, iz / (S - 1))
-    const st = interpStations(CABIN_STATIONS, z)
+    const st = interpStations(cabins, z)
     cols.push(getProfile(st.rt, st.rb, st.ts ?? 1))
   }
   const ring = cols[0].length
   for (const c of cols) if (c.length !== ring) throw new Error('[car] non-uniform glass ring')
   for (let iz = 0; iz < S; iz++) {
-    const st = interpStations(CABIN_STATIONS, THREE.MathUtils.lerp(z0, z1, iz / (S - 1)))
+    const st = interpStations(cabins, THREE.MathUtils.lerp(z0, z1, iz / (S - 1)))
     const band = cols[iz]
     for (let j = 0; j < ring; j++) {
       const u = uMin + band[j].u * (uMax - uMin)
@@ -453,45 +431,55 @@ function named<T extends THREE.Object3D>(o: T, name: string): T {
   return o
 }
 
-export function buildCar(paintHex: number): CarModel {
+/** Diffuser fin x-positions for the kit's fin count; the shipped 4-fin set
+ *  is verbatim, other counts spread evenly across the diffuser width. */
+function diffuserFinXs(count: number): number[] {
+  if (count <= 0) return []
+  if (count === 4) return [-0.4, -0.13, 0.13, 0.4]
+  return Array.from({ length: count }, (_, f) => count === 1 ? 0 : -0.4 + (f / (count - 1)) * 0.8)
+}
+
+export function buildCar(paintHex: number, spec: CarSpec = HERO_SPEC): CarModel {
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
     const maps = carPaintMaps(7)
     const m = new THREE.MeshPhysicalMaterial({
-      color: paintHex, metalness: 0.02, roughness: 0.32,
+      color: paintHex, metalness: 0.15, roughness: 0.28,
       roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
-      normalScale: new THREE.Vector2(0.35, 0.35),
-      clearcoat: 1, clearcoatRoughness: 0.06,
+      normalScale: new THREE.Vector2(0.5, 0.5),
+      clearcoat: 1, clearcoatRoughness: 0.045, sheen: 0.2, sheenRoughness: 0.4,
     })
     paintMats.push(m)
     return m
   }
 
   const paint = mkPaint()
+  const wr = VEHICLE.wheelRadius * spec.kit.wheelRadiusMul
+  const ww = VEHICLE.wheelWidth * spec.kit.wheelWidthMul
 
   // main body + cabin hulls (lofted, smooth) + wrap glazing
-  group.add(named(new THREE.Mesh(buildHull(BODY_STATIONS, 52, { caps: true }), paint), 'body'))
-  group.add(named(new THREE.Mesh(buildHull(CABIN_STATIONS, 30, { caps: true }), paint), 'cabin'))
-  group.add(named(new THREE.Mesh(glassBandGeo(), shared.glass()), 'glass'))
+  group.add(named(new THREE.Mesh(buildHull(spec.shape.bodyStations, 52, { caps: true }), paint), 'body'))
+  group.add(named(new THREE.Mesh(buildHull(spec.shape.cabinStations, 30, { caps: true }), paint), 'cabin'))
+  group.add(named(new THREE.Mesh(glassBandGeo(spec.shape.cabinStations), shared.glass(spec.kit.glassTint)), 'glass'))
 
   // arch rims + dark liners
   for (const front of [true, false]) {
     const wz = VEHICLE.wheelbase / 2
     const z = front ? -wz : wz
-    const wy = VEHICLE.wheelRadius - 0.012
-    const archR = VEHICLE.wheelRadius + 0.042
-    const linerR = VEHICLE.wheelRadius + 0.014
+    const wy = wr - 0.012
+    const archR = wr + 0.042 + spec.kit.archExtension
+    const linerR = wr + 0.014 + spec.kit.archExtension
     for (const side of [-1, 1]) {
       const rim = new THREE.Mesh(new THREE.TorusGeometry(archR, 0.038, 8, 30, Math.PI * 1.22), paint)
       rim.geometry.rotateZ(-0.37)
       rim.rotation.y = Math.PI / 2
-      rim.position.set(side * 0.975, wy, z)
+      rim.position.set(side * (0.975 + spec.kit.archExtension), wy, z)
       group.add(named(rim, `arch_${front ? 'f' : 'r'}_${side < 0 ? 'l' : 'r'}`))
       const liner = new THREE.Mesh(new THREE.TorusGeometry(linerR, 0.026, 6, 24, Math.PI * 1.22), shared.darkSoft())
       liner.geometry.rotateZ(-0.37)
       liner.rotation.copy(rim.rotation)
-      liner.position.set(side * 0.952, wy, z)
+      liner.position.set(side * (0.952 + spec.kit.archExtension), wy, z)
       group.add(named(liner, `archliner_${front ? 'f' : 'r'}_${side < 0 ? 'l' : 'r'}`))
     }
   }
@@ -503,14 +491,19 @@ export function buildCar(paintHex: number): CarModel {
   const intakeC = new THREE.Mesh(roundedPlateGeo(1.0, 0.17, 0.05, 0.04), shared.dark())
   intakeC.position.set(0, 0.36, -2.29)
   group.add(named(intakeC, 'intake-center'))
-  for (const side of [-1, 1]) {
-    const intakeS = new THREE.Mesh(roundedPlateGeo(0.26, 0.14, 0.04, 0.03), shared.dark())
-    intakeS.position.set(side * 0.60, 0.42, -2.28)
-    group.add(named(intakeS, `intake-side-${side < 0 ? 'l' : 'r'}`))
+  if (spec.kit.sideIntakes) {
+    for (const side of [-1, 1]) {
+      const intakeS = new THREE.Mesh(roundedPlateGeo(0.26, 0.14, 0.04, 0.03), shared.dark())
+      intakeS.position.set(side * 0.60, 0.42, -2.28)
+      group.add(named(intakeS, `intake-side-${side < 0 ? 'l' : 'r'}`))
+    }
   }
-  const splitter = new THREE.Mesh(roundedPlateGeo(1.76, 0.06, 0.05, 0.02), shared.dark())
-  splitter.position.set(0, 0.21, -2.16)
-  group.add(named(splitter, 'splitter'))
+  if (spec.kit.splitter !== 'none') {
+    const big = spec.kit.splitter === 'big'
+    const splitter = new THREE.Mesh(big ? roundedPlateGeo(2.0, 0.07, 0.05, 0.02) : roundedPlateGeo(1.76, 0.06, 0.05, 0.02), shared.dark())
+    splitter.position.set(0, big ? 0.195 : 0.21, -2.16)
+    group.add(named(splitter, 'splitter'))
+  }
 
   const bumperR = new THREE.Mesh(roundedPlateGeo(1.66, 0.46, 0.1, 0.055), paint)
   bumperR.position.set(0, 0.5, 2.16)
@@ -518,7 +511,7 @@ export function buildCar(paintHex: number): CarModel {
   const diffuser = new THREE.Mesh(roundedPlateGeo(1.3, 0.24, 0.05, 0.03), shared.dark())
   diffuser.position.set(0, 0.28, 2.235)
   group.add(named(diffuser, 'diffuser'))
-  for (const fx of [-0.4, -0.13, 0.13, 0.4]) {
+  for (const fx of diffuserFinXs(spec.kit.diffuserFins)) {
     const fin = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.11, 0.08), shared.dark())
     fin.position.set(fx, 0.24, 2.26)
     group.add(named(fin, 'diffuser-fin'))
@@ -565,6 +558,10 @@ export function buildCar(paintHex: number): CarModel {
     lens.rotation.y = hous.rotation.y
     group.add(named(lens, `headlight-lens-${side < 0 ? 'l' : 'r'}`))
     headMats.push(hm)
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.012, 8, 18), shared.chrome())
+    ring.position.set(side * 0.46, 0.66, -2.282)
+    ring.rotation.y = hous.rotation.y
+    group.add(named(ring, `headlight-ring-${side < 0 ? 'l' : 'r'}`))
   }
 
   // tail light bar + brake lenses (emissive, brake-reactive) — attached to the
@@ -594,34 +591,45 @@ export function buildCar(paintHex: number): CarModel {
     head.position.set(side * 1.005, 0.885, -0.86)
     head.rotation.y = side * -0.3
     group.add(named(head, `mirror-head-${side < 0 ? 'l' : 'r'}`))
-    const g = new THREE.Mesh(new THREE.PlaneGeometry(0.098, 0.048), shared.glass())
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(0.098, 0.048), shared.glass(spec.kit.glassTint))
     g.position.set(side * 1.030, 0.885, -0.86)
     g.rotation.y = side * (Math.PI / 2 - 0.18)
     group.add(named(g, `mirror-glass-${side < 0 ? 'l' : 'r'}`))
   }
 
   // rear spoiler on struts
-  for (const side of [-1, 1]) {
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.120, 0.120), paint)
-    strut.position.set(side * 0.56, 0.755, 2.06)
-    group.add(named(strut, `spoiler-strut-${side < 0 ? 'l' : 'r'}`))
+  if (spec.kit.spoiler !== 'none') {
+    const gt = spec.kit.spoiler === 'gt'
+    for (const side of [-1, 1]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.040, gt ? 0.20 : 0.120, 0.120), paint)
+      strut.position.set(side * 0.56, 0.755, 2.06)
+      group.add(named(strut, `spoiler-strut-${side < 0 ? 'l' : 'r'}`))
+    }
+    const blade = new THREE.Mesh(gt ? roundedPlateGeo(1.44, 0.05, 0.032, 0.013) : roundedPlateGeo(1.34, 0.045, 0.03, 0.012), paint)
+    blade.position.set(0, gt ? 0.92 : 0.840, 2.08)
+    blade.rotation.x = gt ? -0.14 : -0.09
+    group.add(named(blade, 'spoiler-blade'))
   }
-  const blade = new THREE.Mesh(roundedPlateGeo(1.34, 0.045, 0.03, 0.012), paint)
-  blade.position.set(0, 0.840, 2.08)
-  blade.rotation.x = -0.09
-  group.add(named(blade, 'spoiler-blade'))
 
   // hood power lines + cowl vent (greebles)
-  for (const side of [-1, 1]) {
-    const line = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.008, 0.5), shared.dark())
-    line.position.set(side * 0.34, 0.882, -1.55)
-    line.rotation.x = 0.05
-    group.add(named(line, `hood-line-${side < 0 ? 'l' : 'r'}`))
+  if (spec.kit.hoodVent) {
+    for (const side of [-1, 1]) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.008, 0.5), shared.dark())
+      line.position.set(side * 0.34, 0.882, -1.55)
+      line.rotation.x = 0.05
+      group.add(named(line, `hood-line-${side < 0 ? 'l' : 'r'}`))
+    }
+    const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.012, 0.07), shared.dark())
+    cowl.position.set(0, 0.905, -0.92)
+    cowl.rotation.x = -0.3
+    group.add(named(cowl, 'cowl-vent'))
   }
-  const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.012, 0.07), shared.dark())
-  cowl.position.set(0, 0.905, -0.92)
-  cowl.rotation.x = -0.3
-  group.add(named(cowl, 'cowl-vent'))
+  if (spec.kit.roofScoop) {
+    const scoop = new THREE.Mesh(roundedPlateGeo(0.34, 0.10, 0.05, 0.02), shared.dark())
+    scoop.position.set(0, 1.075, -0.55)
+    scoop.rotation.x = -0.35
+    group.add(named(scoop, 'roof-scoop'))
+  }
 
   // interior hints visible through glass
   for (const side of [-1, 1]) {
@@ -663,20 +671,20 @@ export function buildCar(paintHex: number): CarModel {
 
   // wheels FL FR RL RR
   const wheels: WheelHandle[] = []
-  const wr = VEHICLE.wheelRadius
+  const spokeCount = spokeCountForStyle(spec.kit.wheelStyle)
   for (const front of [true, false]) {
     const z = front ? -VEHICLE.wheelbase / 2 : VEHICLE.wheelbase / 2
     for (const side of [-1, 1]) {
-      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1)
+      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.kit.caliper)
       let steer: THREE.Group | null = null
       if (front) {
         steer = new THREE.Group()
         steer.add(root)
         group.add(named(steer, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        steer.position.set(side * (VEHICLE.trackWidth / 2), wr - 0.012, z)
+        steer.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
       } else {
         group.add(named(root, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        root.position.set(side * (VEHICLE.trackWidth / 2), wr - 0.012, z)
+        root.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
       }
       wheels.push({ steer, spin, radius: wr, front })
     }
