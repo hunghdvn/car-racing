@@ -402,6 +402,7 @@ export class UIManager {
       b.className = 'swatch' + (p.color === selectedHex ? ' selected' : '')
       b.style.background = hexToCss(p.color)
       b.title = p.name
+      b.dataset.paint = String(p.color)
       b.addEventListener('click', () => {
         for (const s of Array.from(this.swatchHost?.children ?? [])) s.classList.remove('selected')
         b.classList.add('selected')
@@ -409,6 +410,18 @@ export class UIManager {
       })
       this.swatchHost.appendChild(b)
     }
+  }
+
+  /** moves the selected marker to the swatch matching the effective paint — the
+   *  resolved colour is always a PAINTS member, so a miss is a no-op (dev-warned) */
+  setPaintActive(hex: number): void {
+    let hit = false
+    for (const s of Array.from(this.swatchHost?.children ?? [])) {
+      const on = s instanceof HTMLElement && s.dataset.paint === String(hex)
+      s.classList.toggle('selected', on)
+      if (on) hit = true
+    }
+    if (!hit && __VR_HARNESS__) console.warn(`[ui] setPaintActive(${hex.toString(16)}) matches no swatch`)
   }
 
   /** garage model cards (car-models spec §8 title screen) */

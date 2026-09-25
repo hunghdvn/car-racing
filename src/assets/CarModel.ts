@@ -3,7 +3,7 @@ import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, roundedPlateGeo, tireTreadNormal } from './Textures'
-import { HERO_SPEC, spokeCountForStyle, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
+import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -439,13 +439,17 @@ function diffuserFinXs(count: number): number[] {
   return Array.from({ length: count }, (_, f) => count === 1 ? 0 : -0.4 + (f / (count - 1)) * 0.8)
 }
 
-export function buildCar(paintHex: number, spec: CarSpec = HERO_SPEC): CarModel {
+/* An omitted hex resolves through the same pure precedence rule the UI uses
+ * (null → the spec's signature finish), so poses/dev callers can pass one and
+ * spec-only callers get the model's signature without hardcoding a colour. */
+export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec = HERO_SPEC): CarModel {
+  const bodyHex = paintHex ?? resolvePaint(null, spec)
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
     const maps = carPaintMaps(7)
     const m = new THREE.MeshPhysicalMaterial({
-      color: paintHex, metalness: 0.15, roughness: 0.28,
+      color: bodyHex, metalness: 0.15, roughness: 0.28,
       roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
       normalScale: new THREE.Vector2(0.5, 0.5),
       clearcoat: 1, clearcoatRoughness: 0.045, sheen: 0.2, sheenRoughness: 0.4,

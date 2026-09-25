@@ -1,4 +1,5 @@
 import { globalObject } from '../core/globals'
+import { PAINTS } from '../config'
 import type { CarStat } from './CarTuning'
 
 /* ------------------------------------------------------------------------- *
@@ -28,6 +29,21 @@ export interface CarKit {
   glassTint: number
 }
 
+/* Each model's signature paint look (visual-enhancement group 1): colour data
+ * only — the material layer that consumes these values lands in group 2.
+ * paint/glassTint/accent are hex colours, clearcoat/flake/roughness are 0..1,
+ * carbon is the weave-darkness scalar (0..1, lower = darker weave) so later
+ * groups can shade plain geometry with it. */
+export interface CarFinish {
+  paint: number
+  clearcoat: number
+  flake: number
+  roughness: number
+  glassTint: number
+  carbon: number
+  accent: number
+}
+
 export interface CarSpec {
   id: CarId
   name: string
@@ -35,6 +51,7 @@ export interface CarSpec {
   stat: CarStat
   shape: CarShape
   kit: CarKit
+  finish: CarFinish
 }
 
 /* Hero silhouette, verbatim from the shipped car (car-models spec §5). The
@@ -73,10 +90,25 @@ const BASE_KIT: CarKit = {
   trackMul: 1, archExtension: 0, caliper: 0xc23a28, glassTint: 0,
 }
 
+/* Hero finish mirrors the shipped CarModel.ts constants verbatim so the
+ * never-touch path renders byte-identical until the material group arrives:
+ * roughness 0.28 (CarModel paint factory), glass 0x151c25 (shared.glass),
+ * near-black weave 0x14161a ≈ 0.1 (shared.dark), caliper 0xc23a28 (BASE_KIT). */
+const HERO_FINISH: CarFinish = {
+  paint: PAINTS[1].color,
+  clearcoat: 0.55,
+  flake: 0.5,
+  roughness: 0.28,
+  glassTint: 0x151c25,
+  carbon: 0.1,
+  accent: BASE_KIT.caliper,
+}
+
 export const HERO_SPEC: CarSpec = {
   id: 'hero', name: 'Velocity GT', class: 'BALANCED', stat: {},
   shape: { bodyStations: BODY_STATIONS, cabinStations: CABIN_STATIONS },
   kit: { ...BASE_KIT },
+  finish: { ...HERO_FINISH },
 }
 
 /* Solaris Hyper — 0.18 m longer, crown 0.06 lower, sharper nose stations. */
@@ -152,17 +184,25 @@ const DRIFT_SHAPE: CarShape = {
   cabinStations: CABIN_STATIONS.slice(),
 }
 
+/* Signature finishes — palette members only (the picker can never disagree
+ * with the car): hyper rides Velocity Blue as the coolest pearl-leaning entry,
+ * glossier + denser flake than hero; grip is Night Shift satin graphite with a
+ * carbon-forward (darkest) weave and a yellow caliper-pop accent; drift wears
+ * Plasma Gold at flake-max/roughness-min so it reads metallic, warm glass. */
 export const CAR_SPECS: readonly CarSpec[] = [
   HERO_SPEC,
   { id: 'hyper', name: 'Solaris Hyper', class: 'TOP SPEED',
     stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, drag: 0.92 },
-    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e, glassTint: 0.06 } },
+    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e, glassTint: 0.06 },
+    finish: { paint: PAINTS[4].color, clearcoat: 0.9, flake: 0.75, roughness: 0.18, glassTint: 0x101a2a, carbon: 0.08, accent: 0x18d8e8 } },
   { id: 'grip', name: 'Apex Grip', class: 'CORNER GRIP',
     stat: { topSpeed: 0.90, nitroTopSpeed: 0.90, gripMax: 1.12, gripDrift: 1.10, yawResponse: 1.08, brakeForce: 1.08 },
-    shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'none', wheelStyle: 'multi-spoke', wheelRadiusMul: 1.04, trackMul: 1.05, archExtension: 0.05, caliper: 0x39c06a } },
+    shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'none', wheelStyle: 'multi-spoke', wheelRadiusMul: 1.04, trackMul: 1.05, archExtension: 0.05, caliper: 0x39c06a },
+    finish: { paint: PAINTS[2].color, clearcoat: 0.2, flake: 0.25, roughness: 0.55, glassTint: 0x151c25, carbon: 0.04, accent: 0xf2d21c } },
   { id: 'drift', name: 'Slide King', class: 'DRIFT',
     stat: { topSpeed: 0.96, nitroTopSpeed: 0.96, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.30, yawResponse: 1.20 },
-    shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e, glassTint: 0.04 } },
+    shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e, glassTint: 0.04 },
+    finish: { paint: PAINTS[5].color, clearcoat: 0.7, flake: 0.85, roughness: 0.15, glassTint: 0x241a10, carbon: 0.12, accent: 0xf29a1e } },
 ]
 
 export function getSpec(id: string): CarSpec {
@@ -187,5 +227,31 @@ export function writeModelSelection(id: CarId): void {
   try {
     const store = (globalObject().localStorage as Storage | undefined) ?? undefined
     store?.setItem(MODEL_KEY, id)
+  } catch { /* private mode */ }
+}
+
+/* Paint precedence (garage contract): an explicit swatch pick always wins; with
+ * none stored the car wears its model's signature finish. Stored at boot, then
+ * on every click of a swatch — model selection alone NEVER writes this key. */
+export function resolvePaint(storedHex: number | null, spec: CarSpec): number {
+  return storedHex ?? spec.finish.paint
+}
+
+const PAINT_KEY = 'vr.paint'
+
+export function readPaintSelection(): number | null {
+  try {
+    const store = (globalObject().localStorage as Storage | undefined) ?? undefined
+    const v = store?.getItem(PAINT_KEY)
+    if (v === null || v === undefined) return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  } catch { return null }
+}
+
+export function writePaintSelection(hex: number): void {
+  try {
+    const store = (globalObject().localStorage as Storage | undefined) ?? undefined
+    store?.setItem(PAINT_KEY, String(hex))
   } catch { /* private mode */ }
 }

@@ -1,8 +1,8 @@
 import { assert, assertNear, test } from '../harness'
-import { VEHICLE, CAR } from '../../src/config'
+import { VEHICLE, CAR, PAINTS } from '../../src/config'
 import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
-import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, type CarKit } from '../../src/vehicles/CarSpecs'
+import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, resolvePaint, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
@@ -109,6 +109,64 @@ test('catalog: headless localStorage guard returns hero', () => {
   assert(readModelSelection() === 'hero', 'no storage in node — fallback, no throw')
 })
 
+/* ------------------------------------------------------- per-model finishes */
+
+const FINISH_FIELDS = ['paint', 'clearcoat', 'flake', 'roughness', 'glassTint', 'carbon', 'accent'] as const
+const FINISH_RANGES = ['clearcoat', 'flake', 'roughness', 'carbon'] as const
+
+test('finishes: every spec ships a complete, finite, in-range finish record', () => {
+  for (const s of CAR_SPECS) {
+    for (const k of FINISH_FIELDS) {
+      assert(Number.isFinite(s.finish[k]), `${s.id}.${k} must be a finite number`)
+    }
+    for (const k of FINISH_RANGES) {
+      assert(s.finish[k] >= 0 && s.finish[k] <= 1, `${s.id}.${k} must sit in [0,1] — got ${s.finish[k]}`)
+    }
+  }
+})
+
+test('finishes: hero paint is byte-pinned to the shipped default PAINTS[1].color', () => {
+  assert(HERO_SPEC.finish.paint === PAINTS[1].color,
+    `hero paint ${HERO_SPEC.finish.paint.toString(16)} !== ${PAINTS[1].color.toString(16)} (never-touch path)`)
+})
+
+test('finishes: the four signature paints are pairwise distinct', () => {
+  const sigs = CAR_SPECS.map((s) => s.finish.paint)
+  assert(new Set(sigs).size === CAR_SPECS.length,
+    `signatures must differ — got ${sigs.map((v) => v.toString(16)).join(', ')}`)
+})
+
+test('finishes: every signature is a member of the PAINTS palette', () => {
+  const palette = new Set(PAINTS.map((p) => p.color))
+  for (const s of CAR_SPECS) assert(palette.has(s.finish.paint), `${s.id} paint ${s.finish.paint.toString(16)} is off-palette`)
+})
+
+/* -------------------------------------------------------- paint precedence */
+
+test('paint flow: an absent pick resolves to the model signature', () => {
+  for (const s of CAR_SPECS) assert(resolvePaint(null, s) === s.finish.paint, `${s.id} falls through to the signature`)
+})
+
+test('paint flow: a stored swatch beats the signature across a model switch', () => {
+  const stored = PAINTS[3].color
+  const grip = getSpec('grip')
+  const hyper = getSpec('hyper')
+  assert(resolvePaint(stored, grip) === stored, 'stored survives the grip rebuild')
+  assert(resolvePaint(stored, hyper) === stored, 'stored survives switching to hyper')
+  assert(resolvePaint(stored, grip) !== grip.finish.paint, 'and demonstrably overrides the signature')
+})
+
+test('paint flow: resolvePaint is pure — deterministic, storage-free, side-effect-free', () => {
+  const spec = getSpec('drift')
+  assert(resolvePaint(null, spec) === resolvePaint(null, spec), 'same inputs, same output')
+  assert(resolvePaint(0x123456, spec) === 0x123456, 'echoes the stored hex untouched')
+  assert(resolvePaint(null, spec) === spec.finish.paint, 'never mutates the spec')
+})
+
+test('paint flow: headless localStorage guard yields null (no pick)', () => {
+  assert(readPaintSelection() === null, 'no storage in node — null, no throw')
+})
+
 import { CAR_SPECS as CS } from '../../src/vehicles/CarSpecs'
 
 const stationFingerprint = (s: (typeof CS)[number]): string => {
@@ -129,11 +187,15 @@ test('shapes: hyper is longer+lower, grip more compact, drift wider', () => {
   assert(L('drift').maxHw > hero.maxHw + 0.02, 'drift is wider')
 })
 
-test('builder: buildCar exposes the spec-driven signature', async () => {
+test('builder: buildCar exposes the optional-paint signature resolved via the spec', async () => {
   const m = await import('../../src/assets/CarModel').catch(() => null)
   // node has no canvas, so buildCar itself runs only under the harness; the
-  // node contract is the export shape plus the validated shapes gate:
-  assert(typeof m?.buildCar === 'function' && m.buildCar.length >= 1, 'spec parameter present')
+  // node contract is the export shape plus the pure resolve wiring it leans on
+  // (a no-arg buildCar can only be observed in-browser — this is the honest pin):
+  assert(typeof m?.buildCar === 'function', 'builder export present')
+  assert(m.buildCar.length === 0, 'paintHex is defaulted, so the arity pin is 0 — callers passing a hex still work')
+  assert(typeof resolvePaint === 'function' && resolvePaint(null, HERO_SPEC) === HERO_SPEC.finish.paint,
+    'the module resolve helper is exported and pure — it is what a no-arg buildCar would use')
 })
 
 test('kit: the hero kit reproduces the shipped part set exactly', () => {

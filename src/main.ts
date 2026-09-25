@@ -1,5 +1,4 @@
-import { PAINTS } from './config'
-import { readModelSelection } from './vehicles/CarSpecs'
+import { getSpec, readModelSelection, readPaintSelection, resolvePaint } from './vehicles/CarSpecs'
 import { setStaticMergeEnabled } from './world/StaticMerge'
 import { Game } from './game/Game'
 
@@ -46,7 +45,8 @@ function boot(): void {
      bundle with the rest of the dev harness. */
   if (__VR_HARNESS__ && new URLSearchParams(location.search).has('nomerge')) setStaticMergeEnabled(false)
   const t0 = performance.now()
-  const game = new Game(canvas, PAINTS[1].color, readModelSelection())
+  const modelId = readModelSelection()
+  const game = new Game(canvas, resolvePaint(readPaintSelection(), getSpec(modelId)), modelId)
   const buildMs = Math.round(performance.now() - t0)
   /* the WebAudio context may only exist past a user gesture (spec §15) —
      the first real press unlocks it; everything before is a silent no-op */

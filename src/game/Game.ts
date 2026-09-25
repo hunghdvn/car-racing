@@ -16,7 +16,7 @@ import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { getSpec, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { getSpec, readPaintSelection, resolvePaint, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -116,6 +116,10 @@ export class Game {
     this.input.onAction = (a) => this.onInputAction(a)
     /* the AI field: distinct paints, per-car model + visual + brain, one
        shared probe/spline (world queries are never duplicated per car) */
+    // the player's colour is excluded from the AI pool; with PAINTS at 6 and
+    // AI.count at 5 the slice always yields 5 distinct entries whatever the
+    // player (or the model signature) picked, so the modulo below only ever
+    // wraps if someone shrinks PAINTS without retuning AI.count
     const playerPaint = PAINTS.find((pt) => pt.color === paintHex)
     const aiPaints: PaintDef[] = PAINTS.filter((pt) => pt !== playerPaint).slice(0, AI.count)
     for (let i = 0; i < AI.count; i++) {
@@ -146,11 +150,13 @@ export class Game {
       onRestart: () => this.beginRace(),
       onResume: () => this.setPaused(false),
       onMenu: () => this.toMenu(),
-      onPaint: (hex) => { this.paintHex = hex; this.car.setPaint(hex) },
+      onPaint: (hex) => { this.paintHex = hex; this.car.setPaint(hex); writePaintSelection(hex) },
       onModel: (id) => this.selectModel(id),
     })
     this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
     this.ui.bindTrack(this.slice.spline)
+    // the boot-resolved paint (stored pick or model signature) owns the swatch row
+    this.ui.setPaintActive(this.paintHex)
     this.captureRearWheels()
     for (let i = 0; i < AI.count; i++) this.mapAi.push({ x: 0, z: 0 })
   }
@@ -179,6 +185,10 @@ export class Game {
       if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose() }
     })
     this.selectedSpec = spec
+    // the paint survives a model switch only if the player explicitly picked a
+    // swatch (vr.paint is click-written only); otherwise the new signature wins
+    this.paintHex = resolvePaint(readPaintSelection(), spec)
+    this.ui.setPaintActive(this.paintHex)
     this.car = buildCar(this.paintHex, spec)
     this.car.group.name = 'player-car'
     this.view.scene.add(this.car.group)
