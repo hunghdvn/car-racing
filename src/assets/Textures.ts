@@ -13,8 +13,13 @@ function cached<T>(key: string, make: () => T): T {
   return t
 }
 
-/** Metallic-paint micro variation: orange-peel normal + roughness jitter. */
-export function carPaintMaps(seed = 7): { normalMap: THREE.Texture; roughnessMap: THREE.Texture } {
+/** Metallic-paint micro variation: orange-peel normal + flake-speckled roughness.
+ *  The roughness canvas doubles as the metal-flake map — its speckle density and
+ *  tile repeat are driven by the finish's `flake` dial (MaterialSpecs maps the
+ *  two numbers), so a pearl drift sparkles and a satin grip barely does. */
+export function carPaintMaps(seed = 7, flakeSpeckle = 0.007, flakeRepeat = 6): { normalMap: THREE.Texture; roughnessMap: THREE.Texture } {
+  const rk = flakeRepeat > 0 ? flakeRepeat : 6
+  const speckle = Math.max(0, Math.min(0.03, flakeSpeckle))
   return {
     normalMap: cached(`paintN${seed}`, () => {
       const h = heightCanvasFrom((x, y, w, hh) => 0.5 + 0.5 * fbm2(x / 7 + seed, y / 7 + seed * 1.7, 3, 2.3, 0.5), 256, 256)
@@ -25,18 +30,80 @@ export function carPaintMaps(seed = 7): { normalMap: THREE.Texture; roughnessMap
       t.needsUpdate = true
       return t
     }),
-    roughnessMap: cached(`paintR${seed}`, () =>
+    roughnessMap: cached(`paintR${seed}_${speckle.toFixed(4)}_${rk}`, () =>
       canvasTexture(128, 128, (ctx, w, hh) => {
         const img = ctx.createImageData(w, hh)
         const rnd = new Rand(seed)
         for (let i = 0; i < w * hh; i++) {
           const v = 88 + Math.floor(rnd.next() * 42)
-          const flake = rnd.next() < 0.004 ? 235 : v
+          const flake = rnd.next() < speckle ? 235 : v
           img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = flake
           img.data[i * 4 + 3] = 255
         }
         ctx.putImageData(img, 0, 0)
-      }, { repeatX: 3, repeatY: 3 }),
+      }, { repeatX: rk, repeatY: rk }),
+    ),
+  }
+}
+
+/** Clearcoat micro-roughness breakup: a fine value-noise field (generated ONCE)
+ *  used as the paint's clearcoatNormalMap so the lacquer layer is not a perfect
+ *  mirror — breaks up the PMREM highlight into a believable wet-coat sparkle. */
+export function paintMicroRoughness(): THREE.Texture {
+  return cached('paintCC', () => {
+    const h = heightCanvasFrom((x, y, w, hh) => 0.5 + 0.5 * fbm2(x / 2.4 + 9.1, y / 2.4 + 3.7, 4, 2.1, 0.56), 256, 256)
+    const n = normalFromHeightCanvas(h, 0.085)
+    const t = new THREE.CanvasTexture(n)
+    t.wrapS = t.wrapT = THREE.RepeatWrapping
+    t.repeat.set(5, 5)
+    t.needsUpdate = true
+    return t
+  })
+}
+
+/** Carbon-fibre twill weave: a 2×2 diagonal-cell weave canvas, cheap (≤128px).
+ *  Reads as a woven pattern up close (via normal relief) while staying subtle
+ *  at distance; the matching roughness map gives the resin its glossy/matte
+ *  cross so a flat aero panel stops looking like painted plastic. */
+export function carbonWeaveMaps(repeat = 8): { normalMap: THREE.Texture; roughnessMap: THREE.Texture } {
+  const rk = Math.max(2, Math.round(repeat))
+  return {
+    normalMap: cached(`carbonN${rk}`, () => {
+      const h = heightCanvasFrom((x, y, w, hh) => {
+        const cell = 32
+        const cx = Math.floor((x / w) * (w / cell))
+        const cy = Math.floor((y / hh) * (hh / cell))
+        const fx = (x / w) * (w / cell) - cx
+        const fy = (y / hh) * (hh / cell) - cy
+        // twill: over/under follows the (cx+cy)%2 checker, running diagonally
+        const diag = (((cx + cy) % 2) + 2) % 2
+        const warp = diag === 0 ? Math.sin(fx * Math.PI) : Math.sin(fy * Math.PI)
+        const weft = diag === 0 ? Math.sin(fy * Math.PI) * 0.45 : Math.sin(fx * Math.PI) * 0.45
+        return 0.18 + 0.7 * (warp * 0.62 + weft * 0.62)
+      }, 128, 128)
+      const n = normalFromHeightCanvas(h, 1.15)
+      const t = new THREE.CanvasTexture(n)
+      t.wrapS = t.wrapT = THREE.RepeatWrapping
+      t.repeat.set(rk, rk)
+      t.needsUpdate = true
+      return t
+    }),
+    roughnessMap: cached(`carbonR${rk}`, () =>
+      canvasTexture(64, 64, (ctx, w, hh) => {
+        const img = ctx.createImageData(w, hh)
+        const rnd = new Rand(4021)
+        const cell = 16
+        for (let y = 0; y < hh; y++) {
+          for (let x = 0; x < w; x++) {
+            const diag = ((Math.floor(x / cell) + Math.floor(y / cell)) % 2 + 2) % 2
+            const v = clamp01((diag === 0 ? 0.34 : 0.6) + (rnd.next() - 0.5) * 0.12) * 255
+            const i = (y * w + x) * 4
+            img.data[i] = img.data[i + 1] = img.data[i + 2] = v
+            img.data[i * 4 + 3] = 255
+          }
+        }
+        ctx.putImageData(img, 0, 0)
+      }, { repeatX: rk, repeatY: rk }),
     ),
   }
 }

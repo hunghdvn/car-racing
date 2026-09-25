@@ -2,8 +2,9 @@ import * as THREE from 'three'
 import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
-import { alloyRoughness, carPaintMaps, roundedPlateGeo, tireTreadNormal } from './Textures'
-import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
+import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
+import { carbonMaterialParams, glassMaterialParams, paintMaterialParams } from './MaterialSpecs'
+import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -278,14 +279,31 @@ const shared = {
   darkSoft(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x0e1013, roughness: 0.9, metalness: 0 })
   },
-  glass(tint: number): THREE.MeshPhysicalMaterial {
-    return new THREE.MeshPhysicalMaterial({ color: new THREE.Color(0x151c25).multiplyScalar(1 - tint * 0.6), roughness: 0.02, metalness: 0, transparent: true, opacity: 0.42, ior: 1.45 })
+  glass(finish: CarFinish): THREE.MeshPhysicalMaterial {
+    const gp = glassMaterialParams(finish)
+    return new THREE.MeshPhysicalMaterial({
+      color: gp.color, roughness: gp.roughness, metalness: gp.metalness,
+      transparent: true, opacity: gp.opacity, ior: gp.ior, envMapIntensity: gp.envMapIntensity,
+    })
   },
   disc(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x555b63, metalness: 0.9, roughness: 0.42 })
+    return new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.94, roughness: 0.36 })
   },
   caliper(hex: number): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: hex, roughness: 0.4, metalness: 0.3 })
+  },
+  carbon(finish: CarFinish): THREE.MeshStandardMaterial {
+    const cp = carbonMaterialParams(finish)
+    const weave = carbonWeaveMaps(cp.repeat)
+    return new THREE.MeshStandardMaterial({
+      color: cp.color, roughness: cp.roughness, metalness: 0.32,
+      normalMap: weave.normalMap, normalScale: new THREE.Vector2(cp.normalScale, cp.normalScale),
+      roughnessMap: weave.roughnessMap, envMapIntensity: cp.envMapIntensity,
+    })
+  },
+  // brushed steel ring standing proud of the disc face (rotates with the wheel)
+  discRing(): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({ color: 0x5b616a, metalness: 0.95, roughness: 0.3 })
   },
 }
 
@@ -297,7 +315,7 @@ const shared = {
  * axle is baked onto world X with sideSign so both left/right wheels face
  * outboard.
  */
-function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number, radius: number, caliperHex: number): { root: THREE.Group; spin: THREE.Group } {
+function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number, radius: number, finish: CarFinish): { root: THREE.Group; spin: THREE.Group } {
   const R = radius
   const hw = width / 2
   const spin = new THREE.Group()
@@ -311,6 +329,14 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
   const tire = new THREE.Mesh(new THREE.LatheGeometry(tp, 36), shared.rubber())
   tire.name = 'tire'
   spin.add(tire)
+
+  // Sidewall ring band — a slightly lighter matte annulus on the outboard face
+  // so the tyre is not one flat donut. Sits just proud of the shoulder.
+  const sidewall = new THREE.Mesh(new THREE.TorusGeometry(R * 0.72, 0.03, 6, 34), new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.92, metalness: 0 }))
+  sidewall.geometry.rotateX(Math.PI / 2)
+  sidewall.geometry.translate(0, hw * 0.80, 0)
+  sidewall.name = 'tire-sidewall'
+  spin.add(sidewall)
 
   // Inboard backing cap — closes the wheel barrel, no sky/ground leaks through.
   const inboardCap = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.50, R * 0.50, 0.018, 22), shared.darkSoft())
@@ -326,11 +352,29 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
   disc.name = 'brake-disc'
   spin.add(disc)
 
+  // Drilled-disc outer ring — a brushed steel rim standing proud of the disc
+  // face so the rotor reads as hardware behind the spokes, not a flat grey disc.
+  const discRing = new THREE.Mesh(new THREE.TorusGeometry(R * 0.56, 0.012, 6, 30), shared.discRing())
+  discRing.geometry.rotateX(Math.PI / 2)
+  discRing.geometry.translate(0, hw * 0.21, 0)
+  discRing.name = 'brake-disc-ring'
+  spin.add(discRing)
+
   // Caliper — clamped at the 3-o'clock position, INBOARD of the dish so it
   // peeks through spoke gaps without being buried under the dish.
-  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper(caliperHex))
+  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper(finish.accent))
   cal.geometry.translate(0, hw * 0.20, R * 0.575)
   cal.name = 'brake-caliper'
+
+  // Caliper pistons — small boxes biting the disc edge under the caliper body
+  // so the calliper is a real two-piece clamp, not a single brick.
+  const pistons: THREE.Mesh[] = []
+  for (const pOff of [-0.018, 0, 0.018]) {
+    const piston = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.022), shared.chrome())
+    piston.geometry.translate(0, hw * 0.14, R * 0.575 + pOff)
+    piston.name = 'brake-piston'
+    pistons.push(piston)
+  }
 
   // Alloy dish (centre hub plate) — small radius, INBOARD of the spokes so it
   // acts as a backing plate behind them, not as a foreground brass shield.
@@ -374,10 +418,12 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
     if (m.isMesh) m.geometry.applyMatrix4(bake)
   })
   cal.geometry.applyMatrix4(bakeCal)
+  for (const piston of pistons) piston.geometry.applyMatrix4(bakeCal)
 
   const root = new THREE.Group()
   root.add(spin)
   root.add(cal)
+  for (const piston of pistons) root.add(piston)
   return { root, spin }
 }
 
@@ -447,12 +493,16 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
-    const maps = carPaintMaps(7)
+    const pp = paintMaterialParams(spec.finish)
+    const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
     const m = new THREE.MeshPhysicalMaterial({
-      color: bodyHex, metalness: 0.15, roughness: 0.28,
+      color: bodyHex, metalness: pp.metalness, roughness: pp.roughness,
       roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
       normalScale: new THREE.Vector2(0.5, 0.5),
-      clearcoat: 1, clearcoatRoughness: 0.045, sheen: 0.2, sheenRoughness: 0.4,
+      clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
+      clearcoatNormalMap: paintMicroRoughness(),
+      sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
+      envMapIntensity: pp.envMapIntensity,
     })
     paintMats.push(m)
     return m
@@ -465,7 +515,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   // main body + cabin hulls (lofted, smooth) + wrap glazing
   group.add(named(new THREE.Mesh(buildHull(spec.shape.bodyStations, 52, { caps: true }), paint), 'body'))
   group.add(named(new THREE.Mesh(buildHull(spec.shape.cabinStations, 30, { caps: true }), paint), 'cabin'))
-  group.add(named(new THREE.Mesh(glassBandGeo(spec.shape.cabinStations), shared.glass(spec.kit.glassTint)), 'glass'))
+  group.add(named(new THREE.Mesh(glassBandGeo(spec.shape.cabinStations), shared.glass(spec.finish)), 'glass'))
 
   // arch rims + dark liners
   for (const front of [true, false]) {
@@ -504,7 +554,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   }
   if (spec.kit.splitter !== 'none') {
     const big = spec.kit.splitter === 'big'
-    const splitter = new THREE.Mesh(big ? roundedPlateGeo(2.0, 0.07, 0.05, 0.02) : roundedPlateGeo(1.76, 0.06, 0.05, 0.02), shared.dark())
+    const splitter = new THREE.Mesh(big ? roundedPlateGeo(2.0, 0.07, 0.05, 0.02) : roundedPlateGeo(1.76, 0.06, 0.05, 0.02), shared.carbon(spec.finish))
     splitter.position.set(0, big ? 0.195 : 0.21, -2.16)
     group.add(named(splitter, 'splitter'))
   }
@@ -512,16 +562,16 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const bumperR = new THREE.Mesh(roundedPlateGeo(1.66, 0.46, 0.1, 0.055), paint)
   bumperR.position.set(0, 0.5, 2.16)
   group.add(named(bumperR, 'bumper-rear'))
-  const diffuser = new THREE.Mesh(roundedPlateGeo(1.3, 0.24, 0.05, 0.03), shared.dark())
+  const diffuser = new THREE.Mesh(roundedPlateGeo(1.3, 0.24, 0.05, 0.03), shared.carbon(spec.finish))
   diffuser.position.set(0, 0.28, 2.235)
   group.add(named(diffuser, 'diffuser'))
   for (const fx of diffuserFinXs(spec.kit.diffuserFins)) {
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.11, 0.08), shared.dark())
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.11, 0.08), shared.carbon(spec.finish))
     fin.position.set(fx, 0.24, 2.26)
     group.add(named(fin, 'diffuser-fin'))
   }
   for (const side of [-1, 1]) {
-    const skirt = new THREE.Mesh(roundedPlateGeo(1.55, 0.10, 0.07, 0.025), shared.dark())
+    const skirt = new THREE.Mesh(roundedPlateGeo(1.55, 0.10, 0.07, 0.025), shared.carbon(spec.finish))
     skirt.rotation.y = Math.PI / 2
     skirt.position.set(side * 0.952, 0.348, 0.06)
     group.add(named(skirt, `skirt-${side < 0 ? 'l' : 'r'}`))
@@ -595,7 +645,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     head.position.set(side * 1.005, 0.885, -0.86)
     head.rotation.y = side * -0.3
     group.add(named(head, `mirror-head-${side < 0 ? 'l' : 'r'}`))
-    const g = new THREE.Mesh(new THREE.PlaneGeometry(0.098, 0.048), shared.glass(spec.kit.glassTint))
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(0.098, 0.048), shared.glass(spec.finish))
     g.position.set(side * 1.030, 0.885, -0.86)
     g.rotation.y = side * (Math.PI / 2 - 0.18)
     group.add(named(g, `mirror-glass-${side < 0 ? 'l' : 'r'}`))
@@ -609,7 +659,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
       strut.position.set(side * 0.56, gt ? 0.80 : 0.755, 2.06)
       group.add(named(strut, `spoiler-strut-${side < 0 ? 'l' : 'r'}`))
     }
-    const blade = new THREE.Mesh(gt ? roundedPlateGeo(1.44, 0.05, 0.032, 0.013) : roundedPlateGeo(1.34, 0.045, 0.03, 0.012), paint)
+    const blade = new THREE.Mesh(gt ? roundedPlateGeo(1.44, 0.05, 0.032, 0.013) : roundedPlateGeo(1.34, 0.045, 0.03, 0.012), shared.carbon(spec.finish))
     blade.position.set(0, gt ? 0.92 : 0.840, 2.08)
     blade.rotation.x = gt ? -0.14 : -0.09
     group.add(named(blade, 'spoiler-blade'))
@@ -623,13 +673,13 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
       line.rotation.x = 0.05
       group.add(named(line, `hood-line-${side < 0 ? 'l' : 'r'}`))
     }
-    const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.012, 0.07), shared.dark())
+    const cowl = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.012, 0.07), shared.carbon(spec.finish))
     cowl.position.set(0, 0.905, -0.92)
     cowl.rotation.x = -0.3
     group.add(named(cowl, 'cowl-vent'))
   }
   if (spec.kit.roofScoop) {
-    const scoop = new THREE.Mesh(roundedPlateGeo(0.34, 0.10, 0.05, 0.02), shared.dark())
+    const scoop = new THREE.Mesh(roundedPlateGeo(0.34, 0.10, 0.05, 0.02), shared.carbon(spec.finish))
     scoop.position.set(0, 1.075, -0.55)
     scoop.rotation.x = -0.35
     group.add(named(scoop, 'roof-scoop'))
@@ -679,7 +729,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   for (const front of [true, false]) {
     const z = front ? -VEHICLE.wheelbase / 2 : VEHICLE.wheelbase / 2
     for (const side of [-1, 1]) {
-      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.kit.caliper)
+      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.finish)
       let steer: THREE.Group | null = null
       if (front) {
         steer = new THREE.Group()
@@ -708,8 +758,8 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   // wheels, steering/flame animation, and brake/headlight glow carriers intact.
   mergeStaticMeshes(group, {
     keepNames: [
-      'tire', 'wheelback', 'brake-disc', 'brake-caliper', 'wheel-dish',
-      'wheel-lip', 'wheel-spoke', 'wheel-hub', 'wheel-f-l', 'wheel-f-r',
+      'tire', 'tire-sidewall', 'wheelback', 'brake-disc', 'brake-disc-ring', 'brake-caliper', 'brake-piston',
+      'wheel-dish', 'wheel-lip', 'wheel-spoke', 'wheel-hub', 'wheel-f-l', 'wheel-f-r',
       'wheel-r-l', 'wheel-r-r', 'headlight-lens-l', 'headlight-lens-r',
       'taillight-lens-l', 'taillight-lens-r', 'taillight-bar',
       'flame-l', 'flame-r', 'flame-core-l', 'flame-core-r',
