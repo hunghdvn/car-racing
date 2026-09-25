@@ -4,7 +4,7 @@ import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
 import { carbonMaterialParams, glassMaterialParams, paintMaterialParams } from './MaterialSpecs'
-import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
+import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -263,6 +263,22 @@ export function validateCarShape(shape: CarShape): void {
 
 /* -------------------------------- materials ------------------------------- */
 
+/* Group-3 raised trim rides on ONE memoised instance per detail material
+ * (the Textures.ts `cached` idiom applied to materials): every car in the
+ * field shares the same dark trim, dark chrome and LED instances, so the
+ * detail set never mints a per-part material. LED materials are keyed by
+ * role + accent hex — four models means a handful of instances at most. */
+const detailMats = new Map<string, THREE.Material>()
+function memoDetailMat<T extends THREE.Material>(key: string, make: () => T): T {
+  let m = detailMats.get(key) as T | undefined
+  if (!m) { m = make(); detailMats.set(key, m) }
+  return m
+}
+
+/** linear blend of two packed hex colours (weight of `b`) */
+const mixHex = (a: number, b: number, w: number): number =>
+  new THREE.Color(a).lerp(new THREE.Color(b), w).getHex()
+
 const shared = {
   rubber(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.86, metalness: 0.02, normalMap: tireTreadNormal(), normalScale: new THREE.Vector2(0.8, 0.8) })
@@ -305,6 +321,97 @@ const shared = {
   discRing(): THREE.MeshStandardMaterial {
     return new THREE.MeshStandardMaterial({ color: 0x5b616a, metalness: 0.95, roughness: 0.3 })
   },
+  // ---- group-3 detail materials (memoised singletons, see detailMats above)
+  // matte dark trim: handles, shut lines, lamp cans, slats, recesses, quad block
+  trim(): THREE.MeshStandardMaterial {
+    return memoDetailMat('trim', () => new THREE.MeshStandardMaterial({ color: 0x111317, roughness: 0.62, metalness: 0.2 }))
+  },
+  // dark chrome: exhaust hardware (sits a stop below the bright rim chrome)
+  chromeDark(): THREE.MeshStandardMaterial {
+    return memoDetailMat('chromeDark', () => new THREE.MeshStandardMaterial({ color: 0x565c66, metalness: 1, roughness: 0.28 }))
+  },
+  // daytime-runner strip: the model's accent carried into cool white, low
+  // emissive so the bloom pass (threshold 0.92) reads a line, not a flare
+  ledDrl(accent: number): THREE.MeshStandardMaterial {
+    const hex = mixHex(0xf4f8ff, accent, 0.42)
+    return memoDetailMat(`led-drl-${hex}`, () => new THREE.MeshStandardMaterial({
+      color: 0x2b313a, emissive: new THREE.Color(hex), emissiveIntensity: 0.6, roughness: 0.25, metalness: 0,
+    }))
+  },
+  // tail signature: brake red carried toward the model's accent (amber drift,
+  // cyan-tinged hyper) — never past a believable red/amber lamp. The weight
+  // stays on the red side and the base colour is near-black so the ACES tone
+  // map keeps the strip saturated instead of washing it to trim grey.
+  ledTail(accent: number): THREE.MeshStandardMaterial {
+    const hex = mixHex(0xff2010, accent, 0.35)
+    return memoDetailMat(`led-tail-${hex}`, () => new THREE.MeshStandardMaterial({
+      color: 0x2e0a07, emissive: new THREE.Color(hex), emissiveIntensity: 0.95, roughness: 0.25, metalness: 0,
+    }))
+  },
+}
+
+/* -------------------------------- detail plan ------------------------------- */
+
+export type ExhaustLayout = 'single' | 'twin' | 'quad'
+
+/** Per-kit raised shell-detail configuration (group 3). Pure and THREE-free
+ *  so the kit conditionals are node-pinned (tests/cases/shell-detail.test.ts);
+ *  buildCar reads nothing else when deciding which hardware a model wears. */
+export interface DetailPlan {
+  /** projector can + emissive lens disc inside each headlight ring */
+  projectorLamps: boolean
+  /** full-width accent LED strip (on its dark recess plate) across the tail */
+  ledTailBar: boolean
+  /** slim door-handle bars per side on the door band */
+  handlesPerSide: number
+  /** recessed-look hood slats (grip/drift); hero/hyper stay plain */
+  hoodSlats: number
+  /** hyper's single pressed power-dome ridge (exclusive with slats) */
+  hoodDome: boolean
+  /** tip architecture: hero/grip single round, drift twin stacked, hyper centre quad */
+  exhaust: ExhaustLayout
+  /** dark shut-line strips total (per-side pairs: door cut + bonnet seam) */
+  shutLines: number
+}
+
+export function detailPlanFor(kit: CarKit): DetailPlan {
+  const hyper = kit.spoiler === 'gt'
+  const grip = kit.splitter === 'big'
+  const drift = kit.roofScoop
+  return {
+    projectorLamps: true,
+    ledTailBar: true,
+    handlesPerSide: 2,
+    // the technical cars breathe through the hood; the hero stays clean, the
+    // hyper carries a pressed dome ridge instead of cut slats
+    hoodSlats: hyper ? 0 : grip ? 2 : drift ? 3 : 0,
+    hoodDome: hyper,
+    exhaust: hyper ? 'quad' : drift ? 'twin' : 'single',
+    shutLines: 4,
+  }
+}
+
+/** Detail meshes too thin to earn a shadow-map slot (see the shadow traverse). */
+const SHADOWLESS_DETAIL: ReadonlySet<string> = new Set([
+  'headlight-can-l', 'headlight-can-r', 'headlight-projector-l', 'headlight-projector-r',
+  'headlight-drl-l', 'headlight-drl-r',
+  'taillight-recess', 'taillight-led',
+  'door-handle-f-l', 'door-handle-f-r', 'door-handle-r-l', 'door-handle-r-r',
+  'hood-slat-0', 'hood-slat-1', 'hood-slat-2',
+  'exhaust2-l', 'exhaust2-r', 'exhaust-inner2-l', 'exhaust-inner2-r',
+  'exhaust-quad-block', 'exhaust-q0', 'exhaust-q1', 'exhaust-q2', 'exhaust-q3',
+  'shut-door-l', 'shut-door-r', 'shut-bonnet-l', 'shut-bonnet-r',
+])
+
+/** Total NEW meshes the plan adds over the pre-group-3 build (mesh budget gate). */
+export function detailPartCount(plan: DetailPlan): number {
+  return (plan.projectorLamps ? 6 : 0)
+    + (plan.ledTailBar ? 2 : 0)
+    + plan.handlesPerSide * 2
+    + plan.hoodSlats
+    + (plan.hoodDome ? 1 : 0)
+    + (plan.exhaust === 'twin' ? 4 : plan.exhaust === 'quad' ? 5 : 0)
+    + plan.shutLines
 }
 
 /* --------------------------------- wheels --------------------------------- */
@@ -511,6 +618,8 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const paint = mkPaint()
   const wr = VEHICLE.wheelRadius * spec.kit.wheelRadiusMul
   const ww = VEHICLE.wheelWidth * spec.kit.wheelWidthMul
+  const plan = detailPlanFor(spec.kit)
+  const lastStation = spec.shape.bodyStations[spec.shape.bodyStations.length - 1]
 
   // main body + cabin hulls (lofted, smooth) + wrap glazing
   group.add(named(new THREE.Mesh(buildHull(spec.shape.bodyStations, 52, { caps: true }), paint), 'body'))
@@ -587,16 +696,43 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     group.add(named(rocker, `rocker-${side < 0 ? 'l' : 'r'}`))
   }
 
-  // exhaust tips (read under the bumper)
+  // exhaust tips (read under the bumper) — dark chrome per the group-3
+  // plan: single rounds (hero/grip), Slide King's twin stacked swagger
+  // (drift), or the hyper's centre quad block under the GT wing
   for (const side of [-1, 1]) {
-    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.064, 0.18, 14), shared.chrome())
+    if (plan.exhaust === 'quad') break
+    const sn = side < 0 ? 'l' : 'r'
+    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.064, 0.18, 14), shared.chromeDark())
     tip.rotation.x = Math.PI / 2
     tip.position.set(side * 0.4, 0.245, 2.245)
-    group.add(named(tip, `exhaust-${side < 0 ? 'l' : 'r'}`))
+    group.add(named(tip, `exhaust-${sn}`))
     const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.02, 12), shared.darkSoft())
     inner.rotation.x = Math.PI / 2
     inner.position.set(side * 0.4, 0.245, 2.33)
-    group.add(named(inner, `exhaust-inner-${side < 0 ? 'l' : 'r'}`))
+    group.add(named(inner, `exhaust-inner-${sn}`))
+    if (plan.exhaust === 'twin') {
+      // stacked just above the lower round, sized to stay inside the 0.16..0.40
+      // diffuser band so the twin pair reads as cut into the rear valance
+      const tip2 = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.056, 0.18, 14), shared.chromeDark())
+      tip2.rotation.x = Math.PI / 2
+      tip2.position.set(side * 0.4, 0.352, 2.245)
+      group.add(named(tip2, `exhaust2-${sn}`))
+      const inner2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.02, 12), shared.darkSoft())
+      inner2.rotation.x = Math.PI / 2
+      inner2.position.set(side * 0.4, 0.352, 2.33)
+      group.add(named(inner2, `exhaust-inner2-${sn}`))
+    }
+  }
+  if (plan.exhaust === 'quad') {
+    const block = new THREE.Mesh(roundedPlateGeo(0.52, 0.24, 0.03, 0.05), shared.trim())
+    block.position.set(0, 0.3, 2.262)
+    group.add(named(block, 'exhaust-quad-block'))
+    for (const [qi, qx] of [-0.165, -0.055, 0.055, 0.165].entries()) {
+      const qt = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.046, 0.12, 12), shared.chromeDark())
+      qt.rotation.x = Math.PI / 2
+      qt.position.set(qx, 0.3, 2.292)
+      group.add(named(qt, `exhaust-q${qi}`))
+    }
   }
 
   // headlight clusters (shaped lenses, emissive)
@@ -616,6 +752,27 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     ring.position.set(side * 0.46, 0.66, -2.282)
     ring.rotation.y = hous.rotation.y
     group.add(named(ring, `headlight-ring-${side < 0 ? 'l' : 'r'}`))
+    // group-3 projector cluster in the ring mouth: dark barrel + emissive
+    // lens disc (rides the per-car headlight material so setHeadlights
+    // brightens the pupil with the lens), plus a slim accent DRL strip on
+    // the housing crown kept at bloom-safe emissive
+    if (plan.projectorLamps) {
+      const sn = side < 0 ? 'l' : 'r'
+      // open-ended barrel so the lens disc reads as a lit pupil inside the
+      // ring (a capped can buries the emissive disc behind its front face)
+      const can = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.05, 0.06, 14, 1, true), shared.trim())
+      can.rotation.x = Math.PI / 2
+      can.position.set(side * 0.46, 0.66, -2.268)
+      group.add(named(can, `headlight-can-${sn}`))
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.012, 14), hm)
+      disc.rotation.x = Math.PI / 2
+      disc.position.set(side * 0.46, 0.66, -2.286)
+      group.add(named(disc, `headlight-projector-${sn}`))
+      const drl = new THREE.Mesh(roundedPlateGeo(0.40, 0.020, 0.016, 0.008), shared.ledDrl(spec.finish.accent))
+      drl.position.set(side * 0.46, 0.722, -2.266)
+      drl.rotation.y = hous.rotation.y
+      group.add(named(drl, `headlight-drl-${sn}`))
+    }
   }
 
   // tail light bar + brake lenses (emissive, brake-reactive) — attached to the
@@ -634,6 +791,19 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const tailBar = new THREE.Mesh(roundedPlateGeo(0.50, 0.026, 0.018, 0.008), brakeMats[0])
   tailBar.position.set(0, 0.62, 2.268)
   group.add(named(tailBar, 'taillight-bar'))
+  // group-3 signature strip: a full-width accent LED bar on a dark recess
+  // plate, hugging THIS model's own tail-cap plane (the long-tailed hyper
+  // swallows fixed-z lamps; the cap station keeps the strip on the body).
+  // Width stays inside the cap's straight flank so no end floats in air.
+  if (plan.ledTailBar) {
+    const barW = lastStation.hw * 1.6
+    const recess = new THREE.Mesh(roundedPlateGeo(barW * 1.08, 0.056, 0.014, 0.014), shared.trim())
+    recess.position.set(0, lastStation.ty - 0.055, lastStation.z + 0.006)
+    group.add(named(recess, 'taillight-recess'))
+    const led = new THREE.Mesh(roundedPlateGeo(barW, 0.026, 0.016, 0.009), shared.ledTail(spec.finish.accent))
+    led.position.set(0, lastStation.ty - 0.055, lastStation.z + 0.020)
+    group.add(named(led, 'taillight-led'))
+  }
 
   // mirrors on stalks
   for (const side of [-1, 1]) {
@@ -649,6 +819,32 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     g.position.set(side * 1.030, 0.885, -0.86)
     g.rotation.y = side * (Math.PI / 2 - 0.18)
     group.add(named(g, `mirror-glass-${side < 0 ? 'l' : 'r'}`))
+  }
+
+  // group-3 door-band hardware: slim dark-trim handle bars (flush-backed,
+  // proud by a few cm so they catch the rim light at the side-shot distance)
+  // and dark shut lines on the door cut + bonnet-side seam
+  for (const [hi, hz] of [-0.38, 0.32].slice(0, plan.handlesPerSide).entries()) {
+    const hSt = interpStations(spec.shape.bodyStations, hz)
+    for (const side of [-1, 1]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.026, 0.13), shared.trim())
+      bar.position.set(side * (hSt.hw + 0.012), 0.70, hz)
+      group.add(named(bar, `door-handle-${hi === 0 ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
+    }
+  }
+  if (plan.shutLines > 0) {
+    const dSt = interpStations(spec.shape.bodyStations, 0.60)
+    const bSt = interpStations(spec.shape.bodyStations, -1.72)
+    for (const side of [-1, 1]) {
+      const sn = side < 0 ? 'l' : 'r'
+      const cut = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.30, 0.016), shared.trim())
+      cut.position.set(side * (dSt.hw + 0.004), 0.605, 0.60)
+      group.add(named(cut, `shut-door-${sn}`))
+      const bon = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.16, 0.016), shared.trim())
+      bon.position.set(side * (bSt.hw + 0.004), 0.70, -1.72)
+      bon.rotation.x = 0.05
+      group.add(named(bon, `shut-bonnet-${sn}`))
+    }
   }
 
   // rear spoiler on struts
@@ -683,6 +879,26 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     scoop.position.set(0, 1.075, -0.55)
     scoop.rotation.x = -0.35
     group.add(named(scoop, 'roof-scoop'))
+  }
+  // group-3 hood hardware: recessed-look dark slats for the breathing cars,
+  // a single pressed paint ridge for the hyper (plan-gated; hero stays plain)
+  for (let si = 0; si < plan.hoodSlats; si++) {
+    const sz = -1.44 - si * 0.14
+    const sSt = interpStations(spec.shape.bodyStations, sz)
+    const slat = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.014, 0.05), shared.trim())
+    slat.position.set(0, sSt.ty + 0.006, sz)
+    slat.rotation.x = 0.07
+    group.add(named(slat, `hood-slat-${si}`))
+  }
+  if (plan.hoodDome) {
+    const dz = -1.52
+    const dSt = interpStations(spec.shape.bodyStations, dz)
+    const domeGeo = roundedPlateGeo(0.46, 0.6, 0.03, 0.14)
+    domeGeo.rotateX(-Math.PI / 2)
+    const dome = new THREE.Mesh(domeGeo, paint)
+    dome.position.set(0, dSt.ty + 0.008, dz)
+    dome.rotation.x = 0.06
+    group.add(named(dome, 'hood-dome'))
   }
 
   // interior hints visible through glass
@@ -744,12 +960,14 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     }
   }
 
-  // shadows: solid parts cast, glass/flames do not
+  // shadows: solid parts cast, glass/flames do not — and the sub-3 cm raised
+  // detail trim never casts (a few-px shadow map draw per strip is invisible
+  // at scene scale but doubles the detail set's per-frame chain cost)
   group.traverse((o) => {
     const m = o as THREE.Mesh
     if (m.isMesh) {
       const mm = m.material as THREE.Material
-      m.castShadow = !mm.transparent
+      m.castShadow = !mm.transparent && !(m.name && SHADOWLESS_DETAIL.has(m.name))
       m.receiveShadow = false
     }
   })
@@ -763,6 +981,17 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
       'wheel-r-l', 'wheel-r-r', 'headlight-lens-l', 'headlight-lens-r',
       'taillight-lens-l', 'taillight-lens-r', 'taillight-bar',
       'flame-l', 'flame-r', 'flame-core-l', 'flame-core-r',
+      // group-3 raised shell detail — kept individually so the named trim
+      // survives the static-merge harvest (none of these names may collide
+      // with the patterns functional.mjs asserts, e.g. wheel-spoke)
+      'headlight-can-l', 'headlight-can-r', 'headlight-projector-l', 'headlight-projector-r',
+      'headlight-drl-l', 'headlight-drl-r',
+      'taillight-recess', 'taillight-led',
+      'door-handle-f-l', 'door-handle-f-r', 'door-handle-r-l', 'door-handle-r-r',
+      'hood-slat-0', 'hood-slat-1', 'hood-slat-2', 'hood-dome',
+      'exhaust2-l', 'exhaust2-r', 'exhaust-inner2-l', 'exhaust-inner2-r',
+      'exhaust-quad-block', 'exhaust-q0', 'exhaust-q1', 'exhaust-q2', 'exhaust-q3',
+      'shut-door-l', 'shut-door-r', 'shut-bonnet-l', 'shut-bonnet-r',
     ],
   })
 

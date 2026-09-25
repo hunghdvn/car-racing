@@ -377,3 +377,113 @@ on-track player, so their content genuinely changed (materials for every model i
 - Carbon/env/glass numbers are hand-calibrated against the SwiftShader captures; a real-GPU eyeball
   pass is still a human acceptance item (the software raster compresses specular contrast).
 
+## Visual-enhancement: shell detail (group 3)
+
+Raised shell hardware on top of the group-2 materials. One commit:
+`16e963d — feat: raised shell detail — lamps, mirrors, handles, vents, exhausts, shut lines`
+(33 files: 3 source + 30 shots).
+
+### Parts added per kit (via the pure `detailPlanFor(kit)` / `detailPartCount(plan)` exports on CarModel.ts)
+| model | plan | new meshes |
+|---|---|---|
+| hero | single round tips, plain hood, DRL×2, LED tail bar+recess, handles×4, shut lines×4 | **16** |
+| grip | hero set **+ 2 hood slats** (kit.splitter 'big' = the breathing technical car) | **18** |
+| drift | hero set **+ 3 hood slats + twin stacked tips/side** (roofScoop = Slide King swagger) | **23** |
+| hyper | single→**centre quad block + 4 tips** under the GT wing, **painted power-dome ridge**, no slats | **22** |
+
+Artistic calls, justified: hyper gets the pressed paint dome ridge (not cut slats) — its
+glossiest-clear body reads as a single pressed surface and cut-out slats would shout decals at the
+26° side-shot distance; the grip/drift slats are matte-dark trim bars half-sunk in the crown so they
+read recessed. The tail LED strip hugs **each model's own tail-cap station** (`bodyStations` last
+entry) rather than a fixed z — the long-tailed hyper physically swallows fixed-z lamps (its old
+fixed-z cluster buried inside the extended tail), and the width is capped at `hw·1.6` so no strip
+end floats past the cap silhouette. Tail LED = brake red mixed 0.35→accent (amber drift,
+cyan-tinged hyper) kept under the 0.92 bloom threshold so it reads a lit bar, not a flare; the
+projector barrel is open-ended so the emissive lens disc (on the per-car headlight material —
+`setHeadlights` brightens the pupil too) reads as the lit pupil inside the existing ring.
+Mirrors: the shipped stalk+paint-cap+mirror-glass set already satisfies the brief item (cap is the
+paint instance) — verified not oversized at shot distance, left untouched.
+
+### Materials discipline + naming/keepNames
+- New `shared.trim` (darkTrim), `shared.chromeDark`, `shared.ledDrl/ledTail` factories **memoise one
+  instance per key** (`detailMats` Map = the Textures.ts `cached` idiom for materials): the whole
+  6-car field shares one trim, one dark-chrome, ≤8 LED (role×accent-hex) instances. No new per-part
+  materials; exhaust tips re-matted bright chrome → dark chrome per the brief.
+- All 29 new mesh names added to the `keepNames` harvest registry (headlight-can/projector/drl-*,
+  taillight-led/recess, door-handle-{f,r}-{l,r}, hood-slat-0..2, hood-dome, exhaust2/inner2-*,
+  exhaust-quad-block, exhaust-q0..q3, shut-door/bonnet-*); none collide with the
+  `wheel-spoke` equality functional.mjs counts (spoke pins green).
+- `SHADOWLESS_DETAIL` stops the sub-3 cm trim from earning shadow-map slots — that halved the chain
+  delta (+222 → +110) with zero visible change at scene scale.
+
+### Node tests — RED → GREEN (`tests/cases/shell-detail.test.ts`, 8 new)
+RED (before the exports existed — bundle fails closed on the missing feature):
+```
+✘ [ERROR] No matching export in "src/assets/CarModel.ts" for import "detailPlanFor"
+✘ [ERROR] No matching export in "src/assets/CarModel.ts" for import "detailPartCount"
+```
+GREEN: `170 passed, 0 failed` (162 + 8, pristine). Pins: hero single+plain, grip slats+single,
+drift twin+slats, hyper quad+dome-exclusive, 2 handles/side every model, projector/LED/shut-line
+presence, ≤35-mesh budget, `detailPlanFor` purity (kit untouched, deterministic).
+
+### Gate battery (tails)
+| gate | result |
+|---|---|
+| `npm run typecheck` | PASS — clean (`tsc --noEmit`, no diagnostics) |
+| `node scripts/tests.mjs` | PASS — `170 passed, 0 failed` (8 new pins, RED first) |
+| `npm run build:harness` | PASS — `✓ built in 951ms` (>500 kB three.js note pre-existing) |
+| `node scripts/functional.mjs` | PASS — `RESULT: PASS (11/11)`; spokes `[32,48,24,20,32]`, boot/garage/standings green → the new names didn't perturb any mesh assertion |
+| `node scripts/noleak.mjs` | PASS — `RESULT: CLEAN (runtime fails=0, asset leaks=0)` |
+| `node scripts/shots.mjs` + `audit-shots.mjs` | PASS — single battery, 37 frames written, `RESULT: ALL CLEAN (37 frames)`, 0 FLAG |
+| `perf.mjs --nobisect --seconds 8` | PASS (evidence) — no fatal, `phaseEnd=racing`, glErr 0, ctxLost false |
+
+### Draw-call delta vs group 2 (controlled: same tree, `git stash` the one source file, same poses)
+- `grid` (the six-car scene): **calls 2760 → 2870 = +110** — under the 120 flag (pre-shadow-cull it
+  was +222; the `SHADOWLESS_DETAIL` fix halved it). geometries +111 ≈ 6 cars × ~18.5 kept parts.
+- hero side frame: 464 → 480 (+16). functional `renders-live` chain stays well inside budget
+  (calls≈5.8 k). The +110 is permanently paid to keep the kept-name detail individually drawn
+  (brief-mandated keepNames); flagged for the same reason group 2 flagged its +116.
+
+### perf evidence (SwiftShader software raster — absolute fps meaningless)
+run1 full-lap calls 2032/2340 tris 0.7-0.9M, heap mbPerSec +0.088 (group 2 recorded +0.09 — same
+magnitude); coast/tunnel slopes negative; all stretches `phaseEnd=racing`, no crash/fatal. Wrote
+`shots/perf_profile-2026-09-25-08-20-54.json`. The ~3 fps figures are raster artifacts, noted as such.
+
+### shots: committed vs reverted (single battery, audited ALL CLEAN 37)
+- Committed **30 regenerated frames**: all four `car_model_*`, `car_front/rear/side/fq3/rq3/nitro/drift`,
+  `grid`, `slice`, `materials_matrix`, `coast_dunes`, `finish_line`, `tunnel_contrast`, all `state_*`,
+  all `section_*` — every one renders the on-track player (and grid the mixed field), so the new
+  hardware genuinely changes their content (eyeballed below).
+- **Reverted**: `kit_buildings.png` — car-free pose (player at y=−600, freezeSim), delta pure
+  SwiftShader re-encode churn (the six byte-stable car-free `kit_*` boards are the control; identical
+  ruling to group 2). `deck_structure.png` self-restored: its battery capture hashed byte-identical
+  to the committed blob (`4cf767b1…`, car outside its frustum), so nothing was committed for it.
+
+### visual self-check (each read at the 26° side distance; two tuning iterations applied)
+Iteration fixes: projector barrel made open-ended (a capped can buried the emissive pupil → dark
+hole); tail LED rebased near-black base + 0.95 intensity (grey-trim wash under ACES); detail trim
+shadow-cast disabled (also the draw-call halving above).
+- **headlight projectors** — read as a real lamp: ring → dark barrel → lit pupil, with the accent
+  DRL bar above the housing crown; no bloom blow-out at intensity 0.6.
+- **tail LED strip** — reads as a continuous dark-red bar in the dark recess bezel across the tail
+  (warm-shifted on drift, cool on hyper); subtle, never bloomed.
+- **mirrors** — the existing stalk+paint-cap set still reads correctly sized on the A-pillar; kept.
+- **door handles** — the two slim dark bars per side catch the rim light on the door band (clearest
+  on hyper/grip/drift sides); not floating — flush-backed at hw+1 cm.
+- **hood slats** — read as recessed dark louvre bars on grip/drift; **hyper dome** reads as a soft
+  pressed paint ridge (deliberately quiet).
+- **exhausts** — single dark-chrome rounds read under the bumper; drift twin stacks read as a stacked
+  pair in the valance; hyper quad reads as a centre block with four tips below the wing.
+- **shut lines** — thin dark door-cut + bonnet-seam lines read as panel breaks without stripe noise.
+- grid: field gains the trim reads at distance, nothing floats; audit ent/distinct metrics unchanged
+  in character.
+
+### Concerns
+- +110 calls is keepNames load-bearing (brief mandates individually-named kept meshes); if a future
+  gate tightens the ceiling, the detail set is the first candidate for selective re-folding.
+- Emissive reads are calibrated on SwiftShader captures (compresses emissive/specular contrast —
+  group-2 caveat stands); the tail LED looked grey at intensity 0.7 and reads correctly at 0.95 —
+  a real-GPU eyeball remains a human acceptance item.
+- `detailPlanFor` derives models from kit archetypes (`spoiler 'gt'`, `splitter 'big'`,
+  `roofScoop`); a future kit re-mix could re-route a model's detail plan — the node pins are the tripwire.
+
