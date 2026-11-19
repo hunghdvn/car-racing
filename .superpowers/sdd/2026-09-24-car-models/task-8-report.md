@@ -487,3 +487,151 @@ shadow-cast disabled (also the draw-call halving above).
 - `detailPlanFor` derives models from kit archetypes (`spoiler 'gt'`, `splitter 'big'`,
   `roofScoop`); a future kit re-mix could re-route a model's detail plan — the node pins are the tripwire.
 
+
+## PR review fix round
+
+External review of PR #19 (feat/car-models) returned 14 verified findings (F1-F14);
+all were reproduced, fixed, and pinned by tests. Worktree: `.worktrees/feat-car-models`.
+
+### Per-finding summary
+
+- **F1 — model-swap disposed field-wide shared materials.** `Game.selectModel`
+  disposed every material in the retired car tree, including the memoised
+  singletons the mounted AI cars still render with. Added
+  `isSharedCarMaterial` + `disposeCarTree` to `src/assets/CarModel.ts`
+  (geometry always, materials only when not a `detailMats` singleton, arrays
+  handled — mirrors `util.disposeTree`); `selectModel` now calls it. RED:
+  assets.test "disposeCarTree frees geometry always, materials only when not
+  shared" failed pre-fix (function absent); GREEN post.
+- **F2 — garage stayed locked after MAIN MENU + optimistic card UI.**
+  (a) `RaceDirector.abandon()` added; `Game.toMenu()` calls it (+ `prevCd = 0`)
+  so the director returns to idle, cards unlock and the AI field sleeps until
+  the next `beginRace`. RED: cars.test "abandon() returns a live race to idle"
+  (phase stayed `countdown`). (b) Persistence/active-marker/stat-bars moved out
+  of the card click into the ACCEPTED path: `UIManager` gained public
+  `setModelActive`/`renderModelStats`; `Game.selectModel` calls them (plus
+  `writeModelSelection`) after the same-id/phase guards. Same-id check, phase
+  guards and the harness dev log kept as-is; title-Enter-starts-race stays green.
+- **F3 — headlight cluster/intakes hardcoded z.** The hero's absolute
+  `-2.245..-2.286` literals left the long-nosed hyper's lamps in the air and
+  buried the short-nosed grip's in its own nose. Added pure
+  `frontLampAnchors(first)` (mirrors the tail's `lastStation` anchoring);
+  calibrated so the hero's station reproduces the shipped z/y byte-identically
+  (lens z -2.268, lampY 0.66, intake -2.29). RED: cars.test "frontLampAnchors
+  derives the cluster from the model front station".
+- **F4 — Input.preventDefault killed Enter on focused cards.** PREVENT keys are
+  no longer preventDefault-ed when the keydown targets an interactive element
+  (`closest('button,a,input,select,textarea')`); page-scroll defaults off
+  controls are unchanged. RED: ui.test "Enter on a focused button is NOT
+  preventDefault-ed" + arrow-key companion. Locked cards also leave the tab
+  order (`tabIndex=-1`, `aria-disabled`).
+- **F5 — AI colour collision on model switch.** The boot pool excludes only the
+  BOOT paint, so a garage switch could land the player on a signature an AI
+  slot wears. `nextUnusedPaletteColor(used)` (pure, CarSpecs) + `aiPaintHex`
+  tracking; `selectModel` repaints the colliding rival and logs under harness.
+- **F6 — hyper was missing `yawResponse: 0.95`** from the approved §7 table.
+  Added; whole §7 table pinned as literals (RED: `hyper.yawResponse 6.4000 ≠
+  6.08`).
+- **F7 — `vr.paint` storage validation.** The `Number.isFinite` gate accepted
+  `''` (→ 0, black car) and any off-palette number. `readPaintSelection` now
+  accepts only PAINTS member hexes; unknown `vr.model` ids already fell back
+  (`find(...)?.id ?? 'hero'`) and are pinned. RED: cars.test palette-hex-only
+  gate; functional `paint-storage-valid-hex` / `paint-storage-garbage-falls-back`.
+- **F8 — explicit swatch pick lost on model switch when storage swallowed the
+  write.** `Game.paintExplicit` (set by `onPaint`, seeded from a stored boot
+  read) + pure `resolvePaintWithExplicit(stored, explicit, inMemory, spec)`
+  consumed by `selectModel`. RED: cars.test "resolvePaintWithExplicit keeps an
+  in-memory pick through a storage loss".
+- **F9 — (a)** HERO_FINISH "verbatim" comment was false — replaced with the
+  true calibration-anchor description (MaterialSpecs pins the hero output).
+  **(b)** harness material levers (`noemi`/`dblside`/...) documented as
+  field-global by design (singletons). **(c)** `"perf": "node scripts/perf.mjs"`
+  added to package.json (script existed, entry did not).
+- **F10 — 52-entry keepNames list pinned every named detail mesh out of the
+  static merge.** Pruned to the 6 names with a live consumer or a runtime
+  transform: `tire` (harness pose code), `wheel-spoke` (functional spoke
+  counts), the four flame meshes (`setNitro` scales them per-frame). Glow/DRL
+  carriers survive the merge as captured MATERIALS. Measured (same harness
+  driver, grid diag after `__vr.shot('grid')`): **draw calls 2870 → 2540
+  (−330, −11.5%), triangles identical (909119)**; player-tree mesh count
+  115 → 85, AI field 646 → 485.
+- **F11 — four-card row clipped at 390 px.** `#model-cards` gets
+  `flex-wrap: wrap; max-width: 92vw`. Functional check `garage-row-fits-390px`
+  (row within [0, 391], document scrollWidth ≤ 391, 4 cards).
+- **F12 — dead catalog knobs.** (a) `kit.caliper` WIRED: `buildWheelAssembly`
+  now takes `caliperHex` from `spec.kit.caliper`; hero keeps the shipped
+  `0xc23a28` (its accent equalled it before; byte-look confirmed in
+  `car_model_hero.png`), hyper/grip/drift now wear their gold/green/orange
+  kit calipers. (b) `CarKit.glassTint` (dead duplicate of the wired
+  `CarFinish.glassTint`) DELETED with its interface field and catalog entries.
+  (c) `PaintParams.microRoughness` WIRED as the per-material normalScale
+  through pure `carMaterialParamsFor(spec)` consumed by `mkPaint`
+  (`HERO_MICRO` anchor keeps the hero at the shipped 0.5); `PaintParams.color`
+  KEPT (consumed by `applyPaintSnapshot`). RED: materials.test
+  "carMaterialParamsFor lands distinct per-model numbers through the pure core".
+- **F13 — (a)** MaterialSpecs' forked `clamp`/`clamp01` replaced by the
+  `util` import (node suite survives the value import; header comment
+  corrected to "canvas- and side-effect-free"). **(b)** the DRIFT stat-bar
+  maths now rides the SAME `axis()` as the other four — a fully tied catalog
+  reads neutral 0.5 instead of the hand-rolled copy degenerating to 0. RED:
+  ui.test "a fully uniform catalog reads neutral 0.5 on every bar including DRIFT".
+- **F14 — (b)** the remaining fixed-colour hardware materials (`rubber`,
+  `chrome`, `alloy`, `dark`, `darkSoft`, `sidewall`, `disc`, `discRing`,
+  `caliper(hex)`, `glass`, `carbon`) memoised through `detailMats` — the AI
+  field no longer mints dozens of materials per `buildCar`; they join the F1
+  shared-predicate automatically. **(c)** `noemi`/`dblside` levers noted as
+  field-global by design (see F9b).
+
+### keepNames pruned list (46 names)
+
+`tire-sidewall, wheelback, brake-disc, brake-disc-ring, brake-caliper,
+brake-piston, wheel-dish, wheel-lip, wheel-hub, wheel-f-l, wheel-f-r,
+wheel-r-l, wheel-r-r, headlight-lens-l, headlight-lens-r, taillight-lens-l,
+taillight-lens-r, taillight-bar, headlight-can-l, headlight-can-r,
+headlight-projector-l, headlight-projector-r, headlight-drl-l, headlight-drl-r,
+taillight-recess, taillight-led, door-handle-f-l, door-handle-f-r,
+door-handle-r-l, door-handle-r-r, hood-slat-0, hood-slat-1, hood-slat-2,
+hood-dome, exhaust2-l, exhaust2-r, exhaust-inner2-l, exhaust-inner2-r,
+exhaust-quad-block, exhaust-q0, exhaust-q1, exhaust-q2, exhaust-q3,
+shut-door-l, shut-door-r, shut-bonnet-l, shut-bonnet-r`
+
+### Lamp visual notes (re-shot, audit ALL CLEAN 37 frames)
+
+`car_model_hyper.png`: cluster flush at the long nose, gold calipers through
+the mesh wheels. `car_model_grip.png`: lamps tucked under its shorter crown,
+green calipers, satin NIGHT SHIFT body. `car_model_drift.png`: lamps at its
+own nose line, orange calipers, roof scoop intact. `car_model_hero.png`:
+visually identical to the previously committed frame's look (shipped red
+caliper, shipped lamp line) — the never-touch byte-look is preserved. All 37
+frames re-shot in one pass and genuinely changed (static-merge folding shifts
+pixels); committed, none reverted.
+
+### Test/battery evidence
+
+- Node: `node scripts/tests.mjs` → **184 passed, 0 failed** (baseline 170; +14
+  new, each RED-first for its finding: F4×3, F13b, F1, F6, F7×2, F8, F5, F2a,
+  F3, F12c).
+- `npm run typecheck` clean; `npm run build` + `npm run build:harness` green.
+- `node scripts/functional.mjs` → **PASS (14/14)** — the 11 shipped checks plus
+  `paint-storage-valid-hex`, `paint-storage-garbage-falls-back`,
+  `garage-row-fits-390px`. (Helper pages are closed between boots to stay under
+  Chromium's concurrent-WebGL-context cap.)
+- `node scripts/noleak.mjs` → CLEAN (runtime fails 0, asset leaks 0).
+- `node scripts/shots.mjs && node scripts/audit-shots.mjs` → ALL CLEAN (37).
+- `npm run perf -- --nobisect --seconds 8 --label review-fix` → evidence
+  `shots/perf_review-fix.json` (fatal/heap trend + `gitHead` match). The
+  authoritative keepNames before/after is the shots-battery grid diag: 2870
+  calls pre-prune vs 2540 post-prune (−330, −11.5%), tris identical.
+
+### Deviations
+
+- functional.mjs needed helper-page closes (context cap) — pre-existing pages
+  accumulate WebGL contexts; closes added, no behaviour change.
+- The F12 "range test" named by the review did not exist in the suite; the
+  deletion is pinned by the surviving FINISH_FIELDS contract test (finish
+  glassTint stays) and the deleted CarKit field's absence (typecheck).
+
+Perf note: `npm run perf -- --nobisect --seconds 8 --label review-fix` exited 0 (gates green) —
+`shots/perf_review-fix.json`: 1 run (full-lap/all-frames/coast/tunnel/city), fatal none,
+heap 186.4→215.5 MB (0.080 MB/s) over 890 frames, gitHead 79af1942 (dirty: package-lock
+only). FPS reads SwiftShader-CPU-level; the run evidences stability, not speed.
