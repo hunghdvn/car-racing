@@ -186,14 +186,12 @@ export function statBarsFor(spec: CarSpec, all: readonly CarSpec[]): number[] {
     axis((t) => t.topSpeed), axis((t) => t.engineAccel), axis((t) => t.gripMax),
     axis((t) => t.brakeForce),
   ]
-  const driftLo = Math.min(...all.map((s) => resolveTuning(s.stat).driftYawBoost))
-  const driftSpan = Math.max(1e-9, Math.max(...all.map((s) => resolveTuning(s.stat).driftYawBoost)) - driftLo)
-  const yawLo = Math.min(...all.map((s) => resolveTuning(s.stat).yawResponse))
-  const yawSpan = Math.max(1e-9, Math.max(...all.map((s) => resolveTuning(s.stat).yawResponse)) - yawLo)
-  const t0 = get(spec)
-  return [f[0](spec), f[1](spec), f[2](spec),
-    ((t0.driftYawBoost - driftLo) / driftSpan + (t0.yawResponse - yawLo) / yawSpan) / 2,
-    f[3](spec)]
+  // PR review F13b: the DRIFT axis rides the SAME axis() as the other four, so
+  // a fully tied catalog reads neutral 0.5 everywhere (a hand-rolled copy that
+  // divided by a span floor of 1e-9 degenerated to 0 on ties instead).
+  const dYaw = axis((t) => t.driftYawBoost)
+  const dResp = axis((t) => t.yawResponse)
+  return [f[0](spec), f[1](spec), f[2](spec), (dYaw(spec) + dResp(spec)) / 2, f[3](spec)]
 }
 
 export type UiMode = 'title' | 'racing'

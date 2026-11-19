@@ -3,8 +3,9 @@ import {
   countdownCueFor, countdownLabelFor, countdownBoardVisible, popupExpired, buildResultRows, ordinalBadge,
   nitroReadyEdge, nitroSegmentsOn, NITRO_READY_FRAC, wrongWayStep, freshWrongWay,
   driftChainStep, freshDriftChain, distToPolyline, shortcutEnterEdge, freshShortcut,
-  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, type StandingLike,
+  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, statBarsFor, type StandingLike,
 } from '../../src/ui/UIManager'
+import type { CarSpec } from '../../src/vehicles/CarSpecs'
 import { Input, PAD, type InputAction, type GamepadSnapshot } from '../../src/core/Input'
 import { globalObject } from '../../src/core/globals'
 import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
@@ -294,4 +295,20 @@ test('input: arrow keys on a focused control are not prevented either', () => {
   const link = { closest: (sel: string) => (sel.includes('a,') ? { tag: 'A' } : null) }
   h.down({ code: 'ArrowLeft', target: link, preventDefault: () => { prevented++ } })
   assert(prevented === 0, 'arrow navigation inside a focused control survives')
+})
+
+/* --- PR review F13b: one axis() for every stat bar -------------------------
+ * The hand-rolled DRIFT maths degenerated differently from axis() when the
+ * whole catalog ties on a field: axis() said neutral 0.5, the copy divided by
+ * the 1e-9 epsilon floor and read 0. One axis() must serve both paths. */
+
+test('garage: a fully uniform catalog reads neutral 0.5 on every bar including DRIFT', () => {
+  const mk = (id: string): CarSpec => ({
+    id, name: id.toUpperCase(), class: 'TEST', stat: {},
+    shape: { bodyStations: [], cabinStations: [] },
+    kit: { splitter: 'std', spoiler: 'low', diffuserFins: 0, hoodVent: false, roofScoop: false, sideIntakes: false, wheelStyle: 'five-spoke', wheelRadiusMul: 1, wheelWidthMul: 1, trackMul: 1, archExtension: 0, caliper: 0, },
+    finish: { paint: 0, clearcoat: 0.5, flake: 0.5, roughness: 0.3, glassTint: 0, carbon: 0.1, accent: 0 },
+  }) as CarSpec
+  const bars = statBarsFor(mk('a'), [mk('a'), mk('b')])
+  assert(bars.length === 5 && bars.every((b) => b === 0.5), `every axis neutral on a tie — got ${bars.join(', ')}`)
 })

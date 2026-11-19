@@ -89,10 +89,13 @@ const BASE_KIT: CarKit = {
   trackMul: 1, archExtension: 0, caliper: 0xc23a28,
 }
 
-/* Hero finish mirrors the shipped CarModel.ts constants verbatim so the
- * never-touch path renders byte-identical until the material group arrives:
- * roughness 0.28 (CarModel paint factory), glass 0x151c25 (shared.glass),
- * near-black weave 0x14161a ≈ 0.1 (shared.dark), caliper 0xc23a28 (BASE_KIT). */
+/* Hero finish values are calibrated anchors, not verbatim copies of old
+ * CarModel constants: the material layer (MaterialSpecs) derives every PBR
+ * number FROM these dials through its own HERO calibration block, and the
+ * material tests pin the hero output to the shipped look (roughness 0.28 →
+ * paintMaterialParams, metalness 0.15 / sheen 0.4 from the HERO anchor,
+ * caliper 0xc23a28 now read from BASE_KIT by buildCar). Changing a dial here
+ * intentionally changes the hero's look. */
 const HERO_FINISH: CarFinish = {
   paint: PAINTS[1].color,
   clearcoat: 0.55,
@@ -244,15 +247,29 @@ export function resolvePaint(storedHex: number | null, spec: CarSpec): number {
   return storedHex ?? spec.finish.paint
 }
 
+/** PR review F8 — the full precedence chain with the in-memory explicit pick:
+ *  a stored read still wins; when storage came back empty (private mode, or a
+ *  swallowed write) an explicit in-session swatch pick survives the model
+ *  switch; with neither, the new model's signature owns the car. Pure core
+ *  consumed by Game.selectModel. */
+export function resolvePaintWithExplicit(
+  storedHex: number | null, explicitPick: boolean, inMemoryHex: number, spec: CarSpec,
+): number {
+  return storedHex ?? (explicitPick ? inMemoryHex : spec.finish.paint)
+}
+
 const PAINT_KEY = 'vr.paint'
 
+/** PR review F7: only a PAINTS member hex is a valid stored selection — the
+ *  old Number.isFinite gate accepted '' (→ 0, black car) and any off-palette
+ *  number. Anything else reads as "nothing stored". */
 export function readPaintSelection(): number | null {
   try {
     const store = (globalObject().localStorage as Storage | undefined) ?? undefined
     const v = store?.getItem(PAINT_KEY)
     if (v === null || v === undefined) return null
     const n = Number(v)
-    return Number.isFinite(n) ? n : null
+    return PAINTS.some((p) => p.color === n) ? n : null
   } catch { return null }
 }
 

@@ -344,6 +344,7 @@ try {
   // A dedicated boot carrying a persisted model selection lets the BOOT path
   // itself (not only selectModel) be checked for physics + mesh + grid.
   const EXPECT_SPOKES = { hero: 20, hyper: 48, grip: 32, drift: 24 } // spokeCountForStyle(style)*4, per CarSpecs.ts
+  await page.close() // the 11-check page has served; free its WebGL context
   const EXPECT_STANDINGS = ['YOU', 'APEX GRIP', 'SOLARIS HYPER', 'SLIDE KING', 'VELOCITY GT', 'APEX GRIP']
   const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
   const mp = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
@@ -404,6 +405,49 @@ try {
     && garage.after === EXPECT_SPOKES.hyper && garage.back === EXPECT_SPOKES.hero
     && boot.heroRef != null && Math.abs(garage.top - boot.heroRef * 1.12) < 1e-6
   rec('garage-rebuilds-on-model', garageOk, `drift(${garage.before})→hyper(${garage.after}, top ${garage.top?.toFixed?.(3)})→hero(${garage.back}); selectModel returned '${garage.id}'`)
+
+  // ---- PR review F7: vr.paint storage validation on the boot path ----------
+  // A stored palette hex must drive the boot car; garbage (or the Number('')
+  // → 0 black-car trap) must fall through to the model signature.
+  const PALETTE = { solar: 0xf27a1e, viper: 0x39c06a } // config.ts PAINTS[0]/PAINTS[3]
+  await mp.close() // free its WebGL context before the paint/phone boots
+  const pValid = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+  await pValid.addInitScript(() => { try { localStorage.setItem('vr.paint', '3784810') } catch { /* private mode */ } }) // PAINTS[3] Viper Green decimal
+  await pValid.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await pValid.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await pValid.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await pValid.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  const paintValid = await pValid.evaluate(() => window.__dbg.game.paintHex)
+  await pValid.close() // free the WebGL context — Chromium caps concurrent contexts
+  rec('paint-storage-valid-hex', paintValid === PALETTE.viper, `stored ${paintValid.toString(16)} (expect ${PALETTE.viper.toString(16)} — a stored palette hex boots the car in it)`)
+
+  const pJunk = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+  await pJunk.addInitScript(() => { try { localStorage.setItem('vr.paint', 'garbage') } catch { /* private mode */ } })
+  await pJunk.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await pJunk.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await pJunk.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await pJunk.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  const paintJunk = await pJunk.evaluate(() => {
+    const g = window.__dbg.game
+    return { paint: g.paintHex, sig: g.selectedSpec.finish.paint }
+  })
+  await pJunk.close() // free the WebGL context (see above)
+  rec('paint-storage-garbage-falls-back', paintJunk.paint === paintJunk.sig, `garbage stored → paint 0x${paintJunk.paint.toString(16)} vs signature 0x${paintJunk.sig.toString(16)} (must wear the signature, never black)`)
+
+  // ---- PR review F11: the garage card row must fit a 390 px phone ----------
+  const pPhone = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+  await pPhone.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await pPhone.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await pPhone.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await pPhone.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  const rowFit = await pPhone.evaluate(() => {
+    const row = document.getElementById('model-cards')
+    if (!row) return { ok: false, why: 'no #model-cards' }
+    const r = row.getBoundingClientRect()
+    return { ok: true, left: r.left, right: r.right, scrollW: document.documentElement.scrollWidth, cards: row.children.length }
+  })
+  const phoneOk = rowFit.ok && rowFit.cards === 4 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
+  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards (F11: the four-card row must wrap, never clip)`)
 } finally {
   if (browser) { try { await browser.close() } catch { /* best effort */ } }
   prev.close()

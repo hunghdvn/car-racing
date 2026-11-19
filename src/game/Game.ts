@@ -16,7 +16,7 @@ import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { getSpec, nextUnusedPaletteColor, readPaintSelection, resolvePaint, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { getSpec, nextUnusedPaletteColor, readPaintSelection, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -47,6 +47,9 @@ export class Game {
   visual: VehicleVisual
   selectedSpec: CarSpec
   paintHex: number
+  /** true once the player explicitly picked a swatch this session (vr.paint is
+   *  click-written; a swallowed storage write must not lose the pick — F8) */
+  private paintExplicit = false
   readonly player: PlayerVehicle
   readonly input: Input
   readonly chase: ChaseCamera
@@ -104,6 +107,9 @@ export class Game {
     this.view.scene.add(this.slice.group)
     this.probe = new RoadSurfaceProbe(this.slice.spline, this.slice.field)
     this.paintHex = paintHex
+    // a stored boot selection is an explicit intent too (F8): it must survive
+    // a later model switch exactly like an in-session swatch click
+    this.paintExplicit = readPaintSelection() !== null
     this.selectedSpec = getSpec(modelId)
     this.car = buildCar(paintHex, this.selectedSpec)
     this.car.group.name = 'player-car'
@@ -156,7 +162,7 @@ export class Game {
       onRestart: () => this.beginRace(),
       onResume: () => this.setPaused(false),
       onMenu: () => this.toMenu(),
-      onPaint: (hex) => { this.paintHex = hex; this.car.setPaint(hex); writePaintSelection(hex) },
+      onPaint: (hex) => { this.paintHex = hex; this.paintExplicit = true; this.car.setPaint(hex); writePaintSelection(hex) },
       onModel: (id) => this.selectModel(id),
     })
     this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
@@ -190,7 +196,7 @@ export class Game {
     this.selectedSpec = spec
     // the paint survives a model switch only if the player explicitly picked a
     // swatch (vr.paint is click-written only); otherwise the new signature wins
-    this.paintHex = resolvePaint(readPaintSelection(), spec)
+    this.paintHex = resolvePaintWithExplicit(readPaintSelection(), this.paintExplicit, this.paintHex, spec)
     this.ui.setPaintActive(this.paintHex)
     // the accepted path owns persistence + card/stat presentation: the click
     // handler is a bare intent, so a guard-rejected switch can never leave the

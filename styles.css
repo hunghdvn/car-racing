@@ -145,7 +145,9 @@ body { font-family: var(--font-ui); color: var(--ink); user-select: none; -webki
 #paint-swatches { display: flex; gap: 10px; justify-content: center; pointer-events: auto; }
 .swatch { width: 34px; height: 22px; transform: skewX(-18deg); border: 2px solid rgba(255,255,255,.25); cursor: pointer; }
 .swatch.selected { border-color: #fff; box-shadow: 0 0 14px rgba(255,255,255,.7); }
-#model-cards { display: flex; gap: 10px; justify-content: center; pointer-events: auto; }
+/* F11: wrap so the four cards never overflow narrow viewports (390 px phones
+ * clipped the row); max-width keeps the wrap inside the safe title column. */
+#model-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 92vw; pointer-events: auto; }
 .model-card { padding: 8px 14px; transform: skewX(-14deg); border: 2px solid rgba(255,255,255,.22); cursor: pointer; background: rgba(8,12,18,.55); }
 .model-card > * { transform: skewX(14deg); }
 .model-card b { display: block; font-family: var(--font-display); font-size: 13px; letter-spacing: 2px; color: var(--ink); }

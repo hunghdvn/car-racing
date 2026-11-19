@@ -1,18 +1,16 @@
 import type { CarFinish, CarSpec } from '../vehicles/CarSpecs'
+import { clamp, clamp01 } from '../util'
 
 /* ------------------------------------------------------------------------- *
  * Finish → material translation (visual-enhancement group 2).
  *
  * The per-model `finish` record (group 1) is the single source of truth for a
  * car's look; these pure functions are the only thing that turns those dials
- * into concrete PBR numbers. They are deliberately THREE- and canvas-free so
- * the whole mapping is node-testable (tests/cases/materials.test.ts) — the
- * old situation where the paint factory hard-coded roughness/clearcoat/sheen
- * that merely *mirrored* the finish is gone: CarModel now consumes these.
+ * into concrete PBR numbers. They are deliberately canvas- and side-effect-
+ * free so the whole mapping is node-testable (tests/cases/materials.test.ts) —
+ * the old situation where the paint factory hard-coded roughness/clearcoat/
+ * sheen that merely *mirrored* the finish is gone: CarModel now consumes these.
  * ------------------------------------------------------------------------- */
-
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
-const clamp01 = (v: number): number => clamp(v, 0, 1)
 
 /** Hero shipped look (CarModel.ts mkPaint before group 2) — the anchor the
  *  mapping is calibrated against so the never-tune path stays faithful. */

@@ -301,3 +301,73 @@ test('lamps: frontLampAnchors derives the cluster from the model front station',
     assert(a.lampY <= st.ty && a.lampY > st.ty - 0.1, `${id} lamps tuck under its own crown (${a.lampY} vs ty ${st.ty})`)
   }
 })
+
+import * as carSpecs from '../../src/vehicles/CarSpecs'
+
+/* F7 — vr.paint validation + vr.model unknown-id fallback. */
+const fakeStore = (values: Record<string, string>): void => {
+  ;(globalThis as Record<string, unknown>).localStorage = {
+    getItem: (k: string): string | null => (Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null),
+    setItem: (k: string, v: string): void => { values[k] = v },
+    removeItem: (k: string): void => { delete values[k] },
+  }
+}
+const dropStore = (): void => { delete (globalThis as Record<string, unknown>).localStorage }
+
+test('paint storage: readPaintSelection accepts only palette hexes', () => {
+  try {
+    fakeStore({ 'vr.paint': '' })
+    assert(carSpecs.readPaintSelection() === null, 'the empty string is not a colour (Number("")===0 trap)')
+    fakeStore({ 'vr.paint': 'garbage' })
+    assert(carSpecs.readPaintSelection() === null, 'garbage is rejected')
+    fakeStore({ 'vr.paint': '123456' })
+    assert(carSpecs.readPaintSelection() === null, 'numeric but off-palette is rejected — no black off-catalog car')
+    fakeStore({ 'vr.paint': String(PAINTS[2].color) })
+    assert(carSpecs.readPaintSelection() === PAINTS[2].color, 'a palette hex round-trips')
+  } finally { dropStore() }
+})
+
+test('garage: readModelSelection falls back to hero for an unknown stored id', () => {
+  try {
+    fakeStore({ 'vr.model': 'not-a-car' })
+    assert(carSpecs.readModelSelection() === 'hero', 'unknown stored ids fall back, never throw')
+    fakeStore({ 'vr.model': 'grip' })
+    assert(carSpecs.readModelSelection() === 'grip', 'known ids round-trip')
+  } finally { dropStore() }
+})
+
+/* F8 — the pure core of the explicit-pick retention: a stored read wins; with
+ * nothing stored an explicit in-memory pick survives; with neither the
+ * signature owns the car. */
+test('paint flow: resolvePaintWithExplicit keeps an in-memory pick through a storage loss', () => {
+  const spec = getSpec('hyper')
+  const pick = carSpecs.resolvePaintWithExplicit as unknown as
+    ((stored: number | null, explicit: boolean, inMemory: number, s: typeof spec) => number) | undefined
+  assert(typeof pick === 'function', 'resolvePaintWithExplicit is exported')
+  const stored = PAINTS[0].color
+  assert(pick!(stored, false, spec.finish.paint, spec) === stored, 'a stored read still wins')
+  assert(pick!(null, true, stored, spec) === stored, 'an explicit pick survives a swallowed write (private mode)')
+  assert(pick!(null, false, stored, spec) === spec.finish.paint, 'without an explicit pick the signature owns the car')
+})
+
+/* F5 — the AI repaint seam needs a pure palette allocator. */
+test('paint pool: nextUnusedPaletteColor hands out a colour nobody wears', () => {
+  const pick = carSpecs.nextUnusedPaletteColor as unknown as ((used: ReadonlySet<number>) => number | null) | undefined
+  assert(typeof pick === 'function', 'nextUnusedPaletteColor is exported')
+  const used = new Set<number>(PAINTS.slice(0, PAINTS.length - 1).map((p) => p.color))
+  const got = pick!(used)
+  assert(got !== null && !used.has(got), 'the one free palette colour is returned')
+  assert(pick!(new Set(PAINTS.map((p) => p.color))) === null, 'a fully-used palette reports null, never a duplicate')
+})
+
+/* F2a — MAIN MENU abandons the race: the director must return to idle so the
+ * garage cards unlock and the AI field sleeps until the next beginRace. */
+test('director: abandon() returns a live race to idle (MAIN MENU garage unlock)', () => {
+  const r = rig()
+  const d = new RaceDirector([{ id: 0, phys: new VehiclePhysics(new FlatProbe(), 7) }], r.spline.length)
+  d.start()
+  assert(d.phase === 'countdown', 'start enters the countdown')
+  ;(d as unknown as { abandon?: () => void }).abandon?.()
+  assert(d.phase === 'idle', `abandon() must reset the phase — got ${d.phase}`)
+  assert(!d.fieldActive(), 'the field sleeps again until the next beginRace')
+})

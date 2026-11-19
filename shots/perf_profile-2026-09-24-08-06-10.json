@@ -1,0 +1,400 @@
+{
+ "label": "profile-2026-09-24-08-06-10",
+ "mode": "profile",
+ "when": "2026-09-24T08:06:28.207Z",
+ "command": "node scripts/perf.mjs",
+ "gitHead": "89f9b2b31aa3b8ab002cbf906482fed2f518c93f",
+ "gitDirty": true,
+ "stack": "headless: ANGLE_SWIFTSHADER — ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+ "gpuDevice": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+ "displayType": "ANGLE_SWIFTSHADER",
+ "env": {
+  "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+  "dpr": 1,
+  "viewport": "1280x720 dsf1",
+  "chromeArgs": [
+   "--use-angle=1",
+   "--enable-unsafe-experimental-webgpu-discard",
+   "--enable-precise-memory-info"
+  ],
+  "headless": true
+ },
+ "probe": {
+  "buildMs": 3694,
+  "fps": 30,
+  "frames": 10,
+  "title": "Velocity Rush — 30 fps — high",
+  "err": null,
+  "loadingHidden": true,
+  "cam": "-17.6,2.7,4.8 fov57",
+  "children": 35,
+  "calls": 934,
+  "tris": 379691,
+  "geometries": 606,
+  "glErr": 0,
+  "ctxLost": false
+ },
+ "diag": {
+  "tier": "high",
+  "pixelRatio": 1,
+  "drawing": "1280x720",
+  "shadowMap": 2048,
+  "bloom": 0.32,
+  "geometries": 606,
+  "textures": 90,
+  "calls": 934,
+  "tris": 379691,
+  "heapMb": 310.8,
+  "fps": 29,
+  "gpu": {
+   "renderer": null,
+   "vendor": "WebKit"
+  }
+ },
+ "census": {
+  "byRoot": {
+   "sky": {
+    "meshes": 1,
+    "tris": 1840
+   },
+   "track-slice": {
+    "meshes": 6920,
+    "tris": 1528867
+   },
+   "player-car": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "ai-car-0": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "ai-car-1": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "ai-car-2": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "ai-car-3": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "ai-car-4": {
+    "meshes": 76,
+    "tris": 26300
+   },
+   "Mesh": {
+    "meshes": 8,
+    "tris": 86
+   },
+   "board-buildings": {
+    "meshes": 865,
+    "tris": 27502
+   },
+   "board-props": {
+    "meshes": 401,
+    "tris": 11343
+   },
+   "board-vegetation": {
+    "meshes": 19,
+    "tris": 5352
+   },
+   "CityBlock_Street": {
+    "meshes": 371,
+    "tris": 21691
+   },
+   "CityBlock_Corner": {
+    "meshes": 230,
+    "tris": 6186
+   },
+   "IndustrialCluster_Yard": {
+    "meshes": 214,
+    "tris": 6628
+   },
+   "IndustrialCluster_Plant": {
+    "meshes": 213,
+    "tris": 6624
+   },
+   "TunnelApproach_Portal": {
+    "meshes": 25,
+    "tris": 296
+   },
+   "BridgeSegment_Deck": {
+    "meshes": 36,
+    "tris": 432
+   },
+   "CoastalCliff_Dune": {
+    "meshes": 15,
+    "tris": 7666
+   },
+   "Skyline_Backdrop": {
+    "meshes": 1,
+    "tris": 1656
+   }
+  },
+  "totalMeshes": 9775,
+  "totalTris": 1783969
+ },
+ "runs": [
+  {
+   "stats": {
+    "full-lap": {
+     "n": 945,
+     "mean": 297.73058201058205,
+     "median": 283.30000000001746,
+     "p95": 366.70000000001164,
+     "p99": 500,
+     "max": 1650,
+     "meanFps": 3.4638978994239604,
+     "p95Fps": 2.727024815925738,
+     "meanCalls": 1684,
+     "p95Calls": 2068,
+     "meanTris": 759582,
+     "p95Tris": 1211668
+    },
+    "all-frames": {
+     "n": 1006,
+     "mean": 298.6129224652088,
+     "median": 283.3999999999942,
+     "p95": 366.70000000001164,
+     "p99": 500,
+     "max": 1650,
+     "meanFps": 3.448358305999423,
+     "p95Fps": 2.727024815925738,
+     "meanCalls": 1698,
+     "p95Calls": 2067,
+     "meanTris": 756673,
+     "p95Tris": 1209159
+    },
+    "coast": {
+     "n": 125,
+     "mean": 294.92240000000004,
+     "median": 283.3000000000029,
+     "p95": 350.09999999999127,
+     "p99": 566.6999999999971,
+     "max": 583.1999999999971,
+     "meanFps": 3.464281155355264,
+     "p95Fps": 2.8563267637818477,
+     "meanCalls": 1657,
+     "p95Calls": 1744,
+     "meanTris": 677461,
+     "p95Tris": 753322
+    },
+    "tunnel": {
+     "n": 90,
+     "mean": 288.5077777777779,
+     "median": 283.20000000001164,
+     "p95": 316.70000000001164,
+     "p99": 750,
+     "max": 750,
+     "meanFps": 3.554498568272066,
+     "p95Fps": 3.1575623618565305,
+     "meanCalls": 1261,
+     "p95Calls": 1366,
+     "meanTris": 541676,
+     "p95Tris": 577610
+    },
+    "city": {
+     "n": 261,
+     "mean": 335.17203065134106,
+     "median": 333.3999999999942,
+     "p95": 383.30000000004657,
+     "p99": 416.69999999998254,
+     "max": 733.2000000000116,
+     "meanFps": 3.025950857401995,
+     "p95Fps": 2.6089225150009874,
+     "meanCalls": 1824,
+     "p95Calls": 2106,
+     "meanTris": 1087873,
+     "p95Tris": 1244775
+    }
+   },
+   "heap": {
+    "mbPerSec": 0.09415713459800631,
+    "usedStartMb": 181.1,
+    "usedEndMb": 201.2,
+    "n": 1007
+   },
+   "tierEvents": [
+    {
+     "at": 32156,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 51137,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 67671,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 82396,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 99162,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 113738,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 126992,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 140949,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 154243,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 169139,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 183788,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 197366,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 212825,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 227914,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 245167,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 263386,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 281604,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 300049,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    },
+    {
+     "at": 317034,
+     "from": "high",
+     "to": "medium",
+     "manual": false,
+     "suppressed": true
+    }
+   ],
+   "tierSeen": [
+    "high"
+   ],
+   "phaseSeen": [
+    "countdown",
+    "racing"
+   ],
+   "diagEnd": {
+    "tier": "high",
+    "pixelRatio": 1,
+    "drawing": "1280x720",
+    "shadowMap": 2048,
+    "bloom": 0.32,
+    "geometries": 6373,
+    "textures": 314,
+    "calls": 913,
+    "tris": 887161,
+    "heapMb": 201.8,
+    "fps": 20,
+    "gpu": {
+     "renderer": null,
+     "vendor": "WebKit"
+    }
+   },
+   "carEnd": {
+    "x": -180.72,
+    "y": 19.27,
+    "z": 844.69,
+    "speed": 43.99,
+    "drift": 0,
+    "grounded": true,
+    "nitro": 100,
+    "respawning": false,
+    "simTime": 51.3,
+    "racePhase": "racing",
+    "countdown": 0,
+    "raceTime": 47.29,
+    "position": 4
+   },
+   "phaseEnd": "racing",
+   "driveWallMs": 300968,
+   "censusMid": null
+  }
+ ],
+ "stretches": {}
+}
