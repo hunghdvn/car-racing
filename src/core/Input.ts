@@ -64,6 +64,24 @@ type InputKeyboardEvent = {
   key?: string
   keyCode?: number
   preventDefault?: () => void
+  /** the focused element; an interactive target keeps its native activation */
+  target?: InputEventTargetQueryLike | null
+}
+
+/** Structural slice of EventTarget: the reader that lets PREVENT keys bow out
+ *  when the keydown is aimed at an interactive element (see PREVENT gate). */
+interface InputEventTargetQueryLike {
+  closest?(selector: string): unknown
+}
+
+/** Native <button> activation fires on Enter at keydown — preventing PREVENT
+ *  keys there kills the garage cards/swatches for keyboard users while the
+ *  confirm action still routes to the Game (Enter on a focused card could only
+ *  ever start the race). Interactive targets keep their defaults. */
+const INTERACTIVE_SELECTOR = 'button,a,input,select,textarea'
+const onInteractiveTarget = (e: InputKeyboardEvent): boolean => {
+  const t = e.target
+  return !!t && typeof t.closest === 'function' && t.closest(INTERACTIVE_SELECTOR) != null
 }
 
 const CONTROL_KEY_LABELS: Record<string, string> = {
@@ -150,7 +168,7 @@ export class Input {
     this.padSource = padSource
     target.addEventListener('keydown', (e) => {
       if (isImeControlEvent(e)) return
-      if (PREVENT.has(e.code)) e.preventDefault?.()
+      if (PREVENT.has(e.code) && !onInteractiveTarget(e)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)
       for (const action of this.actions) {

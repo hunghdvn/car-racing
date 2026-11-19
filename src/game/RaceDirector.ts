@@ -112,6 +112,17 @@ export class RaceDirector {
   /** clean restart from a completed race: full state wipe, no stale rows */
   restart(): void { this.start() }
 
+  /**
+   * MAIN MENU abandons a live race (Game.toMenu): back to idle so the garage
+   * cards unlock behind the board, the countdown cues stop, and the field
+   * sleeps until the next beginRace re-grids everyone through start().
+   */
+  abandon(): void {
+    this.phase = 'idle'
+    this.countdown = 0
+    this.results = []
+  }
+
   /** advance the director one fixed step (Game's SIM_HZ accumulator) */
   update(dt: number): void {
     if (this.phase === 'countdown') {

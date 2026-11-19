@@ -16,7 +16,7 @@ import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { getSpec, readPaintSelection, resolvePaint, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { getSpec, nextUnusedPaletteColor, readPaintSelection, resolvePaint, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -70,6 +70,9 @@ export class Game {
   private carView: CarView = { pos: new THREE.Vector3(), yaw: 0, speed: 0, nitro: false, drift: 0, airborne: false, airHeight: 0 }
   private readonly aiVisuals: VehicleVisual[] = []
   private readonly aiCars: CarModel[] = []
+  /** the palette colour each AI car currently wears (kept in step with its mesh
+   *  so selectModel can detect and repaint a collision with the player) */
+  private readonly aiPaintHex: number[] = []
   private readonly rivals: RivalView[] = []
   private readonly ctx: AIContext = { locked: false, leaderProgress: 0, progress: 0 }
   /* ---- Phase 8: fixed-dt FX event aggregation + presentation state ---- */
@@ -116,10 +119,12 @@ export class Game {
     this.input.onAction = (a) => this.onInputAction(a)
     /* the AI field: distinct paints, per-car model + visual + brain, one
        shared probe/spline (world queries are never duplicated per car) */
-    // the player's colour is excluded from the AI pool; with PAINTS at 6 and
-    // AI.count at 5 the slice always yields 5 distinct entries whatever the
-    // player (or the model signature) picked, so the modulo below only ever
-    // wraps if someone shrinks PAINTS without retuning AI.count
+    // the boot pool excludes the BOOT paint; with PAINTS at 6 and AI.count at
+    // 5 the slice always yields 5 distinct entries. That exclusion cannot see
+    // ahead to a garage switch, so selectModel can still land the player on a
+    // model SIGNATURE colour an AI slot already wears — the collision pass in
+    // selectModel repaints that slot from the free palette (per-car colours
+    // tracked in aiPaintHex) so the player never shares a colour on screen.
     const playerPaint = PAINTS.find((pt) => pt.color === paintHex)
     const aiPaints: PaintDef[] = PAINTS.filter((pt) => pt !== playerPaint).slice(0, AI.count)
     for (let i = 0; i < AI.count; i++) {
@@ -132,6 +137,7 @@ export class Game {
       model.group.position.set(0, -600, 0) // parked off-scene until the grid
       this.view.scene.add(model.group)
       this.aiCars.push(model)
+      this.aiPaintHex.push(aiPaints[i % aiPaints.length].color)
       this.aiVisuals.push(new VehicleVisual(model))
       this.ai.push(ai)
     }
@@ -189,6 +195,25 @@ export class Game {
     // swatch (vr.paint is click-written only); otherwise the new signature wins
     this.paintHex = resolvePaint(readPaintSelection(), spec)
     this.ui.setPaintActive(this.paintHex)
+    // the accepted path owns persistence + card/stat presentation: the click
+    // handler is a bare intent, so a guard-rejected switch can never leave the
+    // stored selection or the UI markers ahead of the live car
+    writeModelSelection(id)
+    this.ui.setModelActive(id)
+    this.ui.renderModelStats(spec)
+    // F5: a model signature may equal an AI slot's boot colour (the boot pool
+    // only excluded the BOOT paint) — repaint the colliding rival so the player
+    // never wears the same colour as another car on the grid
+    for (let i = 0; i < this.aiCars.length; i++) {
+      if (this.aiPaintHex[i] !== this.paintHex) continue
+      const used = new Set<number>([...this.aiPaintHex, this.paintHex])
+      const next = nextUnusedPaletteColor(used)
+      if (next !== null) {
+        this.aiCars[i].setPaint(next)
+        this.aiPaintHex[i] = next
+        if (__VR_HARNESS__) console.log(`[garage] ai-car-${i} repainted ${next.toString(16)} — the player took its colour`)
+      }
+    }
     this.car = buildCar(this.paintHex, spec)
     this.car.group.name = 'player-car'
     this.view.scene.add(this.car.group)
@@ -275,11 +300,15 @@ export class Game {
     else this.startRace()
   }
 
-  /** MAIN MENU: back to the title board, HUD down, sim stays as posed */
+  /** MAIN MENU: back to the title board, HUD down, the abandoned race reset —
+   *  the director returns to idle so the garage unlocks and the AI field sleeps;
+   *  the next beginRace re-grids everyone through startRace */
   toMenu(): void {
     this.audio.unlock()
     this.audio.click()
     this.setPaused(false)
+    this.director.abandon()
+    this.prevCd = 0 // the abandoned countdown must not fire stale GO cues on the title
     this.ui.raceToMenu()
   }
 

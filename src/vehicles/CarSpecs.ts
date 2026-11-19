@@ -213,6 +213,14 @@ export function spokeCountForStyle(style: CarKit['wheelStyle']): number {
   return { 'five-spoke': 5, 'multi-spoke': 8, 'mesh': 12, 'teardrop': 6 }[style]
 }
 
+/** Palette allocator for the AI-repaint seam (Game.selectModel): returns the
+ *  first PAINTS member nobody currently wears, or null when the palette is
+ *  exhausted (unreachable while AI.count < PAINTS.length). Pure + node-test. */
+export function nextUnusedPaletteColor(used: ReadonlySet<number>): number | null {
+  for (const p of PAINTS) if (!used.has(p.color)) return p.color
+  return null
+}
+
 const MODEL_KEY = 'vr.model'
 
 export function readModelSelection(): CarId {

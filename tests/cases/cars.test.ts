@@ -245,3 +245,19 @@ test('garage: bars are index-aligned with the labels — DRIFT is the drift mean
   assert(bars('grip')[brake] === Math.max(...brakeAxis), 'apex grip takes the brake rail')
   assert(bars('drift')[brake] < bars('grip')[brake], 'the drift bar is not the brake bar wearing its label')
 })
+
+/* PR review F2a — MAIN MENU abandons the race: the director must return
+ * to idle so the garage cards unlock and the AI field sleeps until the next
+ * beginRace. */
+
+import { RaceDirector } from '../../src/game/RaceDirector'
+
+test('director: abandon() returns a live race to idle (MAIN MENU garage unlock)', () => {
+  const r = rig()
+  const d = new RaceDirector([{ id: 0, phys: new VehiclePhysics(new FlatProbe(), 7) }], r.spline.length)
+  d.start()
+  assert(d.phase === 'countdown', 'start enters the countdown')
+  ;(d as unknown as { abandon?: () => void }).abandon?.()
+  assert(d.phase === 'idle', `abandon() must reset the phase — got ${d.phase}`)
+  assert(!d.fieldActive(), 'the field sleeps again until the next beginRace')
+})

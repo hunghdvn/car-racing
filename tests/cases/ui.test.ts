@@ -250,3 +250,48 @@ test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/
   input.poll(1 / 60) // held across a second poll must not re-fire (edge detect)
   assert(fired.length === before, 'a held pad button does not repeat its one-shot')
 })
+
+/* --- PR review F4: keyboard access around the garage ----------------------
+ * PREVENT keys must not steal native activation from focused interactive
+ * elements (a <button> activates on Enter at keydown — preventing it there
+ * while Input still routes the confirm action means Enter on a focused card
+ * can only ever start the race). Off-button, the page-scroll/submit defaults
+ * stay suppressed exactly as before. */
+
+type PreventableKey = { code: string; key?: string; target?: unknown; preventDefault?: () => void }
+const preventHarness = (): { target: { addEventListener(t: string, cb: (e: PreventableKey) => void): void }; down(e: PreventableKey): void } => {
+  const listeners: Record<string, ((e: PreventableKey) => void) | undefined> = {}
+  return {
+    target: { addEventListener: (t, cb) => { listeners[t] = cb } },
+    down: (e) => { listeners.keydown?.(e) },
+  }
+}
+
+test('input: Enter on a focused button is NOT preventDefault-ed (native activation survives)', () => {
+  const h = preventHarness()
+  new Input(h.target)
+  let prevented = 0
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  h.down({ code: 'Enter', target: btn, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, `Enter on a focused card must reach the native click (prevented ${prevented}×)`)
+})
+
+test('input: Enter with a non-interactive target still prevents its default', () => {
+  const h = preventHarness()
+  new Input(h.target)
+  let prevented = 0
+  h.down({ code: 'Enter', target: { closest: () => null }, preventDefault: () => { prevented++ } })
+  assert(prevented === 1, 'the page-scroll default stays suppressed off any interactive element')
+  let bodyPrevented = 0
+  h.down({ code: 'Space', preventDefault: () => { bodyPrevented++ } })
+  assert(bodyPrevented === 1, 'a target-less (body) keydown still prevents')
+})
+
+test('input: arrow keys on a focused control are not prevented either', () => {
+  const h = preventHarness()
+  new Input(h.target)
+  let prevented = 0
+  const link = { closest: (sel: string) => (sel.includes('a,') ? { tag: 'A' } : null) }
+  h.down({ code: 'ArrowLeft', target: link, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, 'arrow navigation inside a focused control survives')
+})

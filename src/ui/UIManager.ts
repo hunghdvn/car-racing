@@ -1,7 +1,7 @@
 import { AUDIO, NITRO, PAINTS, UI, VEHICLE } from '../config'
 import type { PaintDef } from '../config'
 import { fmtTime, hexToCss } from '../util'
-import { CAR_SPECS, getSpec, readModelSelection, writeModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { CAR_SPECS, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { resolveTuning } from '../vehicles/CarTuning'
 
 /* ------------------------------------------------------------------------- *
@@ -424,7 +424,11 @@ export class UIManager {
     if (!hit && __VR_HARNESS__) console.warn(`[ui] setPaintActive(${hex.toString(16)}) matches no swatch`)
   }
 
-  /** garage model cards (car-models spec §8 title screen) */
+  /** garage model cards (car-models spec §8 title screen). The click is a pure
+   *  intent: no optimistic selected-marker or storage write here — persistence,
+   *  the active marker and the stat bars all move on Game.selectModel's
+   *  ACCEPTED path (setModelActive/renderModelStats), so a rejected switch
+   *  (same-id / phase guard) can never leave the UI ahead of the car. */
   private buildModelCards(selectedId: CarId): void {
     const host = this.$('model-cards')
     if (!host) return
@@ -432,25 +436,27 @@ export class UIManager {
     for (const s of CAR_SPECS) {
       const b = this.doc.createElement('button')
       b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
+      b.dataset.model = s.id
       b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
-      b.addEventListener('click', () => {
-        for (const c of Array.from(host.children)) c.classList.remove('selected')
-        b.classList.add('selected')
-        writeModelSelection(s.id)
-        this.renderModelStats(s.id)
-        this.host.onModel(s.id)
-      })
+      b.addEventListener('click', () => { this.host.onModel(s.id) })
       host.appendChild(b)
     }
-    this.renderModelStats(selectedId)
+    this.renderModelStats(getSpec(selectedId))
+  }
+
+  /** moves the active marker to the accepted model (Game calls it on accept) */
+  setModelActive(id: CarId): void {
+    for (const c of Array.from(this.modelCards?.children ?? [])) {
+      c.classList.toggle('selected', c instanceof HTMLElement && c.dataset.model === id)
+    }
   }
 
   /** five normalised stat bars for the selected model (spec §8 garage) */
-  private renderModelStats(id: CarId): void {
+  renderModelStats(spec: CarSpec): void {
     const host = this.$('model-stats')
     if (!host) return
     host.textContent = ''
-    const bars = statBarsFor(getSpec(id), CAR_SPECS)
+    const bars = statBarsFor(spec, CAR_SPECS)
     STAT_AXIS_LABELS.forEach((label, i) => {
       const row = this.doc.createElement('div')
       row.className = 'stat-row'
@@ -510,8 +516,22 @@ export class UIManager {
 
     /* garage cards are a title-screen affordance: lock the row through a live
        race so a mid-race MAIN MENU (where the director keeps running behind the
-       board) can not leave them clickable while selectModel only no-ops. */
-    this.modelCards?.classList.toggle('locked', hud.phase === 'countdown' || hud.phase === 'racing')
+       board) can not leave them clickable while selectModel only no-ops. Locked
+       cards also drop out of the tab order and announce disabled (F4: the
+       Input preventDefault gate made them keyboard-reachable again, so they
+       must not stay focusable while inert). */
+    const cardsLocked = hud.phase === 'countdown' || hud.phase === 'racing'
+    this.modelCards?.classList.toggle('locked', cardsLocked)
+    for (const c of Array.from(this.modelCards?.children ?? [])) {
+      if (!(c instanceof HTMLElement)) continue
+      if (cardsLocked) {
+        c.tabIndex = -1
+        c.setAttribute('aria-disabled', 'true')
+      } else {
+        c.removeAttribute('tabindex')
+        c.removeAttribute('aria-disabled')
+      }
+    }
 
     if (!hud.active) return
 
