@@ -261,3 +261,43 @@ test('director: abandon() returns a live race to idle (MAIN MENU garage unlock)'
   assert(d.phase === 'idle', `abandon() must reset the phase — got ${d.phase}`)
   assert(!d.fieldActive(), 'the field sleeps again until the next beginRace')
 })
+
+/* F6 — the spec §7 approved stat table, pinned as literals. yawResponse for
+ * hyper was never written into the catalog, so this fails until it lands. */
+const APPROVED_STATS: Record<string, Record<string, number>> = {
+  hero: { topSpeed: 1.0, nitroTopSpeed: 1.0, engineAccel: 1.0, gripMax: 1.0, gripDrift: 1.0, driftYawBoost: 1.0, yawResponse: 1.0, brakeForce: 1.0, drag: 1.0 },
+  hyper: { topSpeed: 1.12, nitroTopSpeed: 1.1, engineAccel: 1.02, gripMax: 0.9, gripDrift: 1.05, driftYawBoost: 1.0, yawResponse: 0.95, brakeForce: 1.0, drag: 0.92 },
+  grip: { topSpeed: 0.9, nitroTopSpeed: 0.9, engineAccel: 1.0, gripMax: 1.12, gripDrift: 1.1, driftYawBoost: 1.0, yawResponse: 1.08, brakeForce: 1.08, drag: 1.0 },
+  drift: { topSpeed: 0.96, nitroTopSpeed: 0.96, engineAccel: 1.0, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.3, yawResponse: 1.2, brakeForce: 1.0, drag: 1.0 },
+}
+
+test('catalog: the approved §7 stat table lands literally on all four models', () => {
+  for (const [id, table] of Object.entries(APPROVED_STATS)) {
+    const t = resolveTuning(getSpec(id).stat)
+    for (const [field, mul] of Object.entries(table)) {
+      const base = VEHICLE[field as keyof typeof VEHICLE]
+      assert(typeof base === 'number', `${field} is a tuning field`)
+      assertNear(t[field as keyof typeof t], base * mul, 1e-9, `${id}.${field} (${mul}×)`)
+    }
+  }
+})
+
+/* F3 — the headlight cluster must anchor to the model's own front station,
+ * the way the tail bar anchors to lastStation. Hero keeps the shipped z/y
+ * byte-identically; hyper/grip lamps move onto their own noses. */
+test('lamps: frontLampAnchors derives the cluster from the model front station', async () => {
+  const mod = await import('../../src/assets/CarModel').catch(() => null)
+  const anchors = mod?.frontLampAnchors as unknown as
+    ((st: { z: number; ty: number }) => { lensZ: number; lampY: number; intakeCenterZ: number }) | undefined
+  assert(typeof anchors === 'function', 'frontLampAnchors is exported from CarModel')
+  const hero = anchors(HERO_SPEC.shape.bodyStations[0])
+  assertNear(hero.lensZ, -2.268, 1e-9, 'hero lens keeps the shipped z')
+  assertNear(hero.lampY, 0.66, 1e-9, 'hero lamp height stays 0.66')
+  assertNear(hero.intakeCenterZ, -2.29, 1e-9, 'the centre intake keeps the shipped z')
+  for (const id of ['hyper', 'grip'] as const) {
+    const st = getSpec(id).shape.bodyStations[0]
+    const a = anchors(st)
+    assert(Math.abs(a.lensZ - st.z) < 0.04, `${id} lens sits flush at its own nose (${a.lensZ.toFixed(3)} vs station ${st.z})`)
+    assert(a.lampY <= st.ty && a.lampY > st.ty - 0.1, `${id} lamps tuck under its own crown (${a.lampY} vs ty ${st.ty})`)
+  }
+})

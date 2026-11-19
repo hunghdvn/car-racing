@@ -7,7 +7,7 @@ import { ParticleManager } from '../core/ParticleManager'
 import { SkidMarks } from '../core/SkidMarks'
 import { Audio, type AudioDrive } from '../core/Audio'
 import { UIManager, type HudData, freshShortcut, shortcutEnterEdge, countdownCueFor, rpmFor } from '../ui/UIManager'
-import { buildCar, type CarModel } from '../assets/CarModel'
+import { buildCar, disposeCarTree, type CarModel } from '../assets/CarModel'
 import { ChaseCamera, type CarView } from '../camera/ChaseCamera'
 import { AI, FX, GRAPHICS, PAINTS, QUALITY, SKIDS, TRACK, VEHICLE, type PaintDef } from '../config'
 import { clamp, clamp01 } from '../util'
@@ -186,10 +186,7 @@ export class Game {
       return
     }
     this.view.scene.remove(this.car.group)
-    this.car.group.traverse((o) => {
-      const m = o as THREE.Mesh
-      if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose() }
-    })
+    disposeCarTree(this.car.group)
     this.selectedSpec = spec
     // the paint survives a model switch only if the player explicitly picked a
     // swatch (vr.paint is click-written only); otherwise the new signature wins

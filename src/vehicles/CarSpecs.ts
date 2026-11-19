@@ -26,7 +26,6 @@ export interface CarKit {
   trackMul: number
   archExtension: number
   caliper: number
-  glassTint: number
 }
 
 /* Each model's signature paint look (visual-enhancement group 1): colour data
@@ -87,7 +86,7 @@ const CABIN_STATIONS: CarStation[] = [
 const BASE_KIT: CarKit = {
   splitter: 'std', spoiler: 'low', diffuserFins: 4, hoodVent: true, roofScoop: false,
   sideIntakes: true, wheelStyle: 'five-spoke', wheelRadiusMul: 1, wheelWidthMul: 1,
-  trackMul: 1, archExtension: 0, caliper: 0xc23a28, glassTint: 0,
+  trackMul: 1, archExtension: 0, caliper: 0xc23a28,
 }
 
 /* Hero finish mirrors the shipped CarModel.ts constants verbatim so the
@@ -192,8 +191,8 @@ const DRIFT_SHAPE: CarShape = {
 export const CAR_SPECS: readonly CarSpec[] = [
   HERO_SPEC,
   { id: 'hyper', name: 'Solaris Hyper', class: 'TOP SPEED',
-    stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, drag: 0.92 },
-    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e, glassTint: 0.06 },
+    stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, yawResponse: 0.95, drag: 0.92 },
+    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e },
     finish: { paint: PAINTS[4].color, clearcoat: 0.9, flake: 0.75, roughness: 0.18, glassTint: 0x101a2a, carbon: 0.08, accent: 0x18d8e8 } },
   { id: 'grip', name: 'Apex Grip', class: 'CORNER GRIP',
     stat: { topSpeed: 0.90, nitroTopSpeed: 0.90, gripMax: 1.12, gripDrift: 1.10, yawResponse: 1.08, brakeForce: 1.08 },
@@ -201,7 +200,7 @@ export const CAR_SPECS: readonly CarSpec[] = [
     finish: { paint: PAINTS[2].color, clearcoat: 0.2, flake: 0.25, roughness: 0.55, glassTint: 0x151c25, carbon: 0.04, accent: 0xf2d21c } },
   { id: 'drift', name: 'Slide King', class: 'DRIFT',
     stat: { topSpeed: 0.96, nitroTopSpeed: 0.96, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.30, yawResponse: 1.20 },
-    shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e, glassTint: 0.04 },
+    shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e },
     finish: { paint: PAINTS[5].color, clearcoat: 0.7, flake: 0.85, roughness: 0.15, glassTint: 0x241a10, carbon: 0.12, accent: 0xf29a1e } },
 ]
 

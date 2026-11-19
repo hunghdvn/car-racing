@@ -81,6 +81,10 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   }
 
   /* query-driven debug material/culling levers (dev-only; forbidden by default) */
+  // NOTE (F14c): the car materials are field-wide memoised singletons, so the
+  // material-level levers below (dblside/flat/noemi/nophy) act on the WHOLE
+  // grid, not just the player car — intended: they exist for isolated-product
+  // dev shots where uniform field behaviour is what the shot author wants.
   const qp: Record<string, string> = {}
   for (const kv of location.search.slice(1).split('&')) { const i = kv.indexOf('='); if (i > 0) qp[kv.slice(0, i)] = kv.slice(i + 1) }
   if (qp['nocar']) car.group.visible = false

@@ -133,3 +133,29 @@ test('materials: the pure translators never mutate the finish they are given', (
   for (const k of Object.keys(snap) as (keyof typeof snap)[]) assert(s.finish[k] === snap[k], `finish.${k} untouched`)
   assert(p.color === snap.paint && g.color === snap.glassTint && Number.isFinite(c.color), 'outputs derived, not aliased')
 })
+
+/* PR review F12/F6: the per-model numbers have to reach the materials through
+ * ONE pure core that mkPaint consumes — gating the params objects while the
+ * factory ignored them proved nothing. carMaterialParamsFor is that core:
+ * paint params + the per-kit caliper colour, testable per model headless. */
+
+test('materials: carMaterialParamsFor lands distinct per-model numbers through the pure core', async () => {
+  const mod = await import('../../src/assets/MaterialSpecs').catch(() => null)
+  const fn = mod?.carMaterialParamsFor as unknown as
+    ((s: (typeof CAR_SPECS)[number]) => { paint: PaintParams; caliper: number }) | undefined
+  assert(typeof fn === 'function', 'carMaterialParamsFor is exported from MaterialSpecs')
+  const b = Object.fromEntries(CAR_SPECS.map((s) => [s.id, fn!(s)]))
+  // satin grip vs gloss hyper: the micro-roughness breakup must genuinely differ
+  assert(b.grip.paint.microRoughness > b.hyper.paint.microRoughness,
+    `grip satin breakup (${b.grip.paint.microRoughness}) must beat hyper gloss (${b.hyper.paint.microRoughness})`)
+  // per-model calipers come from the kit (spec §6), hero keeps the shipped red
+  assert(b.hero.caliper === HERO_SPEC.kit.caliper && b.hero.caliper === 0xc23a28,
+    'hero caliper stays the shipped 0xc23a28 (never-touch byte-look)')
+  assert(b.hyper.caliper === 0xe8b62e && b.grip.caliper === 0x39c06a && b.drift.caliper === 0xf27a1e,
+    'hyper/grip/drift wear their kit caliper colours')
+  const sig = CAR_SPECS.map((s) => {
+    const p = fn!(s)
+    return `${p.paint.roughness}|${p.paint.clearcoat}|${p.paint.microRoughness}|${p.caliper}`
+  })
+  assert(new Set(sig).size === CAR_SPECS.length, `per-model material numbers are distinct — got ${sig.join(' / ')}`)
+})

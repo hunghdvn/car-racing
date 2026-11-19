@@ -70,3 +70,36 @@ test('shadow distance: only authored casters inside the neighborhood submit to t
   assert(!near.castShadow, 'moving the neighborhood deactivates old casters')
   assert(far.castShadow, 'the newly nearby caster activates')
 })
+
+/* PR review F1: the model-swap dispose must never touch the field-wide shared
+ * car materials (detail trims, LED signatures, memoised wheel hardware) that
+ * mounted AI cars still use, while geometry always goes. disposeCarTree
+ * mirrors util.disposeTree's shape (geometry always, material arrays handled)
+ * with a shared-material predicate. */
+
+test('car lifecycle: disposeCarTree frees geometry always, materials only when not shared', async () => {
+  const mod = await import('../../src/assets/CarModel').catch(() => null)
+  const disposeCarTree = mod?.disposeCarTree as unknown as
+    ((root: Group, isShared?: (m: unknown) => boolean) => void) | undefined
+  const isSharedCarMaterial = mod?.isSharedCarMaterial as unknown as ((m: unknown) => boolean) | undefined
+  assert(typeof disposeCarTree === 'function', 'disposeCarTree is exported from CarModel')
+  assert(typeof isSharedCarMaterial === 'function', 'isSharedCarMaterial is exported from CarModel')
+  assert(isSharedCarMaterial!(new MeshStandardMaterial()) === false, 'a fresh material is never shared')
+
+  const mkMat = (): { dispose(): void; disposed: number } => {
+    const m = { disposed: 0, dispose() { m.disposed++ } }
+    return m
+  }
+  const shared = mkMat()
+  const solo = mkMat()
+  const geo = new BoxGeometry(1, 1, 1)
+  let geoDisposed = 0
+  geo.dispose = () => { geoDisposed++ }
+  const mesh = new Mesh(geo as never, [shared as never, solo as never])
+  const root = new Group()
+  root.add(mesh)
+  disposeCarTree(root, (m) => m === (shared as never))
+  assert(geoDisposed === 1, 'geometry is always disposed')
+  assert(shared.disposed === 0, 'a shared singleton survives the model swap (mounted AI cars still use it)')
+  assert(solo.disposed === 1, 'a non-shared material inside a material array is disposed')
+})

@@ -1,4 +1,4 @@
-import type { CarFinish } from '../vehicles/CarSpecs'
+import type { CarFinish, CarSpec } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * Finish → material translation (visual-enhancement group 2).
@@ -111,4 +111,12 @@ export function carbonMaterialParams(finish: CarFinish): CarbonParams {
     repeat: 8,
     envMapIntensity: 0.5,
   }
+}
+
+/** The per-car material contract (PR review F12): the ONLY thing buildCar
+ *  consumes from the finish/kit layer — paint params plus the kit's caliper
+ *  colour (spec §6) — so the per-model numbers are pinned headless instead of
+ *  living in unreachable inline factories. */
+export function carMaterialParamsFor(spec: CarSpec): { paint: PaintParams; caliper: number } {
+  return { paint: paintMaterialParams(spec.finish), caliper: spec.kit.caliper }
 }

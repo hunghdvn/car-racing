@@ -3,7 +3,7 @@ import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
-import { carbonMaterialParams, glassMaterialParams, paintMaterialParams } from './MaterialSpecs'
+import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams } from './MaterialSpecs'
 import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
@@ -261,6 +261,29 @@ export function validateCarShape(shape: CarShape): void {
   }
 }
 
+/**
+ * PR review F3: the headlight cluster and centre intake must anchor to THIS
+ * model's own front station the way the tail strip anchors to lastStation —
+ * the long-nosed hyper left its lamps 0.17 m inside the air and the short-nosed
+ * grip buried them in its own nose. Offsets are calibrated so the hero's own
+ * station reproduces the shipped cluster z/y byte-identically.
+ */
+export function frontLampAnchors(first: { z: number; ty: number }): {
+  housingZ: number; lensZ: number; ringZ: number; projectorZ: number; drlZ: number
+  lampY: number; drlY: number; intakeCenterZ: number
+} {
+  return {
+    housingZ: first.z + 0.02,
+    lensZ: first.z - 0.003,
+    ringZ: first.z - 0.017,
+    projectorZ: first.z - 0.021,
+    drlZ: first.z - 0.001,
+    lampY: first.ty - 0.04,
+    drlY: first.ty - 0.04 + 0.062,
+    intakeCenterZ: first.z - 0.025,
+  }
+}
+
 /* -------------------------------- materials ------------------------------- */
 
 /* Group-3 raised trim rides on ONE memoised instance per detail material
@@ -269,57 +292,95 @@ export function validateCarShape(shape: CarShape): void {
  * detail set never mints a per-part material. LED materials are keyed by
  * role + accent hex — four models means a handful of instances at most. */
 const detailMats = new Map<string, THREE.Material>()
+/* PR review F1: everything in detailMats is a FIELD-WIDE singleton — the AI
+ * cars mount theirs for the whole session. A model swap must never dispose
+ * one of these (its material would die under still-mounted meshes). */
+const sharedCarMats = new WeakSet<THREE.Material>()
 function memoDetailMat<T extends THREE.Material>(key: string, make: () => T): T {
   let m = detailMats.get(key) as T | undefined
-  if (!m) { m = make(); detailMats.set(key, m) }
+  if (!m) { m = make(); detailMats.set(key, m); sharedCarMats.add(m) }
   return m
+}
+
+/** True for the memoised car materials every mounted car shares. */
+export function isSharedCarMaterial(m: unknown): boolean {
+  return m != null && sharedCarMats.has(m as THREE.Material)
+}
+
+/**
+ * Dispose a retired car tree: geometry always (every buildCar mints fresh),
+ * materials only when they are NOT field-wide singletons (per-car paint,
+ * headlight, brake and flame materials). Mirrors util.disposeTree's shape.
+ */
+export function disposeCarTree(root: THREE.Object3D, isShared: (m: unknown) => boolean = isSharedCarMaterial): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    mesh.geometry?.dispose()
+    const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
+    for (const m of mats) if (!isShared(m)) m.dispose()
+  })
 }
 
 /** linear blend of two packed hex colours (weight of `b`) */
 const mixHex = (a: number, b: number, w: number): number =>
   new THREE.Color(a).lerp(new THREE.Color(b), w).getHex()
 
+/* paintMaterialParams' micro-roughness for the HERO finish (roughness 0.28,
+ * flake 0.5) — the calibration anchor of the mkPaint normalScale mapping. */
+const HERO_MICRO = 0.293
+
+/* PR review F14b: every fixed-colour hardware material goes through the same
+ * detailMats memo so the AI field (5 cars × 4 wheels) reuses one instance per
+ * look instead of minting dozens per buildCar. Consequence the model swap
+ * must respect (F1): these are FIELD-WIDE singletons — disposeCarTree below
+ * never disposes one an AI car still renders with. */
 const shared = {
   rubber(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.86, metalness: 0.02, normalMap: tireTreadNormal(), normalScale: new THREE.Vector2(0.8, 0.8) })
+    return memoDetailMat('rubber', () => new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.86, metalness: 0.02, normalMap: tireTreadNormal(), normalScale: new THREE.Vector2(0.8, 0.8) }))
   },
   chrome(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0xd6dde6, metalness: 1, roughness: 0.11 })
+    return memoDetailMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xd6dde6, metalness: 1, roughness: 0.11 }))
   },
   alloy(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x98a8c0, metalness: 0.65, roughness: 0.2, roughnessMap: alloyRoughness() })
+    return memoDetailMat('alloy', () => new THREE.MeshStandardMaterial({ color: 0x98a8c0, metalness: 0.65, roughness: 0.2, roughnessMap: alloyRoughness() }))
   },
   dark(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.55, metalness: 0.25 })
+    return memoDetailMat('dark', () => new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.55, metalness: 0.25 }))
   },
   darkSoft(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x0e1013, roughness: 0.9, metalness: 0 })
+    return memoDetailMat('darkSoft', () => new THREE.MeshStandardMaterial({ color: 0x0e1013, roughness: 0.9, metalness: 0 }))
+  },
+  sidewall(): THREE.MeshStandardMaterial {
+    return memoDetailMat('sidewall', () => new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.92, metalness: 0 }))
   },
   glass(finish: CarFinish): THREE.MeshPhysicalMaterial {
     const gp = glassMaterialParams(finish)
-    return new THREE.MeshPhysicalMaterial({
+    return memoDetailMat(`glass:${gp.color}:${gp.opacity}`, () => new THREE.MeshPhysicalMaterial({
       color: gp.color, roughness: gp.roughness, metalness: gp.metalness,
       transparent: true, opacity: gp.opacity, ior: gp.ior, envMapIntensity: gp.envMapIntensity,
-    })
+    }))
   },
   disc(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.94, roughness: 0.36 })
+    return memoDetailMat('disc', () => new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.94, roughness: 0.36 }))
   },
   caliper(hex: number): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: hex, roughness: 0.4, metalness: 0.3 })
+    return memoDetailMat(`caliper:${hex}`, () => new THREE.MeshStandardMaterial({ color: hex, roughness: 0.4, metalness: 0.3 }))
   },
   carbon(finish: CarFinish): THREE.MeshStandardMaterial {
     const cp = carbonMaterialParams(finish)
-    const weave = carbonWeaveMaps(cp.repeat)
-    return new THREE.MeshStandardMaterial({
-      color: cp.color, roughness: cp.roughness, metalness: 0.32,
-      normalMap: weave.normalMap, normalScale: new THREE.Vector2(cp.normalScale, cp.normalScale),
-      roughnessMap: weave.roughnessMap, envMapIntensity: cp.envMapIntensity,
+    return memoDetailMat(`carbon:${cp.color}:${cp.repeat}`, () => {
+      const weave = carbonWeaveMaps(cp.repeat)
+      return new THREE.MeshStandardMaterial({
+        color: cp.color, roughness: cp.roughness, metalness: 0.32,
+        normalMap: weave.normalMap, normalScale: new THREE.Vector2(cp.normalScale, cp.normalScale),
+        roughnessMap: weave.roughnessMap, envMapIntensity: cp.envMapIntensity,
+      })
     })
   },
   // brushed steel ring standing proud of the disc face (rotates with the wheel)
   discRing(): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x5b616a, metalness: 0.95, roughness: 0.3 })
+    return memoDetailMat('discRing', () => new THREE.MeshStandardMaterial({ color: 0x5b616a, metalness: 0.95, roughness: 0.3 }))
   },
   // ---- group-3 detail materials (memoised singletons, see detailMats above)
   // matte dark trim: handles, shut lines, lamp cans, slats, recesses, quad block
@@ -422,7 +483,7 @@ export function detailPartCount(plan: DetailPlan): number {
  * axle is baked onto world X with sideSign so both left/right wheels face
  * outboard.
  */
-function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number, radius: number, finish: CarFinish): { root: THREE.Group; spin: THREE.Group } {
+function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number, radius: number, caliperHex: number): { root: THREE.Group; spin: THREE.Group } {
   const R = radius
   const hw = width / 2
   const spin = new THREE.Group()
@@ -439,7 +500,7 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
 
   // Sidewall ring band — a slightly lighter matte annulus on the outboard face
   // so the tyre is not one flat donut. Sits just proud of the shoulder.
-  const sidewall = new THREE.Mesh(new THREE.TorusGeometry(R * 0.72, 0.03, 6, 34), new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.92, metalness: 0 }))
+  const sidewall = new THREE.Mesh(new THREE.TorusGeometry(R * 0.72, 0.03, 6, 34), shared.sidewall())
   sidewall.geometry.rotateX(Math.PI / 2)
   sidewall.geometry.translate(0, hw * 0.80, 0)
   sidewall.name = 'tire-sidewall'
@@ -469,7 +530,7 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
 
   // Caliper — clamped at the 3-o'clock position, INBOARD of the dish so it
   // peeks through spoke gaps without being buried under the dish.
-  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper(finish.accent))
+  const cal = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.052, 0.055), shared.caliper(caliperHex))
   cal.geometry.translate(0, hw * 0.20, R * 0.575)
   cal.name = 'brake-caliper'
 
@@ -600,12 +661,16 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
-    const pp = paintMaterialParams(spec.finish)
+    const pp = carMaterialParamsFor(spec).paint
     const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
+    // the micro-roughness breakup drives the normal strength: calibrated so
+    // the hero's own breakup reproduces the shipped fixed 0.5, satin models
+    // (grip) read more breakup and gloss models (hyper) a touch less
+    const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
     const m = new THREE.MeshPhysicalMaterial({
       color: bodyHex, metalness: pp.metalness, roughness: pp.roughness,
       roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
-      normalScale: new THREE.Vector2(0.5, 0.5),
+      normalScale: new THREE.Vector2(ns, ns),
       clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
       clearcoatNormalMap: paintMicroRoughness(),
       sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
@@ -648,16 +713,17 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   }
 
   // bumpers / splitter / diffuser / skirts (beveled plates)
+  const lamp = frontLampAnchors(spec.shape.bodyStations[0])
   const bumperF = new THREE.Mesh(roundedPlateGeo(1.62, 0.5, 0.12, 0.06), paint)
   bumperF.position.set(0, 0.46, -2.17)
   group.add(named(bumperF, 'bumper-front'))
   const intakeC = new THREE.Mesh(roundedPlateGeo(1.0, 0.17, 0.05, 0.04), shared.dark())
-  intakeC.position.set(0, 0.36, -2.29)
+  intakeC.position.set(0, 0.36, lamp.intakeCenterZ)
   group.add(named(intakeC, 'intake-center'))
   if (spec.kit.sideIntakes) {
     for (const side of [-1, 1]) {
       const intakeS = new THREE.Mesh(roundedPlateGeo(0.26, 0.14, 0.04, 0.03), shared.dark())
-      intakeS.position.set(side * 0.60, 0.42, -2.28)
+      intakeS.position.set(side * 0.60, 0.42, lamp.intakeCenterZ + 0.01)
       group.add(named(intakeS, `intake-side-${side < 0 ? 'l' : 'r'}`))
     }
   }
@@ -735,21 +801,22 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     }
   }
 
-  // headlight clusters (shaped lenses, emissive)
+  // headlight clusters (shaped lenses, emissive) — anchored to this model's
+  // own front station (F3), calibrated to the hero's shipped positions
   const headMats: THREE.MeshStandardMaterial[] = []
   for (const side of [-1, 1]) {
     const hous = new THREE.Mesh(roundedPlateGeo(0.42, 0.15, 0.045, 0.02), shared.dark())
-    hous.position.set(side * 0.46, 0.66, -2.245)
+    hous.position.set(side * 0.46, lamp.lampY, lamp.housingZ)
     hous.rotation.y = side * -0.07
     group.add(named(hous, `headlight-housing-${side < 0 ? 'l' : 'r'}`))
     const hm = new THREE.MeshStandardMaterial({ color: 0x39414d, emissive: new THREE.Color(0xfff1d6), emissiveIntensity: 0.95, roughness: 0.15 })
     const lens = new THREE.Mesh(roundedPlateGeo(0.36, 0.095, 0.024, 0.014), hm)
-    lens.position.set(side * 0.46, 0.66, -2.268)
+    lens.position.set(side * 0.46, lamp.lampY, lamp.lensZ)
     lens.rotation.y = hous.rotation.y
     group.add(named(lens, `headlight-lens-${side < 0 ? 'l' : 'r'}`))
     headMats.push(hm)
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.012, 8, 18), shared.chrome())
-    ring.position.set(side * 0.46, 0.66, -2.282)
+    ring.position.set(side * 0.46, lamp.lampY, lamp.ringZ)
     ring.rotation.y = hous.rotation.y
     group.add(named(ring, `headlight-ring-${side < 0 ? 'l' : 'r'}`))
     // group-3 projector cluster in the ring mouth: dark barrel + emissive
@@ -762,14 +829,14 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
       // ring (a capped can buries the emissive disc behind its front face)
       const can = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.05, 0.06, 14, 1, true), shared.trim())
       can.rotation.x = Math.PI / 2
-      can.position.set(side * 0.46, 0.66, -2.268)
+      can.position.set(side * 0.46, lamp.lampY, lamp.lensZ)
       group.add(named(can, `headlight-can-${sn}`))
       const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.012, 14), hm)
       disc.rotation.x = Math.PI / 2
-      disc.position.set(side * 0.46, 0.66, -2.286)
+      disc.position.set(side * 0.46, lamp.lampY, lamp.projectorZ)
       group.add(named(disc, `headlight-projector-${sn}`))
       const drl = new THREE.Mesh(roundedPlateGeo(0.40, 0.020, 0.016, 0.008), shared.ledDrl(spec.finish.accent))
-      drl.position.set(side * 0.46, 0.722, -2.266)
+      drl.position.set(side * 0.46, lamp.drlY, lamp.drlZ)
       drl.rotation.y = hous.rotation.y
       group.add(named(drl, `headlight-drl-${sn}`))
     }
@@ -945,7 +1012,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   for (const front of [true, false]) {
     const z = front ? -VEHICLE.wheelbase / 2 : VEHICLE.wheelbase / 2
     for (const side of [-1, 1]) {
-      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.finish)
+      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.kit.caliper)
       let steer: THREE.Group | null = null
       if (front) {
         steer = new THREE.Group()
@@ -974,24 +1041,17 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
 
   // Fold the static chassis into render-identical materials while keeping
   // wheels, steering/flame animation, and brake/headlight glow carriers intact.
+  // PR review F10: only names with a live consumer or a runtime transform are
+  // kept out of the merge. Everything else (lens cans, handles, slats, trims)
+  // folds freely — the glow/DRL carriers are the MATERIALS captured in
+  // brakeMats/headMats, which survive the merge, and the scripts/harness only
+  // ever look up 'tire' (harness shot poses) and 'wheel-spoke' (functional
+  // spoke-count checks). The flame meshes are scaled per-frame by setNitro,
+  // so they must never fuse into a static bucket.
   mergeStaticMeshes(group, {
     keepNames: [
-      'tire', 'tire-sidewall', 'wheelback', 'brake-disc', 'brake-disc-ring', 'brake-caliper', 'brake-piston',
-      'wheel-dish', 'wheel-lip', 'wheel-spoke', 'wheel-hub', 'wheel-f-l', 'wheel-f-r',
-      'wheel-r-l', 'wheel-r-r', 'headlight-lens-l', 'headlight-lens-r',
-      'taillight-lens-l', 'taillight-lens-r', 'taillight-bar',
+      'tire', 'wheel-spoke',
       'flame-l', 'flame-r', 'flame-core-l', 'flame-core-r',
-      // group-3 raised shell detail — kept individually so the named trim
-      // survives the static-merge harvest (none of these names may collide
-      // with the patterns functional.mjs asserts, e.g. wheel-spoke)
-      'headlight-can-l', 'headlight-can-r', 'headlight-projector-l', 'headlight-projector-r',
-      'headlight-drl-l', 'headlight-drl-r',
-      'taillight-recess', 'taillight-led',
-      'door-handle-f-l', 'door-handle-f-r', 'door-handle-r-l', 'door-handle-r-r',
-      'hood-slat-0', 'hood-slat-1', 'hood-slat-2', 'hood-dome',
-      'exhaust2-l', 'exhaust2-r', 'exhaust-inner2-l', 'exhaust-inner2-r',
-      'exhaust-quad-block', 'exhaust-q0', 'exhaust-q1', 'exhaust-q2', 'exhaust-q3',
-      'shut-door-l', 'shut-door-r', 'shut-bonnet-l', 'shut-bonnet-r',
     ],
   })
 
