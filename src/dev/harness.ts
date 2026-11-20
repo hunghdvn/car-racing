@@ -12,7 +12,7 @@ import { roadPose, heroShot } from '../world/TrackSlice'
 import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
-import { buildCar, validateCarShape } from '../assets/CarModel'
+import { buildCar, disposeCarTree, isSharedCarMaterial, validateCarShape } from '../assets/CarModel'
 import { CAR_SPECS, type CarId } from '../vehicles/CarSpecs'
 import type { Game } from '../game/Game'
 
@@ -37,7 +37,11 @@ import type { Game } from '../game/Game'
 /** install every dev probe + pose the harness drivers require on a live game */
 export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs: number): void {
   const { view, car, slice } = game
-  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal }
+  // R2-1/R2-8/R2-11: the functional battery audits built wheel parenting, caliper
+  // colours and the real shared-material dispose path through the SHIPPED
+  // builders — expose them on the dev probe (harness chunk only, no-leak grep
+  // covers the shipped bundle) instead of re-implementing them in the driver.
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal, CAR_SPECS, buildCar, disposeCarTree, isSharedCarMaterial }
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = buildMs
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the

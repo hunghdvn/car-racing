@@ -223,6 +223,32 @@ export function nextUnusedPaletteColor(used: ReadonlySet<number>): number | null
   return null
 }
 
+/**
+ * PR review R2-4 — the ONE pure reconciliation core behind every colour
+ * mutation in the game: boot pool seeding (Game constructor), the swatch
+ * path (Game.onPaint) and the model path (Game.selectModel) all plan through
+ * it, so no entry point can repaint the player onto a colour an AI slot
+ * already wears. Returns a repaint plan (one entry per AI slot, input order
+ * preserved): every slot keeps its colour unless it equals playerHex, in which
+ * case it receives the first palette colour nobody (field + player) wears.
+ * A palette so small it cannot resolve a collision leaves the slot untouched
+ * (never a duplicate) — unreachable with AI.count < PAINTS.length.
+ */
+export function reconcileAiColours(
+  currentAiHexes: readonly number[], playerHex: number, palette: readonly number[],
+): number[] {
+  const plan = [...currentAiHexes]
+  const worn = new Set<number>([...plan, playerHex])
+  for (let i = 0; i < plan.length; i++) {
+    if (plan[i] !== playerHex) continue
+    const next = palette.find((c) => !worn.has(c)) ?? null
+    if (next === null) continue
+    plan[i] = next
+    worn.add(next)
+  }
+  return plan
+}
+
 const MODEL_KEY = 'vr.model'
 
 export function readModelSelection(): CarId {
@@ -248,14 +274,18 @@ export function resolvePaint(storedHex: number | null, spec: CarSpec): number {
 }
 
 /** PR review F8 — the full precedence chain with the in-memory explicit pick:
- *  a stored read still wins; when storage came back empty (private mode, or a
- *  swallowed write) an explicit in-session swatch pick survives the model
- *  switch; with neither, the new model's signature owns the car. Pure core
- *  consumed by Game.selectModel. */
+ *  once the player has explicitly picked in THIS session, the in-memory pick
+ *  is authoritative — storage is a boot-seed only. The old chain let a stale
+ *  (but readable) stored value beat a newer explicit pick, which is exactly
+ *  the Safari-private-mode scenario F8 targeted: the write is swallowed, the
+ *  old stored colour survives the next model switch and overwrites the pick.
+ *  With no explicit pick this session, the stored read wins; with neither,
+ *  the new model's signature owns the car. Pure core consumed by
+ *  Game.selectModel. */
 export function resolvePaintWithExplicit(
   storedHex: number | null, explicitPick: boolean, inMemoryHex: number, spec: CarSpec,
 ): number {
-  return storedHex ?? (explicitPick ? inMemoryHex : spec.finish.paint)
+  return explicitPick ? inMemoryHex : (storedHex ?? spec.finish.paint)
 }
 
 const PAINT_KEY = 'vr.paint'

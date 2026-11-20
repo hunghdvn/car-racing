@@ -9,16 +9,16 @@ import { Audio, type AudioDrive } from '../core/Audio'
 import { UIManager, type HudData, freshShortcut, shortcutEnterEdge, countdownCueFor, rpmFor } from '../ui/UIManager'
 import { buildCar, disposeCarTree, type CarModel } from '../assets/CarModel'
 import { ChaseCamera, type CarView } from '../camera/ChaseCamera'
-import { AI, FX, GRAPHICS, PAINTS, QUALITY, SKIDS, TRACK, VEHICLE, type PaintDef } from '../config'
+import { AI, FX, GRAPHICS, PAINTS, QUALITY, SKIDS, TRACK, VEHICLE } from '../config'
 import { clamp, clamp01 } from '../util'
 import { buildTrackSlice, type Slice } from '../world/TrackSlice'
 import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { getSpec, nextUnusedPaletteColor, readPaintSelection, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { getSpec, readPaintSelection, reconcileAiColours, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
-import { RaceDirector, gridSlot, type Competitor } from './RaceDirector'
+import { RaceDirector, gridSlot, type Competitor, type RacePhase } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
 
 /* ------------------------------------------------------------------------- *
@@ -125,25 +125,25 @@ export class Game {
     this.input.onAction = (a) => this.onInputAction(a)
     /* the AI field: distinct paints, per-car model + visual + brain, one
        shared probe/spline (world queries are never duplicated per car) */
-    // the boot pool excludes the BOOT paint; with PAINTS at 6 and AI.count at
-    // 5 the slice always yields 5 distinct entries. That exclusion cannot see
-    // ahead to a garage switch, so selectModel can still land the player on a
-    // model SIGNATURE colour an AI slot already wears — the collision pass in
-    // selectModel repaints that slot from the free palette (per-car colours
-    // tracked in aiPaintHex) so the player never shares a colour on screen.
-    const playerPaint = PAINTS.find((pt) => pt.color === paintHex)
-    const aiPaints: PaintDef[] = PAINTS.filter((pt) => pt !== playerPaint).slice(0, AI.count)
+    // the boot pool seeds through the SAME pure reconcile core as the swatch
+    // (onPaint) and model (selectModel) paths — R2-4: one function decides
+    // every field colour, so the player can never end up sharing a colour
+    // with an AI car from any entry point (per-car colours tracked in
+    // aiPaintHex; the collision pass repaints the colliding slot from the
+    // free palette on every paint mutation, boot included).
+    const palette = PAINTS.map((pt) => pt.color)
+    const aiHexes = reconcileAiColours(palette.slice(0, AI.count), paintHex, palette)
     for (let i = 0; i < AI.count; i++) {
       const ai = new AIVehicle(i, this.slice.spline, this.probe)
       // the mesh is driven from the brain's own spec so CAR.aiModels is read at
       // exactly one site — a field built from the hero default would visually
       // contradict the per-slot standings labels.
-      const model = buildCar(aiPaints[i % aiPaints.length].color, ai.spec)
+      const model = buildCar(aiHexes[i], ai.spec)
       model.group.name = `ai-car-${i}`
       model.group.position.set(0, -600, 0) // parked off-scene until the grid
       this.view.scene.add(model.group)
       this.aiCars.push(model)
-      this.aiPaintHex.push(aiPaints[i % aiPaints.length].color)
+      this.aiPaintHex.push(aiHexes[i])
       this.aiVisuals.push(new VehicleVisual(model))
       this.ai.push(ai)
     }
@@ -162,7 +162,7 @@ export class Game {
       onRestart: () => this.beginRace(),
       onResume: () => this.setPaused(false),
       onMenu: () => this.toMenu(),
-      onPaint: (hex) => { this.paintHex = hex; this.paintExplicit = true; this.car.setPaint(hex); writePaintSelection(hex) },
+      onPaint: (hex) => this.onPaint(hex),
       onModel: (id) => this.selectModel(id),
     })
     this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
@@ -204,19 +204,10 @@ export class Game {
     writeModelSelection(id)
     this.ui.setModelActive(id)
     this.ui.renderModelStats(spec)
-    // F5: a model signature may equal an AI slot's boot colour (the boot pool
-    // only excluded the BOOT paint) — repaint the colliding rival so the player
-    // never wears the same colour as another car on the grid
-    for (let i = 0; i < this.aiCars.length; i++) {
-      if (this.aiPaintHex[i] !== this.paintHex) continue
-      const used = new Set<number>([...this.aiPaintHex, this.paintHex])
-      const next = nextUnusedPaletteColor(used)
-      if (next !== null) {
-        this.aiCars[i].setPaint(next)
-        this.aiPaintHex[i] = next
-        if (__VR_HARNESS__) console.log(`[garage] ai-car-${i} repainted ${next.toString(16)} — the player took its colour`)
-      }
-    }
+    // F5/R2-4: a model signature may equal an AI slot's boot colour — repaint
+    // the colliding rival through the shared reconcile core (same as onPaint)
+    // so the player never wears the same colour as another car on the grid
+    this.applyAiColourPlan(reconcileAiColours(this.aiPaintHex, this.paintHex, PAINTS.map((pt) => pt.color)))
     this.car = buildCar(this.paintHex, spec)
     this.car.group.name = 'player-car'
     this.view.scene.add(this.car.group)
@@ -224,6 +215,33 @@ export class Game {
     this.captureRearWheels()
     this.player.phys.setTuning(resolveTuning(spec.stat))
     if (this.frozenPose) this.applyPose(this.frozenPose) // keep a live capture in sync
+  }
+
+  /** swatch pick (garage): paint the car, persist the intent, and hand the AI
+   *  field to the SAME reconcile core selectModel uses (R2-4) — a slot already
+   *  wearing the picked colour is repainted from the free palette, so no
+   *  mutation path can leave the player colour-sharing with the field.
+   *  R2-3 justification: no extra guard is needed here — the Input gate
+   *  returns before the confirm dispatch for keys aimed at interactive
+   *  targets, so a keyboard Enter reaches this seam exactly once (the native
+   *  click), and a repeat activation is an idempotent colour write. */
+  onPaint(hex: number): void {
+    this.paintHex = hex
+    this.paintExplicit = true
+    this.car.setPaint(hex)
+    writePaintSelection(hex)
+    this.applyAiColourPlan(reconcileAiColours(this.aiPaintHex, hex, PAINTS.map((pt) => pt.color)))
+  }
+
+  /** apply a reconcile plan to the live field (only genuinely-changed slots) */
+  private applyAiColourPlan(plan: readonly number[]): void {
+    for (let i = 0; i < this.aiCars.length; i++) {
+      const next = plan[i]
+      if (next === undefined || next === this.aiPaintHex[i]) continue
+      this.aiCars[i].setPaint(next)
+      this.aiPaintHex[i] = next
+      if (__VR_HARNESS__) console.log(`[garage] ai-car-${i} repainted ${next.toString(16)} — the player took its colour`)
+    }
   }
 
   /** Release a frozen shot pose held by the dev harness (see core/Debug host). */
@@ -289,8 +307,19 @@ export class Game {
     }
   }
 
-  /** title Enter / START RACE / RESTART: gesture-unlock audio, grid the field */
+  /** title Enter / START RACE / RESTART: gesture-unlock audio, grid the field.
+   *  R2-3 idempotence: a double activation inside one rAF frame (e.g. a focused
+   *  button whose native Enter click races the window-level confirm edge) is a
+   *  no-op — the second call would only replay the whole gesture and re-grid a
+   *  field that startRace just placed. The stamp records the phase the call
+   *  LEAVES the director in (both branches land on 'countdown'), so the racing
+   *  twin of the same-frame double is caught even though the pre-call phase
+   *  already flipped. Any genuine restart arrives on a later frame. */
+  private beginStamp: { phaseAfter: RacePhase; frame: number } | null = null
+
   beginRace(): void {
+    if (this.beginStamp !== null && this.beginStamp.phaseAfter === this.director.phase
+      && this.beginStamp.frame === this.frameCount) return
     this.audio.unlock()
     this.audio.click()
     this.setPaused(false)
@@ -301,17 +330,23 @@ export class Game {
     this.prevCd = 0
     if (this.director.phase === 'finished') this.restartRace()
     else this.startRace()
+    this.beginStamp = { phaseAfter: this.director.phase, frame: this.frameCount }
   }
 
   /** MAIN MENU: back to the title board, HUD down, the abandoned race reset —
    *  the director returns to idle so the garage unlocks and the AI field sleeps;
-   *  the next beginRace re-grids everyone through startRace */
+   *  the next beginRace re-grids everyone through startRace. R2-2: the gate
+   *  closing on idle also freezes stepAIField/bindAIFieldVisuals wherever the
+   *  cars last stood, and parkField is otherwise only driven from the frozen
+   *  pose path — so the retired field is explicitly parked off-scene here
+   *  (same pose as the constructor's), never left drifting behind the board. */
   toMenu(): void {
     this.audio.unlock()
     this.audio.click()
     this.setPaused(false)
     this.director.abandon()
     this.prevCd = 0 // the abandoned countdown must not fire stale GO cues on the title
+    this.parkField(false)
     this.ui.raceToMenu()
   }
 

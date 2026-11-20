@@ -77,7 +77,13 @@ interface InputEventTargetQueryLike {
 /** Native <button> activation fires on Enter at keydown — preventing PREVENT
  *  keys there kills the garage cards/swatches for keyboard users while the
  *  confirm action still routes to the Game (Enter on a focused card could only
- *  ever start the race). Interactive targets keep their defaults. */
+ *  ever start the race). R2-3: bowing out means RETURNING entirely — an
+ *  interactive target gets neither the confirm dispatch nor a pressed.add
+ *  entry. The window listener runs before native activation, so dispatching
+ *  confirm here too made Enter on a focused card begin the race before the
+ *  click could reach selectModel (the guard then rejected it: the keyboard
+ *  pick was impossible), and Enter on a focused START RACE double-fired
+ *  beginRace (confirm + native click). */
 const INTERACTIVE_SELECTOR = 'button,a,input,select,textarea'
 const onInteractiveTarget = (e: InputKeyboardEvent): boolean => {
   const t = e.target
@@ -168,7 +174,12 @@ export class Input {
     this.padSource = padSource
     target.addEventListener('keydown', (e) => {
       if (isImeControlEvent(e)) return
-      if (PREVENT.has(e.code) && !onInteractiveTarget(e)) e.preventDefault?.()
+      // R2-3: a PREVENT key aimed at an interactive element belongs to that
+      // element alone — its native activation (Enter/Space on a button) owns
+      // the key. Return BEFORE dispatch and pressed.add so the action map can
+      // never race the native click.
+      if (PREVENT.has(e.code) && onInteractiveTarget(e)) return
+      if (PREVENT.has(e.code)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)
       for (const action of this.actions) {

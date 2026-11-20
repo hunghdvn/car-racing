@@ -111,10 +111,12 @@ export function carbonMaterialParams(finish: CarFinish): CarbonParams {
   }
 }
 
-/** The per-car material contract (PR review F12): the ONLY thing buildCar
- *  consumes from the finish/kit layer — paint params plus the kit's caliper
- *  colour (spec §6) — so the per-model numbers are pinned headless instead of
- *  living in unreachable inline factories. */
+/** The per-car material contract (PR review F12/R2-8): the ONLY door buildCar
+ *  consumes the finish/kit layer through — paint params (mkPaint) plus the
+ *  caliper colour (buildWheelAssembly) — so the per-model numbers are pinned
+ *  headless instead of living in unreachable inline factories. buildCar must
+ *  never side-read spec.kit.caliper: the functional battery asserts each built
+ *  brake-caliper material colour against the catalog through this door. */
 export function carMaterialParamsFor(spec: CarSpec): { paint: PaintParams; caliper: number } {
   return { paint: paintMaterialParams(spec.finish), caliper: spec.kit.caliper }
 }

@@ -335,7 +335,11 @@ const HERO_MICRO = 0.293
  * look instead of minting dozens per buildCar. Consequence the model swap
  * must respect (F1): these are FIELD-WIDE singletons — disposeCarTree below
  * never disposes one an AI car still renders with. */
-const shared = {
+/* PR review R2-11: exported so the node battery can hand a REAL field-wide
+ * singleton (chrome/alloy/dark…) to disposeCarTree's DEFAULT predicate —
+ * the old test injected its own isShared stub and only proved the plumbing.
+ * Internal code keeps using `shared`. */
+export const shared = {
   rubber(): THREE.MeshStandardMaterial {
     return memoDetailMat('rubber', () => new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.86, metalness: 0.02, normalMap: tireTreadNormal(), normalScale: new THREE.Vector2(0.8, 0.8) }))
   },
@@ -487,6 +491,10 @@ function buildWheelAssembly(sideSign: 1 | -1, width: number, spokeCount: number,
   const R = radius
   const hw = width / 2
   const spin = new THREE.Group()
+  // named landmark for the static merge (see keepNames at the buildCar tail):
+  // the rotating hardware (dish/lip/sidewall/back/disc/ring/hub) folds INTO
+  // this group, never past it to the car root
+  spin.name = 'wheel-spin'
 
   const tp: THREE.Vector2[] = [
     [0.005, -hw * 0.92], [R * 0.50, -hw * 0.92], [R * 0.66, -hw * 0.78],
@@ -1012,7 +1020,9 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   for (const front of [true, false]) {
     const z = front ? -VEHICLE.wheelbase / 2 : VEHICLE.wheelbase / 2
     for (const side of [-1, 1]) {
-      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, spec.kit.caliper)
+      // R2-8: the caliper colour arrives through the carMaterialParamsFor
+      // contract (the same door as the paint params), not a side-read of the kit
+      const { root, spin } = buildWheelAssembly(side === 1 ? 1 : -1, ww, spokeCount, wr, carMaterialParamsFor(spec).caliper)
       let steer: THREE.Group | null = null
       if (front) {
         steer = new THREE.Group()
@@ -1048,9 +1058,19 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   // ever look up 'tire' (harness shot poses) and 'wheel-spoke' (functional
   // spoke-count checks). The flame meshes are scaled per-frame by setNitro,
   // so they must never fuse into a static bucket.
+  // PR review R2-1: the four wheel GROUP names and the 'wheel-spin' landmark
+  // stay in the list because StaticBatch.collect only opens a fold scope at a
+  // NAMED group: with them pruned, the wheel hardware (dish, lip, hub, discs,
+  // caliper...) folded past spin/root into the CAR ROOT with build-time
+  // matrices baked in — Vehicle.bind turns spin/root every frame and the rims
+  // stood still beside the turning tyres. With the landmarks restored the
+  // rotating hardware folds into each wheel's own spin group and the static
+  // caliper hardware into its wheel root group (still fewer draws than the
+  // fully unmerged pre-F10 tree).
   mergeStaticMeshes(group, {
     keepNames: [
-      'tire', 'wheel-spoke',
+      'tire', 'wheel-spoke', 'wheel-spin',
+      'wheel-f-l', 'wheel-f-r', 'wheel-r-l', 'wheel-r-r',
       'flame-l', 'flame-r', 'flame-core-l', 'flame-core-r',
     ],
   })

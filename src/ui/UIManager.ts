@@ -278,6 +278,9 @@ export class UIManager {
 
   private mode: UiMode = 'title'
   private prevPhase: HudData['phase'] = 'idle'
+  /** R2-12: card row cached at build; the lock DOM is written on the edge only */
+  private modelCardEls: HTMLElement[] = []
+  private prevCardsLocked = false
   /** true while the race HUD (not the title board) is on screen */
   get onScreen(): boolean { return this.mode === 'racing' }
   private prevNitro = 0
@@ -404,6 +407,7 @@ export class UIManager {
       b.addEventListener('click', () => {
         for (const s of Array.from(this.swatchHost?.children ?? [])) s.classList.remove('selected')
         b.classList.add('selected')
+        b.blur() // R2-3: release focus so drive keys are not aimed at the swatch
         this.host.onPaint(p.color)
       })
       this.swatchHost.appendChild(b)
@@ -431,21 +435,26 @@ export class UIManager {
     const host = this.$('model-cards')
     if (!host) return
     host.textContent = ''
+    this.modelCardEls = []
     for (const s of CAR_SPECS) {
       const b = this.doc.createElement('button')
       b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
       b.dataset.model = s.id
       b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
-      b.addEventListener('click', () => { this.host.onModel(s.id) })
+      b.addEventListener('click', () => {
+        b.blur() // R2-3: a clicked card must not keep focus — drive keys aim there
+        this.host.onModel(s.id)
+      })
       host.appendChild(b)
+      this.modelCardEls.push(b)
     }
     this.renderModelStats(getSpec(selectedId))
   }
 
   /** moves the active marker to the accepted model (Game calls it on accept) */
   setModelActive(id: CarId): void {
-    for (const c of Array.from(this.modelCards?.children ?? [])) {
-      c.classList.toggle('selected', c instanceof HTMLElement && c.dataset.model === id)
+    for (const c of this.modelCardEls) {
+      c.classList.toggle('selected', c.dataset.model === id)
     }
   }
 
@@ -513,21 +522,24 @@ export class UIManager {
     }
 
     /* garage cards are a title-screen affordance: lock the row through a live
-       race so a mid-race MAIN MENU (where the director keeps running behind the
-       board) can not leave them clickable while selectModel only no-ops. Locked
-       cards also drop out of the tab order and announce disabled (F4: the
-       Input preventDefault gate made them keyboard-reachable again, so they
-       must not stay focusable while inert). */
+       race so a mid-race MAIN MENU (which now abandons the race and parks the
+       field, R2-2) can not leave them clickable while selectModel only no-ops.
+       Locked cards also drop out of the tab order and announce disabled (F4:
+       they must not stay focusable while inert). R2-12: the row is rebuilt once
+       into modelCardEls and the DOM is only written when cardsLocked flips
+       (same prev-edge idiom as prevPhase) — never per frame. */
     const cardsLocked = hud.phase === 'countdown' || hud.phase === 'racing'
-    this.modelCards?.classList.toggle('locked', cardsLocked)
-    for (const c of Array.from(this.modelCards?.children ?? [])) {
-      if (!(c instanceof HTMLElement)) continue
-      if (cardsLocked) {
-        c.tabIndex = -1
-        c.setAttribute('aria-disabled', 'true')
-      } else {
-        c.removeAttribute('tabindex')
-        c.removeAttribute('aria-disabled')
+    if (cardsLocked !== this.prevCardsLocked) {
+      this.prevCardsLocked = cardsLocked
+      this.modelCards?.classList.toggle('locked', cardsLocked)
+      for (const c of this.modelCardEls) {
+        if (cardsLocked) {
+          c.tabIndex = -1
+          c.setAttribute('aria-disabled', 'true')
+        } else {
+          c.removeAttribute('tabindex')
+          c.removeAttribute('aria-disabled')
+        }
       }
     }
 

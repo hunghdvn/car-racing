@@ -116,6 +116,10 @@ export class RaceDirector {
    * MAIN MENU abandons a live race (Game.toMenu): back to idle so the garage
    * cards unlock behind the board, the countdown cues stop, and the field
    * sleeps until the next beginRace re-grids everyone through start().
+   * R2-2: with the gate closed, stepAIField/bindAIFieldVisuals hold the last
+   * frame exactly where it froze — so Game.toMenu also parks the retired
+   * field off-scene (the constructor's park pose); this method owns race
+   * state only and never moves meshes.
    */
   abandon(): void {
     this.phase = 'idle'
