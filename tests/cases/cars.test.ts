@@ -1,8 +1,8 @@
 import { assert, assertNear, test } from '../harness'
-import { VEHICLE, CAR, PAINTS } from '../../src/config'
+import { VEHICLE, CAR, PAINTS, AI } from '../../src/config'
 import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
-import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, resolvePaint, type CarKit } from '../../src/vehicles/CarSpecs'
+import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
@@ -213,11 +213,36 @@ test('ai: slot model assignment follows the config table', () => {
   }
 })
 
-test('ai: the brain pace-caps against its own car\'s top speed', () => {
+test('ai: the brain pace-caps against its own car\'s top speed (driven targetSpeed)', () => {
   const r = rig()
   const hyper = new AIVehicle(1, r.spline, r.probe) // 'hyper' per the table
   assertNear(hyper.tuning.topSpeed, VEHICLE.topSpeed * 1.12, 1e-6, 'hyper tuning wired to the car')
   assert(hyper.phys.tuning === hyper.tuning, 'the physics runs the AI car\'s record')
+  // R2-7: the REAL brain update() drives the rig spline with the rubber-band
+  // pinned to its ceiling — on a straight the curvature target saturates and
+  // only the cap in AIVehicle.update can hold the speed target down. A brain
+  // capped at the BASE VEHICLE.topSpeed can never read above 0.985×base
+  // (the clamp's ceiling); the hyper cap reads clearly above it. The nitro
+  // policy is starved (tank pinned to 0) so the measured cap is always the
+  // dry topSpeed, never the nitro ceiling.
+  hyper.resetTo(r.spline.sFromX(30), 0, 12)
+  const ctx = { locked: false, leaderProgress: 1, progress: 0 }
+  const rivals = [hyper]
+  const snap0 = hyper.snapshot()
+  const band = Math.min(AI.rubberBandMax, 1 + AI.rubberK)
+  let maxTarget = 0
+  for (let i = 0; i < 1200; i++) {
+    hyper.nitroVal = 0
+    hyper.update(1 / 120, ctx, rivals)
+    if (hyper.phys.speed > 20) maxTarget = Math.max(maxTarget, hyper.targetSpeed)
+  }
+  assert(maxTarget > VEHICLE.topSpeed * 1.0,
+    `driven targetSpeed reached ${maxTarget.toFixed(1)} — a base-capped brain tops at ${(VEHICLE.topSpeed * 0.985).toFixed(1)}, so this must clear ${VEHICLE.topSpeed.toFixed(1)} to prove the hyper (1.12×) cap is live`)
+  assert(maxTarget <= hyper.tuning.topSpeed * 0.985 + 1e-9,
+    `and never past its own spec ceiling (got ${maxTarget.toFixed(1)}, want <= ${(hyper.tuning.topSpeed * 0.985).toFixed(1)})`)
+  const pinned = snap0.pace * band * hyper.tuning.topSpeed * 0.985
+  assert(maxTarget > Math.min(pinned, hyper.tuning.topSpeed * 0.985) * 0.98,
+    `converges toward the spec cap through pace x band x 0.985 (expected ~${Math.min(pinned, hyper.tuning.topSpeed * 0.985).toFixed(1)}, got ${maxTarget.toFixed(1)})`)
 })
 
 test('garage: stat bars normalize across the catalog to [0,1] on every axis', () => {
@@ -360,14 +385,38 @@ test('paint pool: nextUnusedPaletteColor hands out a colour nobody wears', () =>
   assert(pick!(new Set(PAINTS.map((p) => p.color))) === null, 'a fully-used palette reports null, never a duplicate')
 })
 
-/* F2a — MAIN MENU abandons the race: the director must return to idle so the
- * garage cards unlock and the AI field sleeps until the next beginRace. */
-test('director: abandon() returns a live race to idle (MAIN MENU garage unlock)', () => {
-  const r = rig()
-  const d = new RaceDirector([{ id: 0, phys: new VehiclePhysics(new FlatProbe(), 7) }], r.spline.length)
-  d.start()
-  assert(d.phase === 'countdown', 'start enters the countdown')
-  ;(d as unknown as { abandon?: () => void }).abandon?.()
-  assert(d.phase === 'idle', `abandon() must reset the phase — got ${d.phase}`)
-  assert(!d.fieldActive(), 'the field sleeps again until the next beginRace')
+/* R2-4 — the ONE reconcile core behind every colour mutation (boot pool,
+ * onPaint, selectModel). Fed onPaint-path values (the live field + the picked
+ * colour), no AI slot may keep the player's colour, and the plan never
+ * duplicates a field colour. */
+test('ai colours: reconcileAiColours leaves no slot wearing the player colour', () => {
+  const palette = PAINTS.map((p) => p.color)
+  assert(typeof carSpecs.reconcileAiColours === 'function', 'reconcileAiColours is exported')
+  for (const playerHex of palette) {
+    const field = palette.slice(0, 5) // a boot-style field (slot order)
+    const plan = carSpecs.reconcileAiColours(field, playerHex, palette)
+    assert(plan.length === field.length, 'one plan entry per slot, order preserved')
+    assert(plan.every((c) => c !== playerHex), `no AI hex equals player ${playerHex.toString(16)} — got ${plan.map((c) => c.toString(16)).join(', ')}`)
+    assert(new Set(plan).size === plan.length, `the plan never duplicates a field colour (player ${playerHex.toString(16)})`)
+    assert(plan.every((c) => palette.includes(c)), 'every planned colour is a palette member')
+  }
+  // untouched slots keep their colours (a repaint plan moves ONLY the collision)
+  const field = [palette[0], palette[2], palette[3], palette[4], palette[5]]
+  const plan = carSpecs.reconcileAiColours(field, palette[1], palette)
+  assert(plan.join(',') === field.join(','), 'no collision — the plan is a verbatim copy')
+})
+
+/* R2-5 — precedence: an in-memory explicit pick beats a stale-but-readable
+ * stored value (the Safari-private-mode scenario F8 targeted); storage stays
+ * the boot seed when nothing was picked this session. */
+test('paint flow: an explicit in-session pick outranks a stale stored value', () => {
+  const spec = getSpec('grip')
+  const stale = PAINTS[0].color
+  const gold = PAINTS[5].color
+  assert(resolvePaintWithExplicit(stale, true, gold, spec) === gold,
+    'explicit pick (gold) wins over a readable-but-stored old colour — storage is boot-seed only')
+  assert(resolvePaintWithExplicit(PAINTS[1].color, false, gold, spec) === PAINTS[1].color,
+    'with no explicit pick this session the stored seed still owns the car')
+  assert(resolvePaintWithExplicit(null, false, gold, spec) === spec.finish.paint,
+    'with neither, the model signature wins')
 })

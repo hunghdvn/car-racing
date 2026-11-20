@@ -71,35 +71,44 @@ test('shadow distance: only authored casters inside the neighborhood submit to t
   assert(far.castShadow, 'the newly nearby caster activates')
 })
 
-/* PR review F1: the model-swap dispose must never touch the field-wide shared
- * car materials (detail trims, LED signatures, memoised wheel hardware) that
- * mounted AI cars still use, while geometry always goes. disposeCarTree
- * mirrors util.disposeTree's shape (geometry always, material arrays handled)
- * with a shared-material predicate. */
+/* PR review F1/R2-11: the model-swap dispose must never touch the field-wide
+ * shared car materials (detail trims, LED signatures, memoised wheel hardware)
+ * that mounted AI cars still use, while geometry always goes. R2-11: the old
+ * test injected its own isShared predicate and fake singleton objects, so it
+ * only proved disposeCarTree honours a callback — never that the REAL
+ * isSharedCarMaterial recognises the REAL memoised instances. This version
+ * feeds disposeCarTree its DEFAULT predicate (no callback argument), mounts
+ * an actual memoDetailMat singleton (shared.chrome()) next to a fresh
+ * material, and observes dispose by spying on the instances themselves. */
 
-test('car lifecycle: disposeCarTree frees geometry always, materials only when not shared', async () => {
+test('car lifecycle: disposeCarTree (real predicate) frees geometry always, materials only when not shared', async () => {
   const mod = await import('../../src/assets/CarModel').catch(() => null)
   const disposeCarTree = mod?.disposeCarTree as unknown as
-    ((root: Group, isShared?: (m: unknown) => boolean) => void) | undefined
+    ((root: Group) => void) | undefined
   const isSharedCarMaterial = mod?.isSharedCarMaterial as unknown as ((m: unknown) => boolean) | undefined
+  const sharedMats = mod?.shared as unknown as { chrome: () => MeshStandardMaterial } | undefined
   assert(typeof disposeCarTree === 'function', 'disposeCarTree is exported from CarModel')
   assert(typeof isSharedCarMaterial === 'function', 'isSharedCarMaterial is exported from CarModel')
-  assert(isSharedCarMaterial!(new MeshStandardMaterial()) === false, 'a fresh material is never shared')
+  assert(typeof sharedMats?.chrome === 'function', 'the shared hardware factory is reachable for the battery')
+  assert(isSharedCarMaterial!(new MeshStandardMaterial()) === false, 'the real predicate rejects a fresh material')
 
-  const mkMat = (): { dispose(): void; disposed: number } => {
-    const m = { disposed: 0, dispose() { m.disposed++ } }
-    return m
-  }
-  const shared = mkMat()
-  const solo = mkMat()
+  const chrome = sharedMats!.chrome()
+  assert(chrome === sharedMats!.chrome(), 'shared.chrome() is the memoised field-wide singleton')
+  assert(isSharedCarMaterial!(chrome) === true, 'the REAL predicate recognises the REAL memoised singleton')
+
+  const solo = new MeshStandardMaterial()
+  let chromeDisposed = 0
+  let soloDisposed = 0
+  chrome.dispose = () => { chromeDisposed++ }
+  solo.dispose = () => { soloDisposed++ }
   const geo = new BoxGeometry(1, 1, 1)
   let geoDisposed = 0
   geo.dispose = () => { geoDisposed++ }
-  const mesh = new Mesh(geo as never, [shared as never, solo as never])
+  const mesh = new Mesh(geo as never, [chrome, solo])
   const root = new Group()
   root.add(mesh)
-  disposeCarTree(root, (m) => m === (shared as never))
+  disposeCarTree(root) // NO injected predicate — the default isSharedCarMaterial decides
   assert(geoDisposed === 1, 'geometry is always disposed')
-  assert(shared.disposed === 0, 'a shared singleton survives the model swap (mounted AI cars still use it)')
-  assert(solo.disposed === 1, 'a non-shared material inside a material array is disposed')
+  assert(chromeDisposed === 0, 'the real shared singleton survives the model swap (mounted AI cars still use it)')
+  assert(soloDisposed === 1, 'a fresh material in the array is disposed by the real predicate')
 })

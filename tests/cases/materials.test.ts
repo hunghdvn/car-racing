@@ -149,7 +149,11 @@ test('materials: carMaterialParamsFor lands distinct per-model numbers through t
   assert(b.grip.paint.microRoughness > b.hyper.paint.microRoughness,
     `grip satin breakup (${b.grip.paint.microRoughness}) must beat hyper gloss (${b.hyper.paint.microRoughness})`)
   // per-model calipers come from the kit (spec §6), hero keeps the shipped red
-  assert(b.hero.caliper === HERO_SPEC.kit.caliper && b.hero.caliper === 0xc23a28,
+  // per-model calipers come from the kit (spec §6), pinned as catalog
+  // literals (R2-8: comparing against spec.kit.caliper would only restate
+  // the implementation — the functional battery asserts the BUILT brake
+  // material colour against these same literals)
+  assert(b.hero.caliper === 0xc23a28,
     'hero caliper stays the shipped 0xc23a28 (never-touch byte-look)')
   assert(b.hyper.caliper === 0xe8b62e && b.grip.caliper === 0x39c06a && b.drift.caliper === 0xf27a1e,
     'hyper/grip/drift wear their kit caliper colours')

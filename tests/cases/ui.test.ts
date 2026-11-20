@@ -270,21 +270,45 @@ const preventHarness = (): { target: { addEventListener(t: string, cb: (e: Preve
 
 test('input: Enter on a focused button is NOT preventDefault-ed (native activation survives)', () => {
   const h = preventHarness()
-  new Input(h.target)
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
   let prevented = 0
   const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
   h.down({ code: 'Enter', target: btn, preventDefault: () => { prevented++ } })
   assert(prevented === 0, `Enter on a focused card must reach the native click (prevented ${prevented}×)`)
+  // R2-3: the gate must bow out COMPLETELY — dispatching confirm alongside the
+  // native activation is exactly the double-fire (Enter on a focused card
+  // started the race before selectModel could run).
+  assert(fired.length === 0, `the confirm action must NOT fire for a key aimed at an interactive target (fired ${fired.join(',')})`)
+})
+
+test('input: a key aimed at a button never enters the pressed set (no later swallow)', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  // keydown on the button WITHOUT a keyup (native activation can steal focus
+  // before the window sees keyup): if the gate had added 'Enter' to pressed,
+  // the next real Enter on the page would be silently swallowed.
+  h.down({ code: 'Enter', target: btn })
+  assert(fired.length === 0, 'the interactive-target keydown is fully ignored')
+  h.down({ code: 'Enter', target: { closest: () => null } })
+  assert(fired.join(',') === 'confirm', `the next page-level Enter still routes confirm — got '${fired.join(',')}'`)
 })
 
 test('input: Enter with a non-interactive target still prevents its default', () => {
   const h = preventHarness()
-  new Input(h.target)
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
   let prevented = 0
   h.down({ code: 'Enter', target: { closest: () => null }, preventDefault: () => { prevented++ } })
   assert(prevented === 1, 'the page-scroll default stays suppressed off any interactive element')
+  assert(fired.join(',') === 'confirm', 'and the confirm action still routes there')
   let bodyPrevented = 0
-  h.down({ code: 'Space', preventDefault: () => { bodyPrevented++ } })
+  h.down({ code: 'Space', target: undefined, preventDefault: () => { bodyPrevented++ } })
   assert(bodyPrevented === 1, 'a target-less (body) keydown still prevents')
 })
 
