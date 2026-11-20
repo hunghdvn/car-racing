@@ -231,8 +231,12 @@ export function nextUnusedPaletteColor(used: ReadonlySet<number>): number | null
  * already wears. Returns a repaint plan (one entry per AI slot, input order
  * preserved): every slot keeps its colour unless it equals playerHex, in which
  * case it receives the first palette colour nobody (field + player) wears.
- * A palette so small it cannot resolve a collision leaves the slot untouched
- * (never a duplicate) — unreachable with AI.count < PAINTS.length.
+ * R3-2(i): explicit EXHAUSTION POLICY — when no unused palette colour exists,
+ * the slot deterministically KEEPS its current colour (never an arbitrary
+ * wrap-around or undefined hex) and the dev harness logs a warning, so an
+ * under-sized palette surfaces loudly instead of silently leaving the slot
+ * wearing the player's colour. Unreachable while AI.count < PAINTS.length
+ * (pinned by the node invariant in cars.test).
  */
 export function reconcileAiColours(
   currentAiHexes: readonly number[], playerHex: number, palette: readonly number[],
@@ -242,7 +246,12 @@ export function reconcileAiColours(
   for (let i = 0; i < plan.length; i++) {
     if (plan[i] !== playerHex) continue
     const next = palette.find((c) => !worn.has(c)) ?? null
-    if (next === null) continue
+    if (next === null) {
+      if (typeof __VR_HARNESS__ !== 'undefined' && __VR_HARNESS__) {
+        console.warn(`[garage] ai slot ${i} collides with the player colour ${playerHex.toString(16)} but the palette is exhausted — keeping its current colour (AI.count must stay below PAINTS.length)`)
+      }
+      continue
+    }
     plan[i] = next
     worn.add(next)
   }

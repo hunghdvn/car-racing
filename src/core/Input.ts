@@ -59,7 +59,7 @@ const HB = ['Space']
 const NOS = ['ShiftLeft', 'ShiftRight']
 const PREVENT = new Set<string>([...AXES.up, ...AXES.down, ...AXES.left, ...AXES.right, ...HB, 'Enter', 'NumpadEnter'])
 
-type InputKeyboardEvent = {
+export type InputKeyboardEvent = {
   code: string
   key?: string
   keyCode?: number
@@ -70,20 +70,28 @@ type InputKeyboardEvent = {
 
 /** Structural slice of EventTarget: the reader that lets PREVENT keys bow out
  *  when the keydown is aimed at an interactive element (see PREVENT gate). */
-interface InputEventTargetQueryLike {
+export interface InputEventTargetQueryLike {
   closest?(selector: string): unknown
 }
 
 /** Native <button> activation fires on Enter at keydown — preventing PREVENT
  *  keys there kills the garage cards/swatches for keyboard users while the
  *  confirm action still routes to the Game (Enter on a focused card could only
- *  ever start the race). R2-3: bowing out means RETURNING entirely — an
- *  interactive target gets neither the confirm dispatch nor a pressed.add
- *  entry. The window listener runs before native activation, so dispatching
- *  confirm here too made Enter on a focused card begin the race before the
- *  click could reach selectModel (the guard then rejected it: the keyboard
- *  pick was impossible), and Enter on a focused START RACE double-fired
- *  beginRace (confirm + native click). */
+ *  ever start the race). R2-3: bowing out means NO confirm dispatch — the
+ *  window listener runs before native activation, so dispatching confirm here
+ *  too made Enter on a focused card begin the race before the click could
+ *  reach selectModel (the guard then rejected it: the keyboard pick was
+ *  impossible), and Enter on a focused START RACE double-fired beginRace
+ *  (confirm + native click).
+ *  R3-1: bowing out still MARKS the code in `pressed` before returning. The
+ *  old bare return left `pressed` empty, and the swatch click handler's blur
+ *  (UIManager R2-3) hands OS auto-repeat keydowns to <body> — those repeats
+ *  passed the interactive gate, found an empty `pressed`, and dispatched
+ *  confirm on every repeat (~500ms then ~30ms cadence): pick-then-hold-Enter
+ *  on a card auto-started the race; on START it re-gridded through the
+ *  frame-scoped beginStamp guard. Marking pressed kills the repeats (the gate
+ *  now adds BEFORE the return, so they hit the pressed.has pre-delta); the
+ *  real keyup always clears it, and window blur clears it as backstop. */
 const INTERACTIVE_SELECTOR = 'button,a,input,select,textarea'
 const onInteractiveTarget = (e: InputKeyboardEvent): boolean => {
   const t = e.target
@@ -176,9 +184,14 @@ export class Input {
       if (isImeControlEvent(e)) return
       // R2-3: a PREVENT key aimed at an interactive element belongs to that
       // element alone — its native activation (Enter/Space on a button) owns
-      // the key. Return BEFORE dispatch and pressed.add so the action map can
-      // never race the native click.
-      if (PREVENT.has(e.code) && onInteractiveTarget(e)) return
+      // the key: NO dispatch (the action map can never race the native click).
+      // R3-1: mark pressed.add BEFORE the return so OS auto-repeat keydowns
+      // (which retarget to <body> once activation blurs the button) are
+      // swallowed by the pressed.has pre-delta; the real keyup clears it.
+      if (PREVENT.has(e.code) && onInteractiveTarget(e)) {
+        this.pressed.add(e.code)
+        return
+      }
       if (PREVENT.has(e.code)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)

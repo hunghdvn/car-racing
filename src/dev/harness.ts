@@ -77,8 +77,12 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   for (const spec of CAR_SPECS) {
     try {
       validateCarShape(spec.shape)
-      buildCar(0x1f8fe0, spec)
-      console.log(`[car-catalog] ${spec.id} (${spec.name}) validated`)
+      // R3-6: the validation car is thrown away the moment it is built, so
+      // release its per-car geometries/paint mats through the real predicate
+      // (the old bare buildCar leaked a full car tree per dev-boot).
+      const car = buildCar(0x1f8fe0, spec)
+      disposeCarTree(car.group)
+      console.log(`[car-catalog] ${spec.id} (${spec.name}) validated + disposed`)
     } catch (e) {
       console.error(`[car-catalog] ${spec.id} (${spec.name}) FAILED to build`, e)
     }
