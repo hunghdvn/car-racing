@@ -635,3 +635,328 @@ Perf note: `npm run perf -- --nobisect --seconds 8 --label review-fix` exited 0 
 `shots/perf_review-fix.json`: 1 run (full-lap/all-frames/coast/tunnel/city), fatal none,
 heap 186.4→215.5 MB (0.080 MB/s) over 890 frames, gitHead 79af1942 (dirty: package-lock
 only). FPS reads SwiftShader-CPU-level; the run evidences stability, not speed.
+
+## PR review round 2
+
+Fixer round for findings R2-1 … R2-12 on HEAD ae155d5. Every FIXED claim below
+carries the command output that produced it; where a claim rests on a new test,
+the test's TEETH were proven either RED-first (write/fix the test, mutate the
+production code, watch it FAIL, restore, watch it PASS) or by an explicit
+mutation run of the functional battery. Proofs that were not run are labelled
+GREEN-FIRST — an honest weaker grade, never a false FIXED.
+
+### Finding ledger
+
+| # | Status | Fix | Proof grade |
+|---|--------|-----|-------------|
+| R2-1 | FIXED | `spin.name = 'wheel-spin'` + wheel landmarks restored in keepNames | MUTATION + functional |
+| R2-2 | FIXED | `toMenu()` calls `parkField(false)` (constructor park pose) | GREEN-FIRST functional |
+| R2-3 | FIXED | Input gate returns before dispatch/pressed.add; beginRace idempotent per (post-phase, frame) | 3 node tests + 2 e2e; GREEN-FIRST |
+| R2-4 | FIXED | one `reconcileAiColours` core drives boot pool, onPaint, selectModel | MUTATION |
+| R2-5 | FIXED | explicit in-session pick outranks stale stored value | MUTATION |
+| R2-6 | FIXED | 390 px check now counts genuine wrap (rows ≥ 2, min card width) | MUTATION |
+| R2-7 | FIXED | pace test drives the real brain `update()`/`targetSpeed` | MUTATION |
+| R2-8 | FIXED | caliper routed through `carMaterialParamsFor`; lying comment fixed; literals pinned | MUTATION + functional |
+| R2-9 | FIXED | duplicate test deleted; 186 names unique | uniq -d empty |
+| R2-10 | FIXED | seeds ''/'garbage'/'1234567'/'3784810'; expectations are catalog literals | functional |
+| R2-11 | FIXED | dispose test uses the REAL predicate + REAL memoised singleton | MUTATION |
+| R2-12 | FIXED | card tab-order/aria written on the `prevCardsLocked` edge only | functional; structural |
+
+OPEN: none.
+
+### R2-1 — wheel hardware folded past spin into the car root
+
+`StaticBatch.collect` opens a fold scope only at a NAMED group listed in
+keepNames; with the wheel names pruned, the multi-part hardware buckets folded
+past `spin`/`root` into the CAR ROOT with build-time matrices baked in while
+`Vehicle.bind` turns `spin` every frame. Merely adding the four wheel-group
+names was NOT enough: the discs/dishes/lips/hubs live UNDER `spin`, so the spin
+group itself became a named landmark (`spin.name = 'wheel-spin'`,
+buildWheelAssembly) and all five names joined keepNames.
+
+Functional check `wheels-fold-stop-at-spin` (built through the SHIPPED
+`buildCar` on the dev probe, merged tree audited):
+
+```
+PASS  wheels-fold-stop-at-spin — spin groups 4/4, wheel groups 4/4, brake-disc
+chain [brake-disc > wheel-spin > Group > wheel-f-l] reaches wheel-spin = true,
+per-wheel batches wheel-f-l:spin=1,root=2 wheel-f-r:spin=1,root=2
+wheel-r-l:spin=1,root=2 wheel-r-r:spin=1,root=2 (each wheel needs >=1 batch in
+spin + >=2 in its root), stray root-level wheel batches 7
+```
+
+MUTATION (landmarks removed from keepNames again):
+
+```
+FAIL  wheels-fold-stop-at-spin — … per-wheel batches wheel-f-l:spin=0,root=0
+wheel-f-r:spin=0,root=0 wheel-r-l:spin=0,root=0 wheel-r-r:spin=0,root=0,
+stray root-level wheel batches 14
+[functional] RESULT: FAIL (21/23)
+```
+
+Note the check was strengthened after the first teeth attempt: the original
+brake-disc parent-chain assertion PASSED even under the mutation (a
+single-part bucket never moves), so the real regression signal is where the
+merged `static-batch` meshes LAND — every wheel must own its hardware batches
+inside its own spin/wheel-root subtree.
+
+Draw-call truth (grid six-car diag, same probe as the round-1 numbers):
+
+| state | grid draw calls |
+|-------|-----------------|
+| pre-prune (pre-F10, full keepNames) | 2870 |
+| post-prune broken (frozen wheels) | 2540 |
+| post-fix (this round, MEASURED) | **2660** |
+
+The landmarks give back +120 calls versus the broken prune (the wheel hardware
+folds per-wheel instead of into one root mega-bucket) — still −210 (−7.3%)
+under pre-prune. The honest number is 2660, not a re-claim of 2540.
+
+### R2-2 — MAIN MENU parked nothing
+
+`toMenu()` now calls `parkField(false)` — with `director.abandon()` closing the
+gate, `stepAIField`/`bindAIFieldVisuals` hold the last frame exactly where it
+froze, so the retired field is explicitly moved to the constructor's off-scene
+pose (0, −600, 0). `RaceDirector.abandon` documents that it owns race state
+only and never moves meshes.
+
+```
+PASS  tomenu-parks-field — toMenu → phase 'idle', all ai-car groups parked
+off-scene = true, cards re-enabled = true, .locked cleared = true (R2-2)
+```
+
+Proof grade GREEN-FIRST: the check was written against the fixed code and no
+park-removal mutation was run this round.
+
+### R2-3 — the keyboard confirm raced the native click
+
+`Input` keydown: a PREVENT key aimed at an interactive target now RETURNS
+entirely — no preventDefault, no confirm dispatch, no `pressed.add` entry.
+The pressed-set half matters: the window listener runs before native
+activation, and a lingering pressed entry silently swallowed the next real
+keypress (covered by the new `a key aimed at a button never enters the pressed
+set` node test). `beginRace` is idempotent per (post-call director phase,
+rAF frame): a focused button whose Enter click races the action edge cannot
+re-grid the field twice in one frame; genuine restarts arrive on later frames.
+`onPaint` needs no extra guard — the gate delivers a keyboard Enter to that
+seam exactly once (the native click) and a repeat activation is an idempotent
+colour write (justified in the code comment).
+
+Node tests (`node scripts/tests.mjs`, all green; the two dispatch assertions
+were extended onto pre-existing tests — mutation-equivalent to reverting the
+gate, which fails them):
+
+```
+ok   input: Enter on a focused button is NOT preventDefault-ed (native activation survives)
+ok   input: a key aimed at a button never enters the pressed set (no later swallow)
+ok   input: Enter with a non-interactive target still prevents its default
+```
+
+End-to-end (real `page.keyboard.press('Enter')`, beginRace instrumented):
+
+```
+PASS  keyboard-enter-picks-model — focused card 2 + Enter → model 'hyper',
+selected marker 'hyper' (expect hyper), phase 'idle' (expect idle — Enter must
+not also start the race)
+PASS  enter-on-start-fires-once — Enter on focused START RACE invoked
+beginRace 1× (expect exactly 1), phase 'countdown'
+```
+
+### R2-4 — one reconcile core for every field colour
+
+`reconcileAiColours(currentAiHexes, playerHex, palette)` is the single pure
+planner: boot pool seeding, `Game.onPaint` and `Game.selectModel` all apply its
+plan through `applyAiColourPlan`. The boot pool no longer pre-excludes the boot
+paint — the collision pass sees the whole field from every entry point.
+
+MUTATION (invert the collision test so no slot is ever repainted):
+
+```
+FAIL ai colours: reconcileAiColours leaves no slot wearing the player colour:
+assert failed — no AI hex equals player f27a1e — got f27a1e, e8b62e, 14181f,
+39c06a, 1f8fe0
+```
+
+restored:
+
+```
+ok   ai colours: reconcileAiColours leaves no slot wearing the player colour
+```
+
+### R2-5 — stale storage beat the explicit pick
+
+`resolvePaintWithExplicit` returns the in-memory pick whenever
+`paintExplicit` is set — storage is a BOOT SEED only, exactly the
+Safari-private-mode scenario F8 targeted (swallowed write, surviving old value).
+
+MUTATION (restore the old `storedHex ?? (explicitPick ? … : …)` chain):
+
+```
+FAIL paint flow: an explicit in-session pick outranks a stale stored value:
+assert failed — explicit pick (gold) wins over a readable-but-stored old colour
+— storage is boot-seed only
+```
+
+restored:
+
+```
+ok   paint flow: an explicit in-session pick outranks a stale stored value
+```
+
+### R2-6 — the 390 px check had no teeth
+
+The old check compared only the row bounding box + scrollWidth — a flex row
+WITHOUT flex-wrap shrinks four cards into one squat line and fits 390 px
+identically (this was reproduced live, both mutation checks passed before the
+check was strengthened). The check now counts DISTINCT card rows and a minimum
+card width.
+
+baseline (flex-wrap present):
+
+```
+PASS  garage-row-fits-390px — card row [15.6, 374.4] in a 390 px viewport,
+scrollWidth 390, 4 cards across 2 rows, min card width 141.2
+```
+
+MUTATION (`flex-wrap: wrap` deleted from `#model-cards`):
+
+```
+FAIL  garage-row-fits-390px — … 4 cards across 1 rows, min card width 104.1
+```
+
+### R2-7 — the pace test never touched the brain
+
+The old test asserted only `hyper.tuning.topSpeed` wiring. The replacement
+drives the REAL `AIVehicle.update()` for 1200 steps (rubber band pinned high,
+nitro starved) and samples `targetSpeed` — the clamp in `update()` is the only
+thing that can hold the ceiling, so a base-capped brain cannot pass.
+
+MUTATION (cap the brain at the BASE `VEHICLE.topSpeed`):
+
+```
+FAIL ai: the brain pace-caps against its own car's top speed (driven
+targetSpeed): assert failed — driven targetSpeed reached 55.5 — a base-capped
+brain tops at 56.1, so this must clear 57.0 to prove the hyper (1.12×) cap is live
+```
+
+restored:
+
+```
+ok   ai: the brain pace-caps against its own car's top speed (driven targetSpeed) (8 ms)
+```
+
+### R2-8 — the caliper bypassed the material door
+
+`buildCar` now takes the caliper hex through `carMaterialParamsFor(spec)` (the
+same door as the paint params) instead of side-reading `spec.kit.caliper`; the
+comment that claimed the door was "the only thing buildCar consumes" is
+corrected to name both consumers. The tautological
+`b.hero.caliper === HERO_SPEC.kit.caliper` half-assert was dropped (it only
+restated the implementation); the literals stay, and the functional battery
+asserts the BUILT cars actually carry the per-model kit hex on a real material.
+
+MUTATION (`carMaterialParamsFor` returns a constant caliper):
+
+```
+FAIL materials: carMaterialParamsFor lands distinct per-model numbers through
+the pure core: assert failed — hyper/grip/drift wear their kit caliper colours
+```
+
+functional, restored:
+
+```
+ok   materials: carMaterialParamsFor lands distinct per-model numbers through the pure core
+PASS  caliper-colour-on-built-car — built cars carry their kit caliper hex:
+hero true, hyper true, grip true, drift true (R2-8: through the
+carMaterialParamsFor door, literals c23a28, e8b62e, 39c06a, f27a1e)
+```
+
+### R2-9 — the duplicate test
+
+The `director: abandon() …` test existed twice (cars.test.ts :280 and :365);
+the duplicate was deleted. Proof of uniqueness over the full suite:
+
+```
+$ node scripts/tests.mjs 2>&1 | tail -2
+186 passed, 0 failed
+$ grep -n "test(" tests/cases/cars.test.ts | awk -F"'" '{print $2}' | sort | uniq -d
+(no output)
+$ node scripts/tests.mjs 2>&1 | grep -cE "^  (ok|FAIL)"
+186
+```
+
+(184/183-unique baseline, +3 new pure tests, −1 duplicate, +1 R2-3 pressed-set
+test = 186.)
+
+### R2-10 — F7 seeds tested themselves
+
+The old pair seeded '3784810' + 'garbage' and the garbage expectation compared
+`game.paintHex` against `game.selectedSpec.finish.paint` — read off the same
+live object, so a resolver that simply mirrored the spec would pass. Now four
+boots, every expectation a CATALOG LITERAL (0xd8232e = PAINTS[1] = hero
+signature), covering the `Number('') → 0` black-car trap and an off-palette
+finite int:
+
+```
+PASS  paint-storage-valid-hex — stored '3784810' → boot paint 0x39c06a (expect literal 0x39c06a)
+PASS  paint-storage-empty-string-falls-back — stored '' → boot paint 0xd8232e (expect literal 0xd8232e)
+PASS  paint-storage-garbage-falls-back — stored 'garbage' → boot paint 0xd8232e (expect literal 0xd8232e)
+PASS  paint-storage-offpalette-int-falls-back — stored '1234567' → boot paint 0xd8232e (expect literal 0xd8232e)
+```
+
+### R2-11 — the dispose test injected its own predicate
+
+The old test passed `(m) => m === shared` with FAKE material objects, so it
+proved only that `disposeCarTree` honours a callback — never that the real
+`isSharedCarMaterial` recognises the real memoised instances. It now calls
+`disposeCarTree(root)` with NO predicate argument, mounts a REAL
+`shared.chrome()` singleton (exported for the battery) beside a fresh material,
+and observes dispose by spying on the instances.
+
+MUTATION (`isSharedCarMaterial` returns true for everything):
+
+```
+FAIL car lifecycle: disposeCarTree (real predicate) frees geometry always,
+materials only when not shared: assert failed — the real predicate rejects a
+fresh material
+```
+
+restored:
+
+```
+ok   car lifecycle: disposeCarTree (real predicate) frees geometry always, materials only when not shared
+```
+
+### R2-12 — tab-order DOM churn every frame
+
+`UIManager` caches the card row once (`modelCardEls`, built in
+`buildModelCards`) and writes tabindex/aria-disabled/`.locked` only when
+`cardsLocked` FLIPS (same prev-edge idiom as `prevPhase`) — no per-frame
+`querySelectorAll` + attribute writes. Behaviour pinned by the battery:
+
+```
+PASS  cards-locked-during-race — card row carries .locked during 'countdown' (R2-12)
+PASS  cards-unfocusable-during-race — 4 cards, all tabindex=-1 + aria-disabled=true = true
+```
+
+Proof grade: structural (the write-once discipline is visible in the diff); the
+functional checks are GREEN-FIRST.
+
+### Battery (this round, final code)
+
+```
+npm run typecheck                    → tsc --noEmit, no output
+node scripts/tests.mjs               → 186 passed, 0 failed   (186 unique names)
+npm run build:harness                → ✓ built in 957ms
+node scripts/functional.mjs          → [functional] RESULT: PASS (23/23)
+node scripts/noleak.mjs              → [noleak] RESULT: CLEAN (runtime fails=0, asset leaks=0)
+node scripts/shots.mjs && node scripts/audit-shots.mjs → [audit] RESULT: ALL CLEAN (37 frames)
+npm run perf -- --nobisect --seconds 8 --label review-fix2 → exit 0,
+  shots/perf_review-fix2.json (gitHead ae155d5, dirty: package-lock only;
+  SwiftShader CPU fps — evidences stability: heap +0.03..0.07 MB/s, no fatal)
+```
+
+Corrections to round 1's claims: the previous section asserted RED-first
+"for every fix"; honest grades this round are in the ledger above — R2-2, R2-3
+(unit-test extension) and R2-12 are GREEN-FIRST, the rest carry pasted
+mutation output.
