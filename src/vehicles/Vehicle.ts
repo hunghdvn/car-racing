@@ -13,7 +13,6 @@ import type { VehiclePhysics, DriveCommand } from './VehiclePhysics'
  * stay deterministic regardless of what the sim did before the capture.
  * ------------------------------------------------------------------------- */
 
-const WHEEL_BASE_Y = VEHICLE.wheelRadius - 0.012
 const TRAVEL = VEHICLE.suspTravel + 0.02 // visual clamp envelope
 
 /** explicit static visual state for frozen shots */
@@ -39,11 +38,13 @@ export class VehicleVisual {
 
   constructor(private car: CarModel) {
     car.setHeadlights(false)
+    this.baseY = (car.wheels[0]?.radius ?? VEHICLE.wheelRadius) - 0.012
   }
+  private readonly baseY: number
 
   /** live binding from physics (drive mode) */
   bind(dt: number, v: VehiclePhysics, cmd: DriveCommand, nitroLevel: number): void {
-    const R = VEHICLE.wheelRadius
+    const R = this.car.wheels[0]?.radius ?? VEHICLE.wheelRadius
     this.spin += (v.forwardSpeed / R) * dt
     if (!Number.isFinite(this.spin)) this.spin = 0
     const steerA = v.steerVis
@@ -51,7 +52,7 @@ export class VehicleVisual {
       const w = this.car.wheels[i]
       const root: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       root.rotation.y = w.front ? steerA : 0
-      root.position.y = WHEEL_BASE_Y + clampSym(v.susp[i], TRAVEL)
+      root.position.y = this.baseY + clampSym(v.susp[i], TRAVEL)
       w.spin.rotation.x = -this.spin
     }
     const g = this.car.group
@@ -71,7 +72,7 @@ export class VehicleVisual {
     for (const w of this.car.wheels) {
       const root: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       root.rotation.y = w.front ? p.wheelSteer ?? 0 : 0
-      root.position.y = WHEEL_BASE_Y + susp
+      root.position.y = this.baseY + susp
       w.spin.rotation.x = spinA
     }
     const g = this.car.group

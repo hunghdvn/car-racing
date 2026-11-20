@@ -277,6 +277,13 @@ export const PAINTS: PaintDef[] = [
   { name: 'Plasma Gold', color: 0xe8b62e },
 ]
 
+/** Car-model catalog tuning (car-models spec §5): stat clamp envelope and the
+ *  deterministic AI grid model assignment (slot order, AI.count entries). */
+export const CAR = {
+  statClamp: 0.4,
+  aiModels: ['grip', 'hyper', 'drift', 'hero', 'grip'] as const,
+}
+
 /** Determinism: master seed for all seeded placement (spec §22). */
 export const SEED = 20260916
 

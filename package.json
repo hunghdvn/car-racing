@@ -27,6 +27,7 @@
     "probe": "node scripts/probe.mjs",
     "noleak": "node scripts/noleak.mjs",
     "functional": "node scripts/functional.mjs",
+    "perf": "node scripts/perf.mjs",
     "audit": "node scripts/audit-shots.mjs"
   },
   "dependencies": {

@@ -64,6 +64,30 @@ type InputKeyboardEvent = {
   key?: string
   keyCode?: number
   preventDefault?: () => void
+  /** the focused element; an interactive target keeps its native activation */
+  target?: InputEventTargetQueryLike | null
+}
+
+/** Structural slice of EventTarget: the reader that lets PREVENT keys bow out
+ *  when the keydown is aimed at an interactive element (see PREVENT gate). */
+interface InputEventTargetQueryLike {
+  closest?(selector: string): unknown
+}
+
+/** Native <button> activation fires on Enter at keydown — preventing PREVENT
+ *  keys there kills the garage cards/swatches for keyboard users while the
+ *  confirm action still routes to the Game (Enter on a focused card could only
+ *  ever start the race). R2-3: bowing out means RETURNING entirely — an
+ *  interactive target gets neither the confirm dispatch nor a pressed.add
+ *  entry. The window listener runs before native activation, so dispatching
+ *  confirm here too made Enter on a focused card begin the race before the
+ *  click could reach selectModel (the guard then rejected it: the keyboard
+ *  pick was impossible), and Enter on a focused START RACE double-fired
+ *  beginRace (confirm + native click). */
+const INTERACTIVE_SELECTOR = 'button,a,input,select,textarea'
+const onInteractiveTarget = (e: InputKeyboardEvent): boolean => {
+  const t = e.target
+  return !!t && typeof t.closest === 'function' && t.closest(INTERACTIVE_SELECTOR) != null
 }
 
 const CONTROL_KEY_LABELS: Record<string, string> = {
@@ -150,6 +174,11 @@ export class Input {
     this.padSource = padSource
     target.addEventListener('keydown', (e) => {
       if (isImeControlEvent(e)) return
+      // R2-3: a PREVENT key aimed at an interactive element belongs to that
+      // element alone — its native activation (Enter/Space on a button) owns
+      // the key. Return BEFORE dispatch and pressed.add so the action map can
+      // never race the native click.
+      if (PREVENT.has(e.code) && onInteractiveTarget(e)) return
       if (PREVENT.has(e.code)) e.preventDefault?.()
       if (this.pressed.has(e.code)) return
       this.pressed.add(e.code)

@@ -1,10 +1,12 @@
 import * as THREE from 'three'
-import { AI, NITRO, SEED, TRACK, VEHICLE } from '../config'
+import { AI, CAR, NITRO, SEED, TRACK, VEHICLE } from '../config'
 import { clamp, clamp01, damp, Rand, wrapPi } from '../util'
 import type { CarView } from '../camera/ChaseCamera'
 import type { PlanarFrame, TrackSpline } from '../world/TrackSpline'
 import { REST_CMD, VehiclePhysics, type CarEvents, type DriveCommand } from './VehiclePhysics'
 import type { TrackProbe } from './TrackProbe'
+import { resolveTuning, type CarTuning } from './CarTuning'
+import { getSpec, type CarSpec } from './CarSpecs'
 
 /* ------------------------------------------------------------------------- *
  * The spline AI brain (spec §24A): one allocation-free look-ahead frame of
@@ -96,6 +98,8 @@ export interface AIStaticSnapshot {
 
 export class AIVehicle {
   readonly phys: VehiclePhysics
+  /** resolved drive record of this car's model (the physics runs it) */
+  readonly tuning: CarTuning
   /** live drive command of the last update (visual binding reads it) */
   readonly cmd: DriveCommand = { ...REST_CMD }
   /** ChaseCamera/HUD view — one instance per car, reused every step */
@@ -126,11 +130,12 @@ export class AIVehicle {
   /** time the car has spent below stuckSpeed since it last moved (tests) */
   stuckClock = 0
 
-  constructor(readonly slot: number, private spline: TrackSpline, private probe: TrackProbe) {
+  constructor(readonly slot: number, private spline: TrackSpline, private probe: TrackProbe, readonly spec: CarSpec = getSpec(CAR.aiModels[slot % CAR.aiModels.length])) {
     this.rnd = new Rand(aiSlotSeed(slot))
     this.pace = clamp(AI.paceBase + this.rnd.range(-1, 1) * AI.paceSpread, 0.5, 1.2)
     this.bias = this.rnd.range(-1, 1) * AI.laneBias
-    this.phys = new VehiclePhysics(probe, aiSlotSeed(slot + 64))
+    this.tuning = resolveTuning(spec.stat)
+    this.phys = new VehiclePhysics(probe, aiSlotSeed(slot + 64), this.tuning)
   }
 
   /** normalised 0..1 nitro for flames/HUD */
@@ -252,9 +257,9 @@ export class AIVehicle {
 
     /* --- curvature-aware speed target, pace/rubber-band/draft scaled --- */
     const vCorner = Math.sqrt(AI.cornerLatAccel / Math.max(CURV_EPS, kAbs))
-    const cap = this.nitroActive ? VEHICLE.nitroTopSpeed : VEHICLE.topSpeed
+    const cap = this.nitroActive ? this.tuning.nitroTopSpeed : this.tuning.topSpeed
     const band = rubberBand(ctx) * (this.drafting ? 1 + AI.slipstreamGain : 1)
-    const vT = clamp(this.pace * band * Math.min(vCorner, VEHICLE.topSpeed), 5, cap * 0.985)
+    const vT = clamp(this.pace * band * Math.min(vCorner, this.tuning.topSpeed), 5, cap * 0.985)
     this.targetSpeed = vT
 
     /* --- nitro policy: straight, clear slot ahead, tank gate --- */

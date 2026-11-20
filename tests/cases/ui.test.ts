@@ -3,8 +3,9 @@ import {
   countdownCueFor, countdownLabelFor, countdownBoardVisible, popupExpired, buildResultRows, ordinalBadge,
   nitroReadyEdge, nitroSegmentsOn, NITRO_READY_FRAC, wrongWayStep, freshWrongWay,
   driftChainStep, freshDriftChain, distToPolyline, shortcutEnterEdge, freshShortcut,
-  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, type StandingLike,
+  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, statBarsFor, type StandingLike,
 } from '../../src/ui/UIManager'
+import type { CarSpec } from '../../src/vehicles/CarSpecs'
 import { Input, PAD, type InputAction, type GamepadSnapshot } from '../../src/core/Input'
 import { globalObject } from '../../src/core/globals'
 import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
@@ -249,4 +250,89 @@ test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/
   const before = fired.length
   input.poll(1 / 60) // held across a second poll must not re-fire (edge detect)
   assert(fired.length === before, 'a held pad button does not repeat its one-shot')
+})
+
+/* --- PR review F4: keyboard access around the garage ----------------------
+ * PREVENT keys must not steal native activation from focused interactive
+ * elements (a <button> activates on Enter at keydown — preventing it there
+ * while Input still routes the confirm action means Enter on a focused card
+ * can only ever start the race). Off-button, the page-scroll/submit defaults
+ * stay suppressed exactly as before. */
+
+type PreventableKey = { code: string; key?: string; target?: unknown; preventDefault?: () => void }
+const preventHarness = (): { target: { addEventListener(t: string, cb: (e: PreventableKey) => void): void }; down(e: PreventableKey): void } => {
+  const listeners: Record<string, ((e: PreventableKey) => void) | undefined> = {}
+  return {
+    target: { addEventListener: (t, cb) => { listeners[t] = cb } },
+    down: (e) => { listeners.keydown?.(e) },
+  }
+}
+
+test('input: Enter on a focused button is NOT preventDefault-ed (native activation survives)', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  let prevented = 0
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  h.down({ code: 'Enter', target: btn, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, `Enter on a focused card must reach the native click (prevented ${prevented}×)`)
+  // R2-3: the gate must bow out COMPLETELY — dispatching confirm alongside the
+  // native activation is exactly the double-fire (Enter on a focused card
+  // started the race before selectModel could run).
+  assert(fired.length === 0, `the confirm action must NOT fire for a key aimed at an interactive target (fired ${fired.join(',')})`)
+})
+
+test('input: a key aimed at a button never enters the pressed set (no later swallow)', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  // keydown on the button WITHOUT a keyup (native activation can steal focus
+  // before the window sees keyup): if the gate had added 'Enter' to pressed,
+  // the next real Enter on the page would be silently swallowed.
+  h.down({ code: 'Enter', target: btn })
+  assert(fired.length === 0, 'the interactive-target keydown is fully ignored')
+  h.down({ code: 'Enter', target: { closest: () => null } })
+  assert(fired.join(',') === 'confirm', `the next page-level Enter still routes confirm — got '${fired.join(',')}'`)
+})
+
+test('input: Enter with a non-interactive target still prevents its default', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  let prevented = 0
+  h.down({ code: 'Enter', target: { closest: () => null }, preventDefault: () => { prevented++ } })
+  assert(prevented === 1, 'the page-scroll default stays suppressed off any interactive element')
+  assert(fired.join(',') === 'confirm', 'and the confirm action still routes there')
+  let bodyPrevented = 0
+  h.down({ code: 'Space', target: undefined, preventDefault: () => { bodyPrevented++ } })
+  assert(bodyPrevented === 1, 'a target-less (body) keydown still prevents')
+})
+
+test('input: arrow keys on a focused control are not prevented either', () => {
+  const h = preventHarness()
+  new Input(h.target)
+  let prevented = 0
+  const link = { closest: (sel: string) => (sel.includes('a,') ? { tag: 'A' } : null) }
+  h.down({ code: 'ArrowLeft', target: link, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, 'arrow navigation inside a focused control survives')
+})
+
+/* --- PR review F13b: one axis() for every stat bar -------------------------
+ * The hand-rolled DRIFT maths degenerated differently from axis() when the
+ * whole catalog ties on a field: axis() said neutral 0.5, the copy divided by
+ * the 1e-9 epsilon floor and read 0. One axis() must serve both paths. */
+
+test('garage: a fully uniform catalog reads neutral 0.5 on every bar including DRIFT', () => {
+  const mk = (id: string): CarSpec => ({
+    id, name: id.toUpperCase(), class: 'TEST', stat: {},
+    shape: { bodyStations: [], cabinStations: [] },
+    kit: { splitter: 'std', spoiler: 'low', diffuserFins: 0, hoodVent: false, roofScoop: false, sideIntakes: false, wheelStyle: 'five-spoke', wheelRadiusMul: 1, wheelWidthMul: 1, trackMul: 1, archExtension: 0, caliper: 0, },
+    finish: { paint: 0, clearcoat: 0.5, flake: 0.5, roughness: 0.3, glassTint: 0, carbon: 0.1, accent: 0 },
+  }) as CarSpec
+  const bars = statBarsFor(mk('a'), [mk('a'), mk('b')])
+  assert(bars.length === 5 && bars.every((b) => b === 0.5), `every axis neutral on a tie — got ${bars.join(', ')}`)
 })

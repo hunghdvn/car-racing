@@ -1,6 +1,8 @@
 import { AUDIO, NITRO, PAINTS, UI, VEHICLE } from '../config'
 import type { PaintDef } from '../config'
 import { fmtTime, hexToCss } from '../util'
+import { CAR_SPECS, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { resolveTuning } from '../vehicles/CarTuning'
 
 /* ------------------------------------------------------------------------- *
  * DOM wiring for the shipped screens (spec §15): loading progress, title +
@@ -168,6 +170,30 @@ export function buildCarNames(paints: readonly PaintDef[], playerCarId: number):
   return paints.map((p, i) => (i === playerCarId ? 'YOU' : p.name.toUpperCase()))
 }
 
+export const STAT_AXIS_LABELS = ['TOP SPEED', 'ACCELERATION', 'GRIP', 'DRIFT', 'BRAKE'] as const
+
+/** normalised bar fractions (0..1) for one spec across the catalog spread,
+ *  index-aligned with STAT_AXIS_LABELS; the DRIFT axis averages the two
+ *  drift fields' individually-normalised values */
+export function statBarsFor(spec: CarSpec, all: readonly CarSpec[]): number[] {
+  const get = (s: CarSpec) => resolveTuning(s.stat)
+  const axis = (pick: (t: ReturnType<typeof get>) => number) => {
+    const vals = all.map((s) => pick(get(s)))
+    const lo = Math.min(...vals), hi = Math.max(...vals)
+    return (s: CarSpec) => (hi - lo < 1e-9 ? 0.5 : (pick(get(s)) - lo) / (hi - lo))
+  }
+  const f = [
+    axis((t) => t.topSpeed), axis((t) => t.engineAccel), axis((t) => t.gripMax),
+    axis((t) => t.brakeForce),
+  ]
+  // PR review F13b: the DRIFT axis rides the SAME axis() as the other four, so
+  // a fully tied catalog reads neutral 0.5 everywhere (a hand-rolled copy that
+  // divided by a span floor of 1e-9 degenerated to 0 on ties instead).
+  const dYaw = axis((t) => t.driftYawBoost)
+  const dResp = axis((t) => t.yawResponse)
+  return [f[0](spec), f[1](spec), f[2](spec), (dYaw(spec) + dResp(spec)) / 2, f[3](spec)]
+}
+
 export type UiMode = 'title' | 'racing'
 
 /**
@@ -210,6 +236,7 @@ export interface UiHost {
   onResume(): void
   onMenu(): void
   onPaint(hex: number): void
+  onModel(id: CarId): void
 }
 
 interface PopupTicket { node: HTMLElement; bornAt: number }
@@ -247,9 +274,13 @@ export class UIManager {
   private readonly minimap: HTMLCanvasElement | null
   private readonly mctx: CanvasRenderingContext2D | null
   private readonly swatchHost: HTMLElement | null
+  private readonly modelCards: HTMLElement | null
 
   private mode: UiMode = 'title'
   private prevPhase: HudData['phase'] = 'idle'
+  /** R2-12: card row cached at build; the lock DOM is written on the edge only */
+  private modelCardEls: HTMLElement[] = []
+  private prevCardsLocked = false
   /** true while the race HUD (not the title board) is on screen */
   get onScreen(): boolean { return this.mode === 'racing' }
   private prevNitro = 0
@@ -295,8 +326,10 @@ export class UIManager {
     this.minimap = this.$('minimap') as HTMLCanvasElement | null
     this.mctx = this.minimap ? this.minimap.getContext('2d') : null
     this.swatchHost = this.$('paint-swatches')
+    this.modelCards = this.$('model-cards')
     this.buildButtons()
     this.buildSwatches(PAINTS, PAINTS[1].color)
+    this.buildModelCards(readModelSelection())
     this.buildNitroSegments()
   }
 
@@ -370,13 +403,73 @@ export class UIManager {
       b.className = 'swatch' + (p.color === selectedHex ? ' selected' : '')
       b.style.background = hexToCss(p.color)
       b.title = p.name
+      b.dataset.paint = String(p.color)
       b.addEventListener('click', () => {
         for (const s of Array.from(this.swatchHost?.children ?? [])) s.classList.remove('selected')
         b.classList.add('selected')
+        b.blur() // R2-3: release focus so drive keys are not aimed at the swatch
         this.host.onPaint(p.color)
       })
       this.swatchHost.appendChild(b)
     }
+  }
+
+  /** moves the selected marker to the swatch matching the effective paint — the
+   *  resolved colour is always a PAINTS member, so a miss is a no-op (dev-warned) */
+  setPaintActive(hex: number): void {
+    let hit = false
+    for (const s of Array.from(this.swatchHost?.children ?? [])) {
+      const on = s instanceof HTMLElement && s.dataset.paint === String(hex)
+      s.classList.toggle('selected', on)
+      if (on) hit = true
+    }
+    if (!hit && __VR_HARNESS__) console.warn(`[ui] setPaintActive(${hex.toString(16)}) matches no swatch`)
+  }
+
+  /** garage model cards (car-models spec §8 title screen). The click is a pure
+   *  intent: no optimistic selected-marker or storage write here — persistence,
+   *  the active marker and the stat bars all move on Game.selectModel's
+   *  ACCEPTED path (setModelActive/renderModelStats), so a rejected switch
+   *  (same-id / phase guard) can never leave the UI ahead of the car. */
+  private buildModelCards(selectedId: CarId): void {
+    const host = this.$('model-cards')
+    if (!host) return
+    host.textContent = ''
+    this.modelCardEls = []
+    for (const s of CAR_SPECS) {
+      const b = this.doc.createElement('button')
+      b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
+      b.dataset.model = s.id
+      b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
+      b.addEventListener('click', () => {
+        b.blur() // R2-3: a clicked card must not keep focus — drive keys aim there
+        this.host.onModel(s.id)
+      })
+      host.appendChild(b)
+      this.modelCardEls.push(b)
+    }
+    this.renderModelStats(getSpec(selectedId))
+  }
+
+  /** moves the active marker to the accepted model (Game calls it on accept) */
+  setModelActive(id: CarId): void {
+    for (const c of this.modelCardEls) {
+      c.classList.toggle('selected', c.dataset.model === id)
+    }
+  }
+
+  /** five normalised stat bars for the selected model (spec §8 garage) */
+  renderModelStats(spec: CarSpec): void {
+    const host = this.$('model-stats')
+    if (!host) return
+    host.textContent = ''
+    const bars = statBarsFor(spec, CAR_SPECS)
+    STAT_AXIS_LABELS.forEach((label, i) => {
+      const row = this.doc.createElement('div')
+      row.className = 'stat-row'
+      row.innerHTML = `<span>${label}</span><div class="stat-bar"><i style="width:${Math.round(bars[i] * 100)}%"></i></div>`
+      host.appendChild(row)
+    })
   }
 
   private buildNitroSegments(): void {
@@ -426,6 +519,28 @@ export class UIManager {
       }
     } else {
       this.show(this.countdownEl, false)
+    }
+
+    /* garage cards are a title-screen affordance: lock the row through a live
+       race so a mid-race MAIN MENU (which now abandons the race and parks the
+       field, R2-2) can not leave them clickable while selectModel only no-ops.
+       Locked cards also drop out of the tab order and announce disabled (F4:
+       they must not stay focusable while inert). R2-12: the row is rebuilt once
+       into modelCardEls and the DOM is only written when cardsLocked flips
+       (same prev-edge idiom as prevPhase) — never per frame. */
+    const cardsLocked = hud.phase === 'countdown' || hud.phase === 'racing'
+    if (cardsLocked !== this.prevCardsLocked) {
+      this.prevCardsLocked = cardsLocked
+      this.modelCards?.classList.toggle('locked', cardsLocked)
+      for (const c of this.modelCardEls) {
+        if (cardsLocked) {
+          c.tabIndex = -1
+          c.setAttribute('aria-disabled', 'true')
+        } else {
+          c.removeAttribute('tabindex')
+          c.removeAttribute('aria-disabled')
+        }
+      }
     }
 
     if (!hud.active) return

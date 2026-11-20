@@ -12,6 +12,8 @@ import { roadPose, heroShot } from '../world/TrackSlice'
 import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
+import { buildCar, disposeCarTree, isSharedCarMaterial, validateCarShape } from '../assets/CarModel'
+import { CAR_SPECS, type CarId } from '../vehicles/CarSpecs'
 import type { Game } from '../game/Game'
 
 /* ---------------------------------------------------------------------------
@@ -35,7 +37,11 @@ import type { Game } from '../game/Game'
 /** install every dev probe + pose the harness drivers require on a live game */
 export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs: number): void {
   const { view, car, slice } = game
-  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal }
+  // R2-1/R2-8/R2-11: the functional battery audits built wheel parenting, caliper
+  // colours and the real shared-material dispose path through the SHIPPED
+  // builders — expose them on the dev probe (harness chunk only, no-leak grep
+  // covers the shipped bundle) instead of re-implementing them in the driver.
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal, CAR_SPECS, buildCar, disposeCarTree, isSharedCarMaterial }
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = buildMs
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the
@@ -61,7 +67,28 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
     releasePose: () => game.releasePose(),
   })
 
+  /* dev-only: switch the player body (garage spec §8) for the model-shot battery */
+  ;(globalThis as unknown as { __selectModel?: (id: string) => string }).__selectModel =
+    (id: string) => { game.selectModel(id as CarId); return game.selectedSpec.id }
+
+  /* dev-only: validate the car catalog at load (car-models spec §9) — build each
+     spec once so a malformed station table breaks loudly in the harness build.
+     Mirrors the node-side gate's semantics (reuse validateCarShape, no re-implement). */
+  for (const spec of CAR_SPECS) {
+    try {
+      validateCarShape(spec.shape)
+      buildCar(0x1f8fe0, spec)
+      console.log(`[car-catalog] ${spec.id} (${spec.name}) validated`)
+    } catch (e) {
+      console.error(`[car-catalog] ${spec.id} (${spec.name}) FAILED to build`, e)
+    }
+  }
+
   /* query-driven debug material/culling levers (dev-only; forbidden by default) */
+  // NOTE (F14c): the car materials are field-wide memoised singletons, so the
+  // material-level levers below (dblside/flat/noemi/nophy) act on the WHOLE
+  // grid, not just the player car — intended: they exist for isolated-product
+  // dev shots where uniform field behaviour is what the shot author wants.
   const qp: Record<string, string> = {}
   for (const kv of location.search.slice(1).split('&')) { const i = kv.indexOf('='); if (i > 0) qp[kv.slice(0, i)] = kv.slice(i + 1) }
   if (qp['nocar']) car.group.visible = false
@@ -92,7 +119,7 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
 
   /* ---------------- deterministic validation poses (Gate A/C batteries) ---- */
   const anchor = roadPose(slice.spline, slice.spline.sFromX(30), 0)
-  const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean } = {}): ShotPose => {
+  const onRoad = (camOff: [number, number, number], lookOff: [number, number, number], fov: number, extra: { speed?: number; drift?: boolean; nitro?: boolean; model?: string } = {}): ShotPose => {
     const cy = Math.cos(anchor.yaw), sy = Math.sin(anchor.yaw)
     const rot = (v: [number, number, number]): [number, number, number] => [
       anchor.pos[0] + v[0] * cy + v[2] * sy,
@@ -414,6 +441,15 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
         freezeSim: true, tag: 'gate-m',
       })
     }
+  }
+
+  /* ---------------- per-model body shots (registered LAST) ------------------- */
+  // `car_model_*` keeps these clear of the pre-existing `car_drift` drift-STATE pose
+  // (Gate-C battery). End-registration matters: shots.mjs captures in registry order
+  // on one page, so every pre-existing pose renders before the first selectModel call
+  // and the hero/grid/state battery stays untouched; each model shot sets its own body.
+  for (const id of ['hero', 'hyper', 'grip', 'drift']) {
+    Debug.registerPose(`car_model_${id}`, onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26, { model: id }))
   }
 
   /* ---------------- dev probes (removed with the harness, spec §23.4) ------ */
