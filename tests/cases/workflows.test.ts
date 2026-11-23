@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, test } from '../harness'
 
-const read = (path) => readFileSync(path, 'utf8')
+const read = (path: string) => readFileSync(path, 'utf8')
 const ci = read('.github/workflows/ci.yml')
 const policy = read('.github/workflows/qwen-policy.yml')
 const shotsScript = read(join(import.meta.dirname, '../../scripts/shots.mjs'))
@@ -42,7 +42,7 @@ test('visual capture fails closed on missing or unregenerated frames', () => {
   assert(/\bno registered shots to capture\b/u.test(shotsScript), 'an empty registry fails the run')
   assert(/\blet browser = null\b[\s]*\blet captureFailures = 0\b[\s]*\btry\s*\{/u.test(shotsScript), 'capture failure counter is declared in the outer capture scope')
   assert(/\bcaptureFailures\+\+/u.test(shotsScript), 'missing captured images are counted')
-  assert(finallyMatch && exitMatch && exitMatch.index > finallyMatch.index, 'capture failures fail the run after browser cleanup')
+  assert(!!(finallyMatch && exitMatch && exitMatch.index > finallyMatch.index), 'capture failures fail the run after browser cleanup')
   assert(/\bBoolean\(window\.__vr\)/u.test(auditScript), 'a missing screenshot registry fails the audit')
   assert(/\bthe screenshot registry is empty\b/u.test(auditScript), 'an empty screenshot registry fails the audit')
   assert(!/\breaddirSync\s*\(\s*SHOTS\s*\)/u.test(auditScript), 'the audit cannot fall back to stale PNG files')

@@ -7,8 +7,8 @@ import {
   evaluatePullRequestPolicy,
 } from '../../scripts/pr-policy.mjs'
 
-const codeBody = (opts = {}) => {
-  const lines = []
+const codeBody = (opts: { attestation?: boolean; model?: string; docsOnly?: boolean } = {}) => {
+  const lines: string[] = []
   if (opts.attestation !== false) lines.push(CODE_ATTESTATION)
   lines.push(opts.model ?? MODEL_ID_FIELD)
   if (opts.docsOnly) lines.push(DOCS_ONLY_DECLARATION)

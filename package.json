@@ -21,7 +21,7 @@
     "build": "tsc --noEmit && vite build",
     "build:harness": "tsc --noEmit && VR_HARNESS=1 vite build --outDir build/harness --emptyOutDir",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
     "test": "node scripts/tests.mjs",
     "shots": "node scripts/shots.mjs",
     "probe": "node scripts/probe.mjs",
@@ -34,6 +34,7 @@
     "three": "^0.168.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/three": "^0.168.0",
     "esbuild": "^0.21.5",
     "playwright": "1.63",

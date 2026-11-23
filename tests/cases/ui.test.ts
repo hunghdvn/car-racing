@@ -6,7 +6,7 @@ import {
   gearLabelFor, gearIndexOf, rpmFor, buildCarNames, statBarsFor, type StandingLike,
 } from '../../src/ui/UIManager'
 import type { CarSpec } from '../../src/vehicles/CarSpecs'
-import { Input, PAD, type InputAction, type GamepadSnapshot } from '../../src/core/Input'
+import { Input, PAD, type InputAction, type InputKeyboardEvent, type GamepadSnapshot } from '../../src/core/Input'
 import { globalObject } from '../../src/core/globals'
 import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
 
@@ -16,7 +16,7 @@ import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
 
 test('countdown: full 3/2/1/GO cue sequence over the director clock', () => {
   const cues: string[] = []
-  let cd = RACE.countdownTime
+  let cd: number = RACE.countdownTime
   while (cd > 0) {
     const next = Math.max(0, cd - 1 / 120)
     const cue = countdownCueFor(cd, next)
@@ -259,12 +259,16 @@ test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/
  * can only ever start the race). Off-button, the page-scroll/submit defaults
  * stay suppressed exactly as before. */
 
-type PreventableKey = { code: string; key?: string; target?: unknown; preventDefault?: () => void }
-const preventHarness = (): { target: { addEventListener(t: string, cb: (e: PreventableKey) => void): void }; down(e: PreventableKey): void } => {
+/* The harness event type IS the production listener's event (R3-4: tests now
+ * typecheck against src/ — a hand-rolled shape silently diverged from
+ * InputKeyboardEvent and the target object failed the listener contract). */
+type PreventableKey = InputKeyboardEvent
+const preventHarness = (): { target: { addEventListener(t: string, cb: (e: PreventableKey) => void): void }; down(e: PreventableKey): void; up(e: PreventableKey): void } => {
   const listeners: Record<string, ((e: PreventableKey) => void) | undefined> = {}
   return {
     target: { addEventListener: (t, cb) => { listeners[t] = cb } },
     down: (e) => { listeners.keydown?.(e) },
+    up: (e) => { listeners.keyup?.(e) },
   }
 }
 
@@ -283,19 +287,30 @@ test('input: Enter on a focused button is NOT preventDefault-ed (native activati
   assert(fired.length === 0, `the confirm action must NOT fire for a key aimed at an interactive target (fired ${fired.join(',')})`)
 })
 
-test('input: a key aimed at a button never enters the pressed set (no later swallow)', () => {
+/* PR review R3-1 (REPLACES the round-2 "a key aimed at a button never enters
+ * the pressed set" pin — that behaviour was the bug): the interactive-target
+ * gate must mark the code in `pressed` BEFORE returning. The old bare return
+ * left `pressed` empty, and the swatch click handler blurs the button
+ * (UIManager R2-3), so OS auto-repeat keydowns retarget to <body>: those
+ * repeats passed the gate, found an empty set, and dispatched confirm on
+ * EVERY repeat (~500ms then ~30ms cadence) — hold-Enter on a garage card
+ * picked the model and then auto-started the race. */
+test('input: interactive-target Enter marks pressed so body auto-repeat never dispatches confirm', () => {
   const h = preventHarness()
   const input = new Input(h.target)
   const fired: string[] = []
   input.onAction = (a) => { fired.push(a) }
   const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
-  // keydown on the button WITHOUT a keyup (native activation can steal focus
-  // before the window sees keyup): if the gate had added 'Enter' to pressed,
-  // the next real Enter on the page would be silently swallowed.
+  // exact reviewer acceptance: keydown on a button, then the OS auto-repeat
+  // arriving at <body>, then the real keyup — zero confirm dispatches.
   h.down({ code: 'Enter', target: btn })
-  assert(fired.length === 0, 'the interactive-target keydown is fully ignored')
   h.down({ code: 'Enter', target: { closest: () => null } })
-  assert(fired.join(',') === 'confirm', `the next page-level Enter still routes confirm — got '${fired.join(',')}'`)
+  h.up({ code: 'Enter' })
+  assert(fired.length === 0, `button Enter + body auto-repeat + keyup must not dispatch confirm — got '${fired.join(',')}'`)
+  // the key really is released afterwards: a fresh page-level Enter fires ONCE.
+  h.down({ code: 'Enter', target: { closest: () => null } })
+  h.up({ code: 'Enter' })
+  assert(fired.join(',') === 'confirm', `a fresh Enter after keyup still routes confirm exactly once — got '${fired.join(',')}'`)
 })
 
 test('input: Enter with a non-interactive target still prevents its default', () => {

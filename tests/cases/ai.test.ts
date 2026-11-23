@@ -3,7 +3,7 @@ import { assert, assertFinite, test } from '../harness'
 import { cornerTarget, laneSteer, rig, SIM_DT } from '../rig'
 import { PlayerVehicle } from '../../src/vehicles/PlayerVehicle'
 import { AIVehicle, aiSlotSeed, stepAIField, type AIContext, type RivalView } from '../../src/vehicles/AIVehicle'
-import { RaceDirector, gridSlot, type RaceStanding } from '../../src/game/RaceDirector'
+import { RaceDirector, gridSlot, type RacePhase, type RaceStanding } from '../../src/game/RaceDirector'
 import { HERO_SPEC } from '../../src/vehicles/CarSpecs'
 import { VehicleVisual, bindAIFieldVisuals } from '../../src/vehicles/Vehicle'
 import type { CarModel } from '../../src/assets/CarModel'
@@ -94,7 +94,10 @@ function runRace(f: Field, budget: number, onStep?: (t: number, rep: RunReport) 
     input.brake = err < -4 ? Math.min(1, -err / 12) : 0
     input.steer = laneSteer(p, spline)
     f.player.update(SIM_DT, input, f.director.locked())
-    ctx.locked = f.director.locked() || f.director.phase === 'finished'
+    // director.update() above can flip phase to 'finished' (the crossing is
+    // observed next iteration), so the while-condition's narrowing of
+    // director.phase is stale here — re-widen for this per-iteration check.
+    ctx.locked = f.director.locked() || (f.director.phase as RacePhase) === 'finished'
     ctx.leaderProgress = f.director.leaderProgress()
     for (let i = 0; i < f.cars.length; i++) {
       const st = f.director.standingFor(i + 1)

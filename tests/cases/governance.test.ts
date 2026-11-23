@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { assert, test } from '../harness'
 
-const read = (path) => readFileSync(path, 'utf8')
-const json = (path) => JSON.parse(read(path))
+const read = (path: string) => readFileSync(path, 'utf8')
+const json = (path: string) => JSON.parse(read(path))
 
 test('package.json is MIT and points at the public repository', () => {
   const pkg = json('package.json')

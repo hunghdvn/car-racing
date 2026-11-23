@@ -415,6 +415,23 @@ export const shared = {
   },
 }
 
+/** PR review R3-4: the FULL dispose-surface of the field-wide shared set —
+ *  every `shared` factory invoked with its production (hero) arguments,
+ *  returning the memoised singletons. The node battery iterates this and
+ *  asserts the real isSharedCarMaterial recognises EVERY entry and the
+ *  production disposeCarTree spares every one; pinning a single singleton
+ *  (the old chrome-only test) let a memoDetailMat regression regress the
+ *  other twelve into the F1 bug class unnoticed. */
+export function sharedCarMaterials(): THREE.Material[] {
+  const f = HERO_SPEC.finish
+  return [
+    shared.rubber(), shared.chrome(), shared.alloy(), shared.dark(), shared.darkSoft(),
+    shared.sidewall(), shared.glass(f), shared.disc(), shared.caliper(HERO_SPEC.kit.caliper),
+    shared.carbon(f), shared.discRing(), shared.trim(), shared.chromeDark(),
+    shared.ledDrl(f.accent), shared.ledTail(f.accent),
+  ]
+}
+
 /* -------------------------------- detail plan ------------------------------- */
 
 export type ExhaustLayout = 'single' | 'twin' | 'quad'
@@ -672,8 +689,13 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     const pp = carMaterialParamsFor(spec).paint
     const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
     // the micro-roughness breakup drives the normal strength: calibrated so
-    // the hero's own breakup reproduces the shipped fixed 0.5, satin models
-    // (grip) read more breakup and gloss models (hyper) a touch less
+    // the hero's own breakup reproduces the shipped fixed 0.5. DIRECTION (R3-7,
+    // corrected from the earlier reversed claim): microRoughness is
+    // clamp01(roughness·0.6 + flake·0.25), so the DENSE-FLAKE models read MORE
+    // breakup than hero, not less — grip 0.3925 (satin: rough 0.55 carries it),
+    // drift 0.3025 and hyper 0.2955 (gloss, but flake 0.85/0.75 lifts them)
+    // against HERO_MICRO 0.293. Only the normal map's micro-roughness is
+    // raised; the clearcoat layer keeps gloss models visibly glossier.
     const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
     const m = new THREE.MeshPhysicalMaterial({
       color: bodyHex, metalness: pp.metalness, roughness: pp.roughness,

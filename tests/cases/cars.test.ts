@@ -193,7 +193,8 @@ test('builder: buildCar exposes the optional-paint signature resolved via the sp
   // node contract is the export shape plus the pure resolve wiring it leans on
   // (a no-arg buildCar can only be observed in-browser — this is the honest pin):
   assert(typeof m?.buildCar === 'function', 'builder export present')
-  assert(m.buildCar.length === 0, 'paintHex is defaulted, so the arity pin is 0 — callers passing a hex still work')
+  assert(m?.buildCar != null && typeof m.buildCar === 'function' && m.buildCar.length === 0,
+    'paintHex is defaulted, so the arity pin is 0 — callers passing a hex still work')
   assert(typeof resolvePaint === 'function' && resolvePaint(null, HERO_SPEC) === HERO_SPEC.finish.paint,
     'the module resolve helper is exported and pure — it is what a no-arg buildCar would use')
 })
@@ -315,13 +316,13 @@ test('lamps: frontLampAnchors derives the cluster from the model front station',
   const anchors = mod?.frontLampAnchors as unknown as
     ((st: { z: number; ty: number }) => { lensZ: number; lampY: number; intakeCenterZ: number }) | undefined
   assert(typeof anchors === 'function', 'frontLampAnchors is exported from CarModel')
-  const hero = anchors(HERO_SPEC.shape.bodyStations[0])
+  const hero = anchors!(HERO_SPEC.shape.bodyStations[0])
   assertNear(hero.lensZ, -2.268, 1e-9, 'hero lens keeps the shipped z')
   assertNear(hero.lampY, 0.66, 1e-9, 'hero lamp height stays 0.66')
   assertNear(hero.intakeCenterZ, -2.29, 1e-9, 'the centre intake keeps the shipped z')
   for (const id of ['hyper', 'grip'] as const) {
     const st = getSpec(id).shape.bodyStations[0]
-    const a = anchors(st)
+    const a = anchors!(st)
     assert(Math.abs(a.lensZ - st.z) < 0.04, `${id} lens sits flush at its own nose (${a.lensZ.toFixed(3)} vs station ${st.z})`)
     assert(a.lampY <= st.ty && a.lampY > st.ty - 0.1, `${id} lamps tuck under its own crown (${a.lampY} vs ty ${st.ty})`)
   }
@@ -404,6 +405,42 @@ test('ai colours: reconcileAiColours leaves no slot wearing the player colour', 
   const field = [palette[0], palette[2], palette[3], palette[4], palette[5]]
   const plan = carSpecs.reconcileAiColours(field, palette[1], palette)
   assert(plan.join(',') === field.join(','), 'no collision — the plan is a verbatim copy')
+})
+
+/* R3-2(i) — exhaustion policy: when the palette cannot resolve a collision,
+ * the core must be deterministic (the slot KEEPS its current colour — never a
+ * wrap-around, never undefined flowing into buildCar/setPaint) rather than
+ * silently leaving the field shared. */
+test('ai colours: an exhausted pool keeps the colliding slot colour deterministically', () => {
+  const a = 0x111111, b = 0x222222, c = 0x333333
+  const palette = [a, b, c]
+  // every colour worn, player collides — nothing free to repaint with
+  const full = reconcileAiColours([a, b, c], b, palette)
+  assert(full[1] === b, 'the colliding slot keeps its current colour when the palette is exhausted')
+  assert(full[0] === a && full[2] === c, 'non-colliding slots are untouched by the exhaustion path')
+  // partial exhaustion: the first collision resolves, the second finds none left
+  const partial = reconcileAiColours([c, a, a], a, palette)
+  assert(partial[0] === c && partial[1] === b, 'earlier collisions take the free colours first')
+  assert(partial[2] === a, 'the unresolvable collision keeps its colour (never undefined)')
+})
+
+/* R3-2(ii) — the boot pool COUPLES to config: the Game constructor seeds the
+ * field with palette.slice(0, AI.count) and expects reconcileAiColours to be
+ * able to resolve any player collision. If AI.count ever reached
+ * PAINTS.length the pool would exhaust, slots would keep the player's colour
+ * (silent sharing) and undefined hexes could reach buildCar/aiPaintHex.
+ * This invariant pins whatever the boot path actually assumes. */
+test('ai colours: boot-pool invariant — AI.count stays below the palette size', () => {
+  assert(AI.count < PAINTS.length, `boot needs a free palette colour for collision resolution — AI.count=${AI.count} must stay < PAINTS.length=${PAINTS.length}`)
+  assert(CAR.aiModels.length <= PAINTS.length, 'every AI slot can wear a distinct palette colour')
+  // the boot-shape call itself (Game.ts:135) must resolve for EVERY player colour
+  const palette = PAINTS.map((p) => p.color)
+  const bootField = palette.slice(0, AI.count)
+  for (const playerHex of palette) {
+    const plan = reconcileAiColours(bootField, playerHex, palette)
+    assert(plan.every((n) => Number.isInteger(n)), `boot plan carries only palette ints (player ${playerHex.toString(16)})`)
+    assert(plan.every((n) => n !== playerHex), `boot-field collision against ${playerHex.toString(16)} resolves`)
+  }
 })
 
 /* R2-5 — precedence: an in-memory explicit pick beats a stale-but-readable

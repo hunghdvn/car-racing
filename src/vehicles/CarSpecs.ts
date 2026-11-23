@@ -93,7 +93,9 @@ const BASE_KIT: CarKit = {
  * CarModel constants: the material layer (MaterialSpecs) derives every PBR
  * number FROM these dials through its own HERO calibration block, and the
  * material tests pin the hero output to the shipped look (roughness 0.28 →
- * paintMaterialParams, metalness 0.15 / sheen 0.4 from the HERO anchor,
+ * paintMaterialParams, metalness 0.15 and the sheen anchors sheen 0.2 /
+ * sheenRoughness 0.4 from MaterialSpecs' HERO block — the shipped sheen itself
+ * is the calibrated curve clamp01(0.45 − roughness·0.9), not a copied dial,
  * caliper 0xc23a28 now read from BASE_KIT by buildCar). Changing a dial here
  * intentionally changes the hero's look. */
 const HERO_FINISH: CarFinish = {
