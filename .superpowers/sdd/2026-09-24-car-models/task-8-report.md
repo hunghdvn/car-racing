@@ -1207,3 +1207,19 @@ dependent recs recorded as honest not-evaluated failures.
 exit 0 · harness built · functional PASS (28/28) · noleak CLEAN ·
 shots+audit ALL CLEAN (37 frames; the only src change was a comment — audit
 pixels unchanged, churned PNG bytes restored to HEAD as in round 3).
+
+### Battery (this round, final code commit 2238d60)
+
+```
+npm run typecheck                    → tsc --noEmit && tsc --noEmit -p tsconfig.tests.json, exit 0 (tests compiled)
+node scripts/tests.mjs               → 189 passed, 0 failed   (189 unique names)
+npm run build:harness                → ✓ built in 920ms
+node scripts/functional.mjs          → [functional] RESULT: PASS (28/28)  [29 unique rec names; main-no-page-errors is failure-only]
+node scripts/noleak.mjs              → [noleak] RESULT: CLEAN (runtime fails=0, asset leaks=0)
+node scripts/shots.mjs && node scripts/audit-shots.mjs → [audit] RESULT: ALL CLEAN (37 frames)
+npm run perf -- --nobisect --seconds 8 --label review-fix4 → exit 0,
+  shots/perf_review-fix4.json (gitHead 2238d603dc228cfbe84e46f5aef958d435cc87d3
+  = final code commit, gitDirty FALSE — the package-lock dirt is gone since
+  eb8b8d6; SwiftShader CPU fps — evidences stability: heap −0.014..0.054 MB/s,
+  all phaseEnd=racing, fatal.pageErrorCount=0)
+```
