@@ -21,6 +21,9 @@ await build({
   platform: 'node',
   target: 'node20',
   external: ['three'],
+  // the harness gate constant src modules guard on (a bare ReferenceError in
+  // plain node would otherwise crash any test path that reaches a dev-log)
+  define: { __VR_HARNESS__: 'false' },
   absWorkingDir: ROOT,
   logLevel: 'warning',
 })

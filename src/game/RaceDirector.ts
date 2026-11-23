@@ -112,6 +112,21 @@ export class RaceDirector {
   /** clean restart from a completed race: full state wipe, no stale rows */
   restart(): void { this.start() }
 
+  /**
+   * MAIN MENU abandons a live race (Game.toMenu): back to idle so the garage
+   * cards unlock behind the board, the countdown cues stop, and the field
+   * sleeps until the next beginRace re-grids everyone through start().
+   * R2-2: with the gate closed, stepAIField/bindAIFieldVisuals hold the last
+   * frame exactly where it froze — so Game.toMenu also parks the retired
+   * field off-scene (the constructor's park pose); this method owns race
+   * state only and never moves meshes.
+   */
+  abandon(): void {
+    this.phase = 'idle'
+    this.countdown = 0
+    this.results = []
+  }
+
   /** advance the director one fixed step (Game's SIM_HZ accumulator) */
   update(dt: number): void {
     if (this.phase === 'countdown') {

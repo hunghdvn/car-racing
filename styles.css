@@ -145,6 +145,21 @@ body { font-family: var(--font-ui); color: var(--ink); user-select: none; -webki
 #paint-swatches { display: flex; gap: 10px; justify-content: center; pointer-events: auto; }
 .swatch { width: 34px; height: 22px; transform: skewX(-18deg); border: 2px solid rgba(255,255,255,.25); cursor: pointer; }
 .swatch.selected { border-color: #fff; box-shadow: 0 0 14px rgba(255,255,255,.7); }
+/* F11: wrap so the four cards never overflow narrow viewports (390 px phones
+ * clipped the row); max-width keeps the wrap inside the safe title column. */
+#model-cards { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 92vw; pointer-events: auto; }
+.model-card { padding: 8px 14px; transform: skewX(-14deg); border: 2px solid rgba(255,255,255,.22); cursor: pointer; background: rgba(8,12,18,.55); }
+.model-card > * { transform: skewX(14deg); }
+.model-card b { display: block; font-family: var(--font-display); font-size: 13px; letter-spacing: 2px; color: var(--ink); }
+.model-card i { display: block; font-style: normal; font-size: 9px; letter-spacing: 3px; color: var(--amber); margin-top: 2px; }
+.model-card.selected { border-color: var(--cyan); box-shadow: 0 0 18px rgba(53,226,255,.5); }
+#model-cards.locked { pointer-events: none; opacity: .5; }
+#model-cards.locked .model-card { cursor: default; }
+#model-stats { display: flex; flex-direction: column; gap: 3px; align-items: center; margin-top: 8px; }
+.stat-row { display: flex; align-items: center; gap: 8px; font-size: 9px; letter-spacing: 2px; color: var(--ink-dim); }
+.stat-row span { width: 92px; text-align: right; }
+.stat-bar { width: 132px; height: 5px; background: rgba(255,255,255,.12); }
+.stat-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--amber)); }
 #title-controls { margin-top: 26px; display: flex; gap: 18px; font-size: 12px; color: var(--ink-dim); }
 #title-controls b { color: var(--ink); font-family: var(--font-digital); }
 #title-credit { margin-top: 30px; font-size: 10px; letter-spacing: 3px; color: #55647c; }

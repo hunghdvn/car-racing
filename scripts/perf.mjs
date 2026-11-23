@@ -112,7 +112,17 @@ const gpuDevice = sysInfo?.gpu?.devices?.[0]?.deviceString ?? null
 const displayType = sysInfo?.gpu?.auxAttributes?.displayType ?? null
 console.log(`[perf] rendering stack: ${displayType ?? 'unknown'} — ${gpuDevice ?? 'unknown'}`)
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
-page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 500)))
+// R3-5: pageerrors are RECORDED into the JSON evidence (previously only
+// console.log, while the report claimed "fatal none" — an unfounded claim).
+// fatal/pageerror capture is now genuine: perf_evidence.fatalCounts is
+// computed at write time from the captured list, so the "fatal: none" claim
+// is true only when no error was ever seen.
+const pageErrors = []
+page.on('pageerror', (e) => {
+  const s = String(e).slice(0, 500)
+  pageErrors.push(s)
+  console.log('[page error]', s)
+})
 page.on('console', (m) => { if (m.type() === 'error') console.log(`[console ${m.type()}]`, m.text().slice(0, 300)) })
 await page.goto(url, { waitUntil: 'load' })
 await page.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 })
@@ -501,6 +511,9 @@ try {
   else if (MODE === 'lowbattery') await lowBatteryMode(report)
   else throw new Error(`unknown mode ${MODE}`)
 } finally {
+  // R3-5: the fatal evidence rides in the JSON — a "fatal: none" claim in a
+  // report is verifiable against report.fatal.pageErrorCount.
+  report.fatal = { pageErrorCount: pageErrors.length, pageErrors: pageErrors.slice(0, 20) }
   const file = join(OUT, `perf_${LABEL}.json`)
   writeFileSync(file, JSON.stringify(report, null, 1))
   console.log(`[perf] wrote ${file}`)

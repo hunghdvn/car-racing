@@ -1,6 +1,7 @@
-import { DECK_FACE, PHYS_SEED, TRACK, VEHICLE, type ZoneId } from '../config'
+import { DECK_FACE, PHYS_SEED, TRACK, type ZoneId } from '../config'
 import { clamp, clamp01, damp, Rand, wrapPi } from '../util'
 import { rampSlopeAt } from '../world/RoadBuilder'
+import { BASE_TUNING, type CarTuning } from './CarTuning'
 import type { TrackProbe } from './TrackProbe'
 
 /* ------------------------------------------------------------------------- *
@@ -91,8 +92,13 @@ export class VehiclePhysics {
   private obstacles: readonly Obstacle[] = []
   private rnd: Rand
 
-  constructor(private probe: TrackProbe, seed = PHYS_SEED) {
+  constructor(private probe: TrackProbe, seed = PHYS_SEED, readonly tuning: CarTuning = BASE_TUNING) {
     this.rnd = new Rand(seed)
+  }
+
+  /** model switch on a parked car (title garage); never call mid-sim (spec §9) */
+  setTuning(t: CarTuning): void {
+    ;(this as { tuning: CarTuning }).tuning = t
   }
 
   setObstacles(list: readonly Obstacle[]): void { this.obstacles = list }
@@ -126,7 +132,7 @@ export class VehiclePhysics {
     this.grounded = true
     this.airTime = 0; this.apexAboveRoad = 0
     this.sunk = false; this.outside = false
-    for (let i = 0; i < 4; i++) { this.susp[i] = -VEHICLE.suspPreload; this.suspV[i] = 0 }
+    for (let i = 0; i < 4; i++) { this.susp[i] = -this.tuning.suspPreload; this.suspV[i] = 0 }
     const c = this.probe.corridor(x, z)
     this.y = c.y
     this.s = c.s; this.lat = c.lat
@@ -135,7 +141,7 @@ export class VehiclePhysics {
   /* ------------------------------------------------------------------ step */
 
   step(dt: number, cmd: DriveCommand): void {
-    const V = VEHICLE
+    const V = this.tuning
     this.time += dt
     const prevS = this.s
     const c = this.probe.corridor(this.x, this.z)
@@ -296,13 +302,13 @@ export class VehiclePhysics {
   /* ------------------------------------------------------------- internals */
 
   private applyBrake(f: number, brake: number, dt: number): number {
-    const V = VEHICLE
+    const V = this.tuning
     if (f > 0.4) return Math.max(0, f - V.brakeForce * brake * dt)
     return Math.max(-V.reverseMaxSpeed, f - V.reverseAccel * brake * dt)
   }
 
   private updateSuspension(dt: number, longAcc: number, latSigned: number, speed: number, centerSurfY: number): void {
-    const V = VEHICLE
+    const V = this.tuning
     const omega = V.suspensionRate * Math.PI * 2
     const cDamp = 2 * V.suspensionDamp * omega
     const hx = -Math.sin(this.yaw), hz = -Math.cos(this.yaw)
@@ -343,7 +349,7 @@ export class VehiclePhysics {
   }
 
   private collide(dt: number): void {
-    const V = VEHICLE
+    const V = this.tuning
     // The barrier clamp consults the corridor at the *integrated* position:
     // the top-of-step sample predates the x/z advance, so clamping against it
     // leaves up to one simulation step of barrier penetration per hit. The

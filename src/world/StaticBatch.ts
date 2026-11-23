@@ -16,7 +16,14 @@ let enabled = true
 export function setStaticMergeEnabled(v: boolean): void { enabled = v }
 export function staticMergeEnabled(): boolean { return enabled }
 
-/* dev audit (harness reads via __dbg.densityAudit): what folded, what stayed */
+/* dev audit (harness reads via __dbg.densityAudit): what folded, what stayed.
+ * R3-6: BOUNDED ring — every mergeStaticMeshes call (every selectModel
+ * buildCar, harness catalog validation, functional buildCar) used to push a
+ * permanent entry; the dev build leaked one object per car build forever.
+ * Consumers read the whole array (densityAudit() returns it live), so the
+ * cap keeps the LAST AUDIT_LIMIT entries — the most recent folds — and the
+ * array identity stays stable for the harness. */
+const AUDIT_LIMIT = 32
 const audit: { root: string; folded: number; buckets: number; fingerprinted: number; idKeys: number }[] = []
 export function densityAudit(): object[] { return audit }
 
@@ -171,6 +178,7 @@ export function mergeStaticMeshes(root: THREE.Object3D, opts?: { keepNames?: Ite
   const scope: Scope = { dest: root, inv: new THREE.Matrix4().copy(root.matrixWorld).invert(), buckets: new Map(), stats }
   collect(scope, root, keepNames, cellSize)
   flushScope(scope)
+  if (audit.length >= AUDIT_LIMIT) audit.shift()
   audit.push({ root: root.name, ...stats })
   return stats.folded
 }

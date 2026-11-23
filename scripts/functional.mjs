@@ -54,7 +54,9 @@ try {
   }
   if (!gpuBacked) console.log('[functional] SwiftShader detected — race-timing gates require --gpu and will be reported as SKIPPED')
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
-  page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 300)))
+  // R4-optional(a): like the pKeys page, a pageerror on the MAIN battery page
+  // is a FAILING result, not a console.log the summary can pass over.
+  page.on('pageerror', (e) => rec('main-no-page-errors', false, `page error: ${String(e).slice(0, 200)}`))
   await page.goto(`${prev.url}/`, { waitUntil: 'load' })
   await page.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 })
   await page.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
@@ -336,6 +338,469 @@ try {
     return { available: g.audio.available, threw }
   })
   rec('audio-after-gesture', audio.available && !audio.threw, `unlock→available=${audio.available}, sfx-threw=${audio.threw ?? 'none'} (listen pass is a human acceptance item)`)
+
+  // ---- car-models final-fix coverage (spec §10 items 2/4/5) ---------------
+  // buildCar/selectModel/the scene need the real canvas + the harness dev
+  // globals, so the per-model kit / AI-field / standings / garage behaviour is
+  // audited here (the node suite runs headless — buildCar cannot execute there).
+  // A dedicated boot carrying a persisted model selection lets the BOOT path
+  // itself (not only selectModel) be checked for physics + mesh + grid.
+  const EXPECT_SPOKES = { hero: 20, hyper: 48, grip: 32, drift: 24 } // spokeCountForStyle(style)*4, per CarSpecs.ts
+  await page.close() // the 11-check page has served; free its WebGL context
+  const EXPECT_STANDINGS = ['YOU', 'APEX GRIP', 'SOLARIS HYPER', 'SLIDE KING', 'VELOCITY GT', 'APEX GRIP']
+  const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
+  const mp = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+  await mp.addInitScript(() => { try { localStorage.setItem('vr.model', 'drift') } catch { /* private mode */ } })
+  await mp.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await mp.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await mp.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await mp.evaluate(() => new Promise((r) => setTimeout(r, 400)))
+
+  const boot = await mp.evaluate(() => {
+    const g = window.__dbg.game
+    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
+    const byName = (name) => window.__dbg.scene.children.find((o) => o.name === name)
+    return {
+      aiSpecIds: g.ai.map((a) => a.spec.id),
+      aiSpokes: [0, 1, 2, 3, 4].map((i) => spokeTotal(byName(`ai-car-${i}`))),
+      playerSpokes: spokeTotal(g.car.group),
+      playerTop: g.player.phys.tuning.topSpeed,
+      heroRef: g.ai.find((a) => a.spec.id === 'hero')?.tuning?.topSpeed ?? null,
+      selectedId: g.selectedSpec.id,
+      standings: g.ui.standingNames ? Array.from(g.ui.standingNames) : null,
+    }
+  })
+
+  // §10.2 / C2: the AI field renders the ASSIGNED models, not five hero clones
+  // (every wheel of a hero build reads 20 spokes; a mixed grid cannot).
+  const aiFieldOk = boot.aiSpecIds.join(',') === 'grip,hyper,drift,hero,grip'
+    && boot.aiSpokes.every((n, i) => n === EXPECT_SPOKES[boot.aiSpecIds[i]])
+  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-spoke totals ${JSON.stringify(boot.aiSpokes)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(Object.values(EXPECT_SPOKES))}); five hero clones would all read 20`)
+
+  // C1: a persisted model must retune the BOOT physics, not just the mesh.
+  const bootDriftOk = boot.selectedId === 'drift'
+    && boot.playerSpokes === EXPECT_SPOKES.drift
+    && boot.heroRef != null
+    && Math.abs(boot.playerTop - boot.heroRef * 0.96) < 1e-6
+  rec('boot-retunes-physics', bootDriftOk, `stored 'drift' → selected=${boot.selectedId}, mesh spokes=${boot.playerSpokes} (drift=${EXPECT_SPOKES.drift}), topSpeed=${boot.playerTop?.toFixed?.(3)} vs hero ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
+
+  // §10.5: standings carry the model names, never the paint names.
+  const standingsOk = Array.isArray(boot.standings)
+    && boot.standings.length === EXPECT_STANDINGS.length
+    && boot.standings.every((n, i) => n === EXPECT_STANDINGS[i])
+    && !boot.standings.some((n) => PAINT_NAMES.includes(n))
+  rec('standings-are-model-names', standingsOk, `standings ${JSON.stringify(boot.standings)} (expect ${JSON.stringify(EXPECT_STANDINGS)})`)
+
+  // §10.4: the garage onModel seam rebuilds the live player group + retunes it.
+  const garage = await mp.evaluate(() => {
+    const g = window.__dbg.game
+    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
+    const before = spokeTotal(g.car.group)
+    const id = window.__selectModel('hyper')
+    const after = spokeTotal(g.car.group)
+    const top = g.player.phys.tuning.topSpeed
+    window.__selectModel('hero')
+    const back = spokeTotal(g.car.group)
+    return { before, id, after, top, back }
+  })
+  const garageOk = garage.id === 'hyper' && garage.before === EXPECT_SPOKES.drift
+    && garage.after === EXPECT_SPOKES.hyper && garage.back === EXPECT_SPOKES.hero
+    && boot.heroRef != null && Math.abs(garage.top - boot.heroRef * 1.12) < 1e-6
+  rec('garage-rebuilds-on-model', garageOk, `drift(${garage.before})→hyper(${garage.after}, top ${garage.top?.toFixed?.(3)})→hero(${garage.back}); selectModel returned '${garage.id}'`)
+
+  // ---- PR review F7/R2-10: vr.paint storage validation on the boot path ----
+  // Seeds exercise readPaintSelection's full contract: a palette hex boots the
+  // car in it; '' (the Number('') → 0 black-car trap), 'garbage' (NaN) and an
+  // off-palette finite int all fall through to the model SIGNATURE. R2-10:
+  // every expectation is a catalog LITERAL (config.ts PAINTS), never the live
+  // game's own paintHex/spec pairing, so a broken resolver cannot pass by
+  // agreeing with itself.
+  const PALETTE = { solar: 0xf27a1e, red: 0xd8232e, viper: 0x39c06a } // PAINTS[0]/[1]/[3]
+  const HERO_SIGNATURE = PALETTE.red // HERO_FINISH.paint = PAINTS[1] — the boot car's signature literal
+  // one boot per seed; pages are closed sequentially to stay under Chromium's
+  // live WebGL-context cap. `expect` is the literal hex the boot must wear.
+  const bootPaint = async (seed, expect, label) => {
+    const p = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+    try {
+      await p.addInitScript((s) => { try { localStorage.setItem('vr.paint', s) } catch { /* private mode */ } }, seed)
+      await p.goto(`${prev.url}/`, { waitUntil: 'load' })
+      await p.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+      await p.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+      await p.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+      // R3-3(3): a throwing boot must rec a FAIL, never throw the run past
+      // the RESULT line.
+      const got = await p.evaluate(() => window.__dbg.game.paintHex)
+      rec(label, got === expect, `stored '${seed}' → boot paint 0x${Number(got).toString(16)} (expect literal 0x${expect.toString(16)})`)
+    } catch (e) {
+      rec(label, false, `boot failed: ${String(e).slice(0, 160)}`)
+    } finally {
+      await p.close() // free the WebGL context — Chromium caps concurrent contexts
+    }
+  }
+  await mp.close() // free its WebGL context before the paint/phone boots
+  await bootPaint('3784810', PALETTE.viper, 'paint-storage-valid-hex')
+  await bootPaint('', HERO_SIGNATURE, 'paint-storage-empty-string-falls-back')
+  await bootPaint('garbage', HERO_SIGNATURE, 'paint-storage-garbage-falls-back')
+  await bootPaint('1234567', HERO_SIGNATURE, 'paint-storage-offpalette-int-falls-back')
+
+  // ---- PR review F11: the garage card row must fit a 390 px phone ----------
+  const pPhone = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+  await pPhone.goto(`${prev.url}/`, { waitUntil: 'load' })
+  await pPhone.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
+  await pPhone.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
+  await pPhone.evaluate(() => new Promise((r) => setTimeout(r, 300)))
+  const rowFit = await pPhone.evaluate(() => {
+    const row = document.getElementById('model-cards')
+    if (!row) return { ok: false, why: 'no #model-cards' }
+    const r = row.getBoundingClientRect()
+    // R2-6 teeth: a flex row WITHOUT flex-wrap merely SHRINKS the four cards
+    // into one squat line — the bounding box still fits 390 px, so the old
+    // left/right/scrollWidth read could never tell wrap from crush. Count the
+    // distinct vertical rows of the cards: four readable cards on a 390 px
+    // phone means genuine wrapping (>= 2 rows), never shrink-to-fit.
+    const tops = Array.from(row.children).map((c) => Math.round(c.getBoundingClientRect().top))
+    const rows = new Set(tops).size
+    const minCardW = Math.min(...Array.from(row.children).map((c) => c.getBoundingClientRect().width))
+    return { ok: true, left: r.left, right: r.right, scrollW: document.documentElement.scrollWidth, cards: row.children.length, rows, minCardW }
+  })
+  const phoneOk = rowFit.ok && rowFit.cards === 4 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
+    && rowFit.rows >= 2 && rowFit.minCardW >= 64
+  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards across ${rowFit.rows} rows, min card width ${rowFit.minCardW?.toFixed?.(1)} (F11/R2-6: the four-card row must genuinely wrap, never shrink-to-fit or clip)`)
+  await pPhone.close()
+
+  // ---- PR review R2-1/R2-2/R2-3/R2-8/R2-12 ---------------------------------
+  // One page drives: wheel-landmark folding (built through the SHIPPED
+  // buildCar on the dev probe), the caliper material door, real keyboard
+  // Enter on a garage card and on START RACE, card tab-order through a race,
+  // and toMenu parking the retired AI field.
+  const pKeys = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+  // R3-3(3): a pageerror on this battery page is a FAILING result, not a
+  // console.log the summary can pass over — the RESULT line must reflect it.
+  pKeys.on('pageerror', (e) => rec('pkeys-no-page-errors', false, `page error: ${String(e).slice(0, 200)}`))
+  await pKeys.goto(`${prev.url}/`, { waitUntil: 'load' })
+  // R3-3(1): the boot gates must not swallow failures — a missing harness or
+  // stuck loader fails loudly (the guarded evaluates below then rec their own
+  // 'boot failed' instead of the run losing the RESULT line).
+  const keysBooted = await pKeys.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).then(() => true).catch(() => false)
+  rec('pkeys-boot-ready', keysBooted, keysBooted ? 'harness ready on the keys page' : 'window.__vr.ready never came up — every keys rec below is untrusted')
+  const keysLoaded = await pKeys.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).then(() => true).catch(() => false)
+  rec('pkeys-loading-hidden', keysLoaded, keysLoaded ? 'loading screen retired' : 'the loading screen never retired')
+  await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 400)))
+
+  // R2-1: the static merge must stop AT the wheel landmarks. When 'wheel-spin'
+  // and the four wheel-group names were pruned from keepNames, the multi-part
+  // hardware buckets (dish+lip, sidewall+back, caliper+pistons…) folded past
+  // spin into the car ROOT with build-time matrices baked in — Vehicle.bind
+  // turns spin every frame and the rims stood beside turning tyres. A
+  // single-part bucket stays put wherever it is, so the brake-disc parent chain
+  // ALONE has no teeth; the real regression signal is where the merged
+  // 'static-batch' meshes land: every wheel must own its hardware batches
+  // inside its own spin / wheel-root subtree, and the car root must not
+  // accumulate wheel-position batches.
+  let wheelTree = null
+  try {
+    wheelTree = await pKeys.evaluate(() => {
+      const { CAR_SPECS, buildCar, disposeCarTree, THREE } = window.__dbg
+      const car = buildCar(0xf27a1e, CAR_SPECS.find((s) => s.id === 'hero'))
+      let spinGroups = 0
+      let wheelGroups = 0
+      let disc = null
+      const wheels = []
+      car.group.traverse((o) => {
+        if (o.isGroup && o.name === 'wheel-spin') spinGroups++
+        if (o.isGroup && /^wheel-[frr]-[lr]$/.test(o.name)) wheelGroups++
+        if (o.isMesh && o.name === 'brake-disc' && !disc) disc = o
+      })
+      // R3-3(2): count DIRECT-CHILD batches of each wheel group / spin group,
+      // NOT the whole subtree. Traversing the spin subtree made the two halves
+      // measure together: with the four wheel-* GROUP names removed from
+      // keepNames (wheel-spin kept), the hardware folded past the wheel root
+      // into CAR ROOT except the spin-scoped buckets — a subtree count still
+      // read them under the wheel group and the rec stayed green. Direct
+      // children measure where flushScope actually landed each batch.
+      const directBatches = (root) => root.children.filter((o) => o.isMesh && o.name === 'static-batch').length
+      car.group.traverse((o) => {
+        if (!(o.isGroup) || !/^wheel-[frr]-[lr]$/.test(o.name)) return
+        let spin = null
+        o.traverse((c) => { if (c.isGroup && c.name === 'wheel-spin') spin = c })
+        wheels.push({
+          name: o.name,
+          spinBatches: spin ? directBatches(spin) : -1,
+          wheelBatches: directBatches(o),
+        })
+      })
+      // R3-3(2): no WHEEL-HARDWARE static batch may sit at car root over a
+      // wheel footprint (used to be "informational", which is how a regression
+      // past the landmark hid). Body bands (fender walls, skirts) legitimately
+      // share the footprint band — measured: 7 of them, every axis-extent
+      // >= 0.98 — while wheel hardware buckets are compact (the real wheel
+      // batches measure 0.04..0.42 across; the reviewer's wheel-* pruned
+      // mutation leaks 0.06-extent batches exactly at the rear-wheel
+      // centres). Extent < 0.7 therefore counts hardware, never body.
+      let rootWheelBatches = 0
+      for (const ch of car.group.children) {
+        if (!ch.isMesh || ch.name !== 'static-batch') continue
+        const p = ch.getWorldPosition(new THREE.Vector3())
+        if (!(Math.abs(p.x) > 0.5 && Math.abs(p.z) > 0.6 && p.y < 0.6)) continue
+        ch.geometry.computeBoundingBox()
+        const b = ch.geometry.boundingBox
+        const extent = Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z)
+        if (extent < 0.7) rootWheelBatches++
+      }
+      const chain = []
+      for (let p = disc; p && p !== car.group; p = p.parent) chain.push(p.name || p.type)
+      const reachedSpin = chain.includes('wheel-spin')
+      disposeCarTree(car.group) // real predicate: frees the per-car paint mats, keeps singletons
+      return { spinGroups, wheelGroups, hasDisc: !!disc, chain, reachedSpin, wheels, rootWheelBatches }
+    })
+  } catch (e) {
+    rec('wheels-fold-stop-at-spin', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  if (wheelTree) {
+    // Direct-child thresholds (measured on the shipped hero build): every wheel
+    // root owns exactly >=1 hardware batch as a DIRECT child (the 0.04-extent
+    // hub cap bucket) plus >=1 inside its spin (the 0.11×0.42×0.42 dish+lip+disc
+    // bucket). Pruning the wheel-* group names empties both counts (measured
+    // under the mutation: root-direct 0 for all four wheels), so >=1 on each
+    // side has real teeth while staying honest about the shipped geometry.
+    const wheelsOwnBatches = wheelTree.wheels.length === 4
+      && wheelTree.wheels.every((w) => w.spinBatches >= 1 && w.wheelBatches >= 1)
+    rec('wheels-fold-stop-at-spin', wheelTree.spinGroups === 4 && wheelTree.wheelGroups === 4 && wheelTree.hasDisc && wheelTree.reachedSpin && wheelsOwnBatches && wheelTree.rootWheelBatches === 0,
+      `spin groups ${wheelTree.spinGroups}/4, wheel groups ${wheelTree.wheelGroups}/4, brake-disc chain [${wheelTree.chain.join(' > ')}] reaches wheel-spin = ${wheelTree.reachedSpin}, per-wheel DIRECT-CHILD batches ${wheelTree.wheels.map((w) => `${w.name}:spin=${w.spinBatches},root=${w.wheelBatches}`).join(' ')} (each wheel needs >=1 batch as a direct child of spin + >=1 of its root — subtree traversal made the halves measure together), root-level WHEEL-HARDWARE footprint batches ${wheelTree.rootWheelBatches} (must be 0 — R2-1/R3-3: hardware folds into spin/wheel, never past it to the car root)`)
+  }
+
+  // R2-8: the caliper colour must arrive through the carMaterialParamsFor
+  // door (which buildCar now calls — no side-read of spec.kit.caliper), so
+  // the BUILT car must actually carry each model's kit caliper hex on some
+  // material. Expectations are catalog literals, same as materials.test.ts.
+  const CALIPER = { hero: 0xc23a28, hyper: 0xe8b62e, grip: 0x39c06a, drift: 0xf27a1e }
+  let calipers = null
+  try {
+    calipers = await pKeys.evaluate((expected) => {
+      const { CAR_SPECS, buildCar, disposeCarTree } = window.__dbg
+      const out = {}
+      for (const spec of CAR_SPECS) {
+        const car = buildCar(undefined, spec)
+        const hexes = new Set()
+        car.group.traverse((o) => {
+          if (!o.isMesh) return
+          for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) {
+            if (m && m.color) hexes.add(m.color.getHex())
+          }
+        })
+        out[spec.id] = hexes.has(expected[spec.id])
+        disposeCarTree(car.group)
+      }
+      return out
+    }, CALIPER)
+  } catch (e) {
+    rec('caliper-colour-on-built-car', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  if (calipers) {
+    rec('caliper-colour-on-built-car', Object.values(calipers).length === 4 && calipers.hero && calipers.hyper && calipers.grip && calipers.drift,
+      `built cars carry their kit caliper hex: hero ${calipers.hero}, hyper ${calipers.hyper}, grip ${calipers.grip}, drift ${calipers.drift} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
+  }
+
+  // R2-3 end-to-end: real keyboard Enter on a focused garage card must pick
+  // the model (pre-fix the window-level confirm raced the native click and
+  // the guard rejected the pick) and must NOT also start the race.
+  try {
+    await pKeys.focus('#model-cards button:nth-child(2)')
+    await pKeys.keyboard.press('Enter')
+    await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
+  } catch (e) {
+    rec('keyboard-enter-picks-model', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  const kbPick = await pKeys.evaluate(() => ({
+    id: window.__dbg.game.selectedSpec.id,
+    phase: window.__dbg.game.director.phase,
+    active: document.querySelector('#model-cards .model-card.selected')?.dataset.model ?? null,
+  })).catch((e) => { rec('keyboard-enter-picks-model', false, `boot failed: ${String(e).slice(0, 160)}`); return null })
+  if (kbPick) {
+    rec('keyboard-enter-picks-model', kbPick.id === 'hyper' && kbPick.phase === 'idle' && kbPick.active === 'hyper',
+      `focused card 2 + Enter → model '${kbPick.id}', selected marker '${kbPick.active}' (expect hyper), phase '${kbPick.phase}' (expect idle — Enter must not also start the race)`)
+  }
+
+  // R2-3: Enter on a FOCUSED START RACE must invoke beginRace exactly once
+  // (action-map dispatch + native click used to double-fire). Instrument the
+  // instance so the count is objective, then press Enter for real.
+  // R3-3(1): the focus() must be PROVEN — .focus() inside a .hidden
+  // #title-screen is a silent no-op, and Enter on <body> reaches beginRace
+  // through the window-confirm path this rec exists to guard. Assert the
+  // activeElement landed on btn-start in the same evaluate that focuses.
+  const kbRecorded = new Set() // R4: honest RESULT accounting — see below
+  const kbRec = (name, pass, detail) => { kbRecorded.add(name); rec(name, pass, detail) }
+  try {
+    const focusLanded = await pKeys.evaluate(() => {
+      const g = window.__dbg.game
+      const orig = g.beginRace.bind(g)
+      window.__beginCount = 0
+      g.beginRace = () => { window.__beginCount++; orig() }
+      document.getElementById('btn-start').focus()
+      return document.activeElement?.id === 'btn-start'
+    })
+    if (!focusLanded) {
+      kbRec('enter-on-start-fires-once', false, 'focus did not land on btn-start (activeElement is elsewhere) — the Enter would ride the body/window confirm path, not the focused button')
+      // R4 (honest RESULT accounting, found by re-running M5): the card-lock
+      // recs live in the else branch below; if the focus gate fails they used
+      // to be silently NEVER RECORDED, and the RESULT line counted a smaller
+      // denominator (24/26 under M5) — the same class of hole R3-3 closed for
+      // boots. They still fail: their precondition (the race started through
+      // the focused button) did not happen.
+      kbRec('cards-locked-during-race', false, 'not evaluated — the focus gate failed, the race never started through the button (R4)')
+      kbRec('cards-unfocusable-during-race', false, 'not evaluated — the focus gate failed, the race never started through the button (R4)')
+    } else {
+      await pKeys.keyboard.press('Enter')
+      await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
+      const startOnce = await pKeys.evaluate(() => ({
+        n: window.__beginCount,
+        phase: window.__dbg.game.director.phase,
+        locked: document.getElementById('model-cards').classList.contains('locked'),
+        stillFocused: document.activeElement?.id === 'btn-start',
+      }))
+      kbRec('enter-on-start-fires-once', startOnce.n === 1 && (startOnce.phase === 'countdown' || startOnce.phase === 'racing'),
+        `Enter on focused START RACE invoked beginRace ${startOnce.n}× (expect exactly 1), phase '${startOnce.phase}', focus verified on btn-start before the press (R3-3)`)
+      // R2-12: through a live race the card row announces disabled and drops
+      // out of the tab order (edge-written by UIManager). R4-optional(b): a
+      // waitForFunction GATE, not a fixed-timeout one-shot sample — the lock
+      // edge (countdown/racing) is written on the next ui.update, so poll
+      // until present and fail honestly on timeout, consistent with the boot
+      // gates. The attribute read for the sibling rec reuses the settled DOM.
+      const lockedGate = await pKeys.waitForFunction(
+        () => document.getElementById('model-cards')?.classList.contains('locked') === true,
+        null, { timeout: 5000 }).then(() => true).catch(() => false)
+      kbRec('cards-locked-during-race', lockedGate,
+        `card row carries .locked during '${startOnce.phase}' (gated via waitForFunction ≤5s, R2-12/R4)`)
+      const lockAttrs = await pKeys.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('#model-cards .model-card'))
+        return { n: cards.length, all: cards.every((c) => c.getAttribute('tabindex') === '-1' && c.getAttribute('aria-disabled') === 'true') }
+      }).catch((e) => { rec('cards-unfocusable-during-race', false, `boot failed: ${String(e).slice(0, 160)}`); kbRecorded.add('cards-unfocusable-during-race'); return null })
+      if (lockAttrs) {
+        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 4 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
+      }
+    }
+  } catch (e) {
+    // R4: emit exactly the recs this section never got to record — never a
+    // silent shrink of the RESULT denominator, never a double count.
+    for (const name of ['enter-on-start-fires-once', 'cards-locked-during-race', 'cards-unfocusable-during-race']) {
+      if (!kbRecorded.has(name)) kbRec(name, false, `boot failed: ${String(e).slice(0, 160)}`)
+    }
+  }
+
+  // R2-2: MAIN MENU abandons the race AND parks the retired field — with the
+  // gate closed, nothing steps or binds the AI cars any more, so without the
+  // park they would stand frozen on the last race frame behind the board.
+  // R3-3(4): precondition — the field must have LEFT the park pose (the live
+  // grid) before toMenu, otherwise "all parked" rides on rAF timing and a
+  // field that never left the title could pass the same assertions.
+  let preMenu = { left: false }
+  try {
+    preMenu = await pKeys.evaluate(() => ({ left: window.__dbg.game.aiCars.every((c) => c.group.position.y !== -600) }))
+    await pKeys.evaluate(() => { window.__dbg.game.toMenu() })
+    await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
+  } catch (e) {
+    rec('tomenu-parks-field', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  const menuBack = await pKeys.evaluate(() => {
+    const g = window.__dbg.game
+    const parked = g.aiCars.every((c) => c.group.position.y === -600)
+    const cards = Array.from(document.querySelectorAll('#model-cards .model-card'))
+    return {
+      phase: g.director.phase,
+      parked,
+      unlocked: cards.every((c) => c.getAttribute('tabindex') === null && c.getAttribute('aria-disabled') === null),
+      locked: document.getElementById('model-cards').classList.contains('locked'),
+    }
+  }).catch((e) => { rec('tomenu-parks-field', false, `boot failed: ${String(e).slice(0, 160)}`); return null })
+  if (menuBack) {
+    rec('tomenu-parks-field', preMenu.left && menuBack.phase === 'idle' && menuBack.parked && menuBack.unlocked && !menuBack.locked,
+      `precondition field-left-park = ${preMenu.left} (must be true — the rec is meaningless on an unparked start pose), toMenu → phase '${menuBack.phase}', all ai-car groups parked off-scene = ${menuBack.parked}, cards re-enabled = ${menuBack.unlocked}, .locked cleared = ${!menuBack.locked} (R2-2/R3-3)`)
+  }
+  // ---- PR review R3-2: reconcileAiColours WIRING coverage (core-only pins
+  // stayed green under the reviewer's mutations). pKeys is back on the idle
+  // title board (toMenu above): swatches + cards take real trusted clicks and
+  // every expectation is read LIVE off game.aiPaintHex / the AI cars' own
+  // paintMats — a tracker that lies about the meshes cannot pass.
+  try {
+    // (c) boot-shape invariant: one tracker entry per AI slot, integer hexes
+    // only (an undefined would have flowed into setPaint/buildCar/aiPaintHex).
+    const shape = await pKeys.evaluate(() => {
+      const g = window.__dbg.game
+      return { n: g.aiPaintHex.length, allInt: g.aiPaintHex.every((h) => Number.isInteger(h)) }
+    })
+    const AI_COUNT = 5 // config.ts AI.count — the boot loop pushes one aiPaintHex per slot
+    rec('ai-paint-tracker-shape', shape.n === AI_COUNT && shape.allInt,
+      `aiPaintHex carries ${shape.n} entries (expect AI.count=${AI_COUNT}), all Number.isInteger = ${shape.allInt} (R3-2)`)
+  } catch (e) {
+    rec('ai-paint-tracker-shape', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+
+  // (a) real click on the swatch matching an AI slot's colour: the slot must
+  // leave that colour through the onPaint → reconcileAiColours →
+  // applyAiColourPlan wiring — tracker free of the pick AND the colliding
+  // car's LIVE paint material recoloured to the tracker value. Deleting the
+  // onPaint reconcile call fails the tracker half; deleting setPaint while
+  // keeping the tracker (the self-masking mutation) fails the mesh half.
+  try {
+    const pre = await pKeys.evaluate(() => {
+      const g = window.__dbg.game
+      const target = g.aiPaintHex[0]
+      const idx = g.aiPaintHex.indexOf(target)
+      return {
+        target, idx,
+        wornBefore: g.aiCars[idx].paintMats.map((m) => m.color.getHex()),
+        playerBefore: g.paintHex,
+      }
+    })
+    await pKeys.click(`#paint-swatches button[data-paint="${pre.target}"]`) // trusted click, same path as a user
+    await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
+    const post = await pKeys.evaluate((p) => {
+      const g = window.__dbg.game
+      return {
+        paintHex: g.paintHex,
+        trackerHasTarget: g.aiPaintHex.includes(p.target),
+        slotHex: g.aiPaintHex[p.idx],
+        meshHexes: g.aiCars[p.idx].paintMats.map((m) => m.color.getHex()),
+        playerBefore: p.playerBefore,
+      }
+    }, pre)
+    const meshRepainted = post.meshHexes.length > 0
+      && post.meshHexes.every((h) => h === post.slotHex)
+      && post.slotHex !== pre.target
+      && Number.isInteger(post.slotHex)
+    rec('swatch-click-repaints-colliding-ai-car',
+      post.paintHex === pre.target && pre.wornBefore.every((h) => h === pre.target)
+        && !post.trackerHasTarget && meshRepainted,
+      `clicked swatch 0x${pre.target.toString(16)} (worn by slot ${pre.idx}, meshes read 0x${pre.wornBefore[0]?.toString(16)} before) → player 0x${post.paintHex.toString(16)}; tracker still contains the pick = ${post.trackerHasTarget} (must be false), slot ${pre.idx} now 0x${Number.isInteger(post.slotHex) ? post.slotHex.toString(16) : String(post.slotHex)} with LIVE mesh 0x${post.meshHexes.map((h) => h.toString(16)).join(',')} — tracker and materials must move together (R3-2)`)
+  } catch (e) {
+    rec('swatch-click-repaints-colliding-ai-car', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+
+  // (b) real swatch pick, then a real model-card click with STALE storage
+  // planted in between (the Safari-private-mode shape): the explicit pick must
+  // survive via the resolvePaintWithExplicit line in selectModel — reverting
+  // it to the stored-first chain lands on the stale colour instead.
+  try {
+    const PICKED = 0x39c06a // PAINTS Viper Green (config.ts literal)
+    const STALE = 0xe8b62e // PAINTS Plasma Gold — also the drift signature, so a stored-first revert lands HERE
+    await pKeys.click(`#paint-swatches button[data-paint="${PICKED}"]`)
+    await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 150)))
+    const afterSwatch = await pKeys.evaluate((p) => ({ hex: window.__dbg.game.paintHex, explicit: window.__dbg.game.paintExplicit }), PICKED)
+    await pKeys.evaluate((s) => { localStorage.setItem('vr.paint', String(s)) }, STALE) // plant stale storage
+    await pKeys.click('#model-cards .model-card[data-model="drift"]') // trusted click on a real card
+    await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
+    const afterCard = await pKeys.evaluate(() => ({
+      hex: window.__dbg.game.paintHex,
+      id: window.__dbg.game.selectedSpec.id,
+    }))
+    rec('explicit-pick-survives-model-click',
+      afterSwatch.hex === PICKED && afterSwatch.explicit === true
+        && afterCard.id === 'drift' && afterCard.hex === PICKED,
+      `swatch click → 0x${afterSwatch.hex.toString(16)} (explicit=${afterSwatch.explicit}); stale vr.paint=0x${STALE.toString(16)} planted; card click switched model to '${afterCard.id}' and the car still wears 0x${afterCard.hex.toString(16)} (must equal the pick, not the stale/drift-signature 0x${STALE.toString(16)} — R3-2: reverting the resolvePaintWithExplicit line lands here)`)
+  } catch (e) {
+    rec('explicit-pick-survives-model-click', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  await pKeys.close()
 } finally {
   if (browser) { try { await browser.close() } catch { /* best effort */ } }
   prev.close()

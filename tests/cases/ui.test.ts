@@ -3,9 +3,10 @@ import {
   countdownCueFor, countdownLabelFor, countdownBoardVisible, popupExpired, buildResultRows, ordinalBadge,
   nitroReadyEdge, nitroSegmentsOn, NITRO_READY_FRAC, wrongWayStep, freshWrongWay,
   driftChainStep, freshDriftChain, distToPolyline, shortcutEnterEdge, freshShortcut,
-  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, type StandingLike,
+  gearLabelFor, gearIndexOf, rpmFor, buildCarNames, statBarsFor, type StandingLike,
 } from '../../src/ui/UIManager'
-import { Input, PAD, type InputAction, type GamepadSnapshot } from '../../src/core/Input'
+import type { CarSpec } from '../../src/vehicles/CarSpecs'
+import { Input, PAD, type InputAction, type InputKeyboardEvent, type GamepadSnapshot } from '../../src/core/Input'
 import { globalObject } from '../../src/core/globals'
 import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
 
@@ -15,7 +16,7 @@ import { NITRO, RACE, UI, VEHICLE } from '../../src/config'
 
 test('countdown: full 3/2/1/GO cue sequence over the director clock', () => {
   const cues: string[] = []
-  let cd = RACE.countdownTime
+  let cd: number = RACE.countdownTime
   while (cd > 0) {
     const next = Math.max(0, cd - 1 / 120)
     const cue = countdownCueFor(cd, next)
@@ -249,4 +250,104 @@ test('gamepad drive mapping folds through the accessor-backed pad source (RT/LB/
   const before = fired.length
   input.poll(1 / 60) // held across a second poll must not re-fire (edge detect)
   assert(fired.length === before, 'a held pad button does not repeat its one-shot')
+})
+
+/* --- PR review F4: keyboard access around the garage ----------------------
+ * PREVENT keys must not steal native activation from focused interactive
+ * elements (a <button> activates on Enter at keydown — preventing it there
+ * while Input still routes the confirm action means Enter on a focused card
+ * can only ever start the race). Off-button, the page-scroll/submit defaults
+ * stay suppressed exactly as before. */
+
+/* The harness event type IS the production listener's event (R3-4: tests now
+ * typecheck against src/ — a hand-rolled shape silently diverged from
+ * InputKeyboardEvent and the target object failed the listener contract). */
+type PreventableKey = InputKeyboardEvent
+const preventHarness = (): { target: { addEventListener(t: string, cb: (e: PreventableKey) => void): void }; down(e: PreventableKey): void; up(e: PreventableKey): void } => {
+  const listeners: Record<string, ((e: PreventableKey) => void) | undefined> = {}
+  return {
+    target: { addEventListener: (t, cb) => { listeners[t] = cb } },
+    down: (e) => { listeners.keydown?.(e) },
+    up: (e) => { listeners.keyup?.(e) },
+  }
+}
+
+test('input: Enter on a focused button is NOT preventDefault-ed (native activation survives)', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  let prevented = 0
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  h.down({ code: 'Enter', target: btn, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, `Enter on a focused card must reach the native click (prevented ${prevented}×)`)
+  // R2-3: the gate must bow out COMPLETELY — dispatching confirm alongside the
+  // native activation is exactly the double-fire (Enter on a focused card
+  // started the race before selectModel could run).
+  assert(fired.length === 0, `the confirm action must NOT fire for a key aimed at an interactive target (fired ${fired.join(',')})`)
+})
+
+/* PR review R3-1 (REPLACES the round-2 "a key aimed at a button never enters
+ * the pressed set" pin — that behaviour was the bug): the interactive-target
+ * gate must mark the code in `pressed` BEFORE returning. The old bare return
+ * left `pressed` empty, and the swatch click handler blurs the button
+ * (UIManager R2-3), so OS auto-repeat keydowns retarget to <body>: those
+ * repeats passed the gate, found an empty set, and dispatched confirm on
+ * EVERY repeat (~500ms then ~30ms cadence) — hold-Enter on a garage card
+ * picked the model and then auto-started the race. */
+test('input: interactive-target Enter marks pressed so body auto-repeat never dispatches confirm', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  const btn = { closest: (sel: string) => (sel.includes('button') ? { tag: 'BUTTON' } : null) }
+  // exact reviewer acceptance: keydown on a button, then the OS auto-repeat
+  // arriving at <body>, then the real keyup — zero confirm dispatches.
+  h.down({ code: 'Enter', target: btn })
+  h.down({ code: 'Enter', target: { closest: () => null } })
+  h.up({ code: 'Enter' })
+  assert(fired.length === 0, `button Enter + body auto-repeat + keyup must not dispatch confirm — got '${fired.join(',')}'`)
+  // the key really is released afterwards: a fresh page-level Enter fires ONCE.
+  h.down({ code: 'Enter', target: { closest: () => null } })
+  h.up({ code: 'Enter' })
+  assert(fired.join(',') === 'confirm', `a fresh Enter after keyup still routes confirm exactly once — got '${fired.join(',')}'`)
+})
+
+test('input: Enter with a non-interactive target still prevents its default', () => {
+  const h = preventHarness()
+  const input = new Input(h.target)
+  const fired: string[] = []
+  input.onAction = (a) => { fired.push(a) }
+  let prevented = 0
+  h.down({ code: 'Enter', target: { closest: () => null }, preventDefault: () => { prevented++ } })
+  assert(prevented === 1, 'the page-scroll default stays suppressed off any interactive element')
+  assert(fired.join(',') === 'confirm', 'and the confirm action still routes there')
+  let bodyPrevented = 0
+  h.down({ code: 'Space', target: undefined, preventDefault: () => { bodyPrevented++ } })
+  assert(bodyPrevented === 1, 'a target-less (body) keydown still prevents')
+})
+
+test('input: arrow keys on a focused control are not prevented either', () => {
+  const h = preventHarness()
+  new Input(h.target)
+  let prevented = 0
+  const link = { closest: (sel: string) => (sel.includes('a,') ? { tag: 'A' } : null) }
+  h.down({ code: 'ArrowLeft', target: link, preventDefault: () => { prevented++ } })
+  assert(prevented === 0, 'arrow navigation inside a focused control survives')
+})
+
+/* --- PR review F13b: one axis() for every stat bar -------------------------
+ * The hand-rolled DRIFT maths degenerated differently from axis() when the
+ * whole catalog ties on a field: axis() said neutral 0.5, the copy divided by
+ * the 1e-9 epsilon floor and read 0. One axis() must serve both paths. */
+
+test('garage: a fully uniform catalog reads neutral 0.5 on every bar including DRIFT', () => {
+  const mk = (id: string): CarSpec => ({
+    id, name: id.toUpperCase(), class: 'TEST', stat: {},
+    shape: { bodyStations: [], cabinStations: [] },
+    kit: { splitter: 'std', spoiler: 'low', diffuserFins: 0, hoodVent: false, roofScoop: false, sideIntakes: false, wheelStyle: 'five-spoke', wheelRadiusMul: 1, wheelWidthMul: 1, trackMul: 1, archExtension: 0, caliper: 0, },
+    finish: { paint: 0, clearcoat: 0.5, flake: 0.5, roughness: 0.3, glassTint: 0, carbon: 0.1, accent: 0 },
+  }) as CarSpec
+  const bars = statBarsFor(mk('a'), [mk('a'), mk('b')])
+  assert(bars.length === 5 && bars.every((b) => b === 0.5), `every axis neutral on a tie — got ${bars.join(', ')}`)
 })
