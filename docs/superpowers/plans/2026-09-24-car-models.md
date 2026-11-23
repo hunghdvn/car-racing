@@ -1063,3 +1063,22 @@ git commit -m "feat: per-model harness shots and selectModel dev hook"
 - [ ] **Step 5: Hand the screenshots to the human for review**
 
 Show `shots/car_hero.png`, `shots/car_hyper.png`, `shots/car_grip.png`, `shots/car_drift.png` and get an explicit look/approve before the branch is finished (superpowers:finishing-a-development-branch).
+
+---
+
+## AMENDED — 2026-11-20 (PR review round 3, R3-7c; supersedes the ground-rule line about keepNames)
+
+The ground rule "do not touch `mergeStaticMeshes` keepNames entries other than
+what Task 5 lists" is superseded. Task 5's list (`wheel-hub`, light lenses) was
+wrong against the shipped code and following it re-creates the R2-1 regression
+(pruning the four wheel-* GROUP landmark names folds wheel hardware past the
+spin/wheel groups into the car root; restoring the lens names re-adds dead
+entries that mask future fold bugs).
+
+**The live contract** (single source of truth: the `keepNames` array at the tail
+of `buildCar`): `tire`, `wheel-spoke`, `wheel-spin`, the four wheel group names
+`wheel-f-l`/`wheel-f-r`/`wheel-r-l`/`wheel-r-r` (landmark scopes), and the
+`flame-*` meshes — plus anything with a runtime transform or a live name
+consumer. Changes to that list must keep `node scripts/functional.mjs`
+`wheels-fold-stop-at-spin` green (it mutation-pins the landmarks via
+direct-child batch counts and a zero root-wheel-batch counter).

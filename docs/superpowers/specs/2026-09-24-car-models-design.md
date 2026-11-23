@@ -269,3 +269,28 @@ One feature branch, ordered so each step is independently verifiable:
 3. three new shapes/kits with catalog tests;
 4. garage UI + AI mix + persistence;
 5. full gate battery + screenshot review.
+
+---
+
+## AMENDED — 2026-11-20 (PR review round 3, R3-7c; supersedes §6 and §10 mesh-name passages)
+
+The §6 sentence ("keepNames (wheel parts, light lenses, flame meshes)") and the
+§10 checklist item 2 ("merge keepNames still match (`tire`, `wheel-spoke`,
+`wheel-hub`, light lenses, flames)") describe a name list that no longer matches
+the live contract. `wheel-hub` and the light-lens names are NOT keepNames: lens
+cans and handles fold freely (PR review F10), and the glow/DRL carriers are the
+MATERIALS captured in `brakeMats`/`headMats`, which survive the merge regardless
+of folding. A future contributor restoring those names "to match the spec" would
+re-introduce the R2-1 class of regression (extra landmark scopes) or dead
+keepNames entries that mask future fold bugs.
+
+**The live contract** (single source of truth: the `keepNames` array at the
+`mergeStaticMeshes` call at the tail of `buildCar` in `src/assets/CarModel.ts`):
+keepNames = `tire`, `wheel-spoke`, `wheel-spin`, the four wheel **group** names
+(`wheel-f-l`, `wheel-f-r`, `wheel-r-l`, `wheel-r-r` — these are landmark scopes:
+StaticBatch.collect only opens a fold scope at a NAMED group, so pruning them
+folds wheel hardware past the wheel root into the car root with build-time
+matrices baked in, and Vehicle.bind turns spin every frame → rims stand beside
+turning tyres), and the `flame-*` meshes (scaled per-frame by `setNitro`).
+Plus, as a rule: anything with a runtime transform or a live name consumer
+(functional spoke-count reads `wheel-spoke`, shot poses read `tire`).
