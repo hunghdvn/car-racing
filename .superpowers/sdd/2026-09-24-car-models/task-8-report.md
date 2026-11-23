@@ -960,3 +960,180 @@ Corrections to round 1's claims: the previous section asserted RED-first
 "for every fix"; honest grades this round are in the ledger above — R2-2, R2-3
 (unit-test extension) and R2-12 are GREEN-FIRST, the rest carry pasted
 mutation output.
+
+---
+
+## PR review round 3
+
+Fixer round for findings R3-1 … R3-8 on HEAD 8dce37b. Same honesty rules as
+round 2, tightened where round 2 was soft: every FIXED claim below carries the
+command output that produced it, and where a claim rests on a functional rec
+the proof is now a WIRING mutation (production call deleted), not just a
+pure-core one. Unproven items are OPEN, never FIXED.
+
+### Finding ledger
+
+| # | Status | Fix | Proof grade |
+|---|--------|-----|-------------|
+| R3-1 | FIXED | interactive-target gate does `pressed.add` BEFORE returning (blur-retargeted auto-repeat can no longer dispatch confirm); replacement node test | MUTATION (node) |
+| R3-2 | FIXED | exhaustion policy + dev-warn (core) AND three new functional recs driving the REAL DOM with LIVE `aiPaintHex`/mesh reads (wiring) | MUTATION ×3 (M1, M2, M3) |
+| R3-3(1) | FIXED | enter-on-start asserts `activeElement === btn-start` before the press | MUTATION (M5) |
+| R3-3(2) | FIXED | wheel rec counts DIRECT-CHILD batches + zero root-wheel-hardware counter (extent-gated, calibrated against the mutation's leaked batches) | MUTATION (M4) |
+| R3-3(3) | FIXED | pKeys boot gates rec instead of swallowing; pageerror → rec failure; every harness evaluate wrapped → `rec(name, false, 'boot failed: …')` | structural + M1-M6 runs each exercised the RESULT line |
+| R3-3(4) | FIXED | tomenu rec precondition: field must have LEFT the park pose | MUTATION (M6) |
+| R3-4(1) | FIXED | full-surface dispose test: all 15 `sharedCarMaterials()` singletons survive production `disposeCarTree`; audit-bound test | MUTATION (node) |
+| R3-4(2) | FIXED | typecheck compiles tests/ (tsconfig.tests.json + @types/node + hand-written .d.mts for scripts modules); 22 latent errors fixed at call sites | INJECTION (below) |
+| R3-5 | FIXED | this section: honest grades, true test arithmetic, perf re-run at final head with gitHead cited, genuine fatal capture | see battery |
+| R3-6(1) | FIXED | StaticBatch audit array bounded to a 32-entry ring | MUTATION (node) |
+| R3-6(2) | FIXED | harness catalog validation disposes the car it builds (`disposeCarTree(car.group)`) | GREEN (harness log line + noleak CLEAN) |
+| R3-7 | FIXED | CarSpecs comment anchors corrected (metalness 0.15, sheen 0.2/sheenRoughness 0.4); CarModel breakup direction corrected (gloss models read MORE breakup: grip 0.3925, drift 0.3025, hyper 0.2955 vs HERO_MICRO 0.293); AMENDED notes appended to spec §6/§10 and plan keepNames rule documenting the LIVE contract | docs (live contract = keepNames array at tail of buildCar) |
+| R3-8 | (no fix needed) | reviewer-confirmed round-2 fixes (wheel landmark rec + tomenu park) | — |
+
+OPEN: real-GPU eyeball of emissive/specular reads and the audio listen pass
+remain human acceptance items (unchanged from round 2). No code-level findings
+left open.
+
+### Test arithmetic (true unique counts)
+
+`node scripts/tests.mjs`: 186 (baseline 8dce37b, R2-9 verified unique) → **189**, `uniq -d` empty.
+
+| op | test |
+|----|------|
+| add | `ai colours: an exhausted pool keeps the colliding slot colour deterministically` |
+| add | `ai colours: boot-pool invariant — AI.count stays below the palette size` |
+| add | `static batching: the dev audit log stays bounded across repeated builds (R3-6)` |
+| add | `input: interactive-target Enter marks pressed so body auto-repeat never dispatches confirm` (replaces the R2-3 pin whose behaviour was the R3-1 bug — paired op, see replace row) |
+| replace | `input: a key aimed at a button never enters the pressed set (no later swallow)` → the interactive-target Enter pin above (the R3-1 gate INVERTS the round-2 expectation) |
+| replace | `car lifecycle: disposeCarTree (real predicate) frees geometry always, materials only when not shared` → `car lifecycle: disposeCarTree spares EVERY field-wide shared singleton (full surface, R3-4)` (old test used an injected predicate — the lying-predicate hole R3-4 flagged) |
+| remove | — (net: 186 + 4 adds − 2 replace-partners = 189; the replace partners are counted once in each direction, adds +4, replaces 2, removes 0) |
+
+Functional battery: 23 → **28** recs. Added: `pkeys-boot-ready`,
+`pkeys-loading-hidden`, `pkeys-no-page-errors`, `ai-paint-tracker-shape`,
+`swatch-click-repaints-colliding-ai-car`, `explicit-pick-survives-model-click`.
+
+### Mutation evidence (wiring mutations — production code, not test scaffolding)
+
+Each mutation: apply → `node scripts/functional.mjs` (full battery, sequential)
+→ restore from `cp` backup → `diff -q` verified identical. No `git checkout`
+was used on uncommitted files.
+
+**M1 — delete the reconcile call in `Game.onPaint`** (the R3-2(iii) hole:
+core-only pins stayed green while the swatch path never reconciled):
+
+```
+FAIL  swatch-click-repaints-colliding-ai-car — clicked swatch 0xf27a1e (worn by
+slot 0, meshes read 0xf27a1e before) → player 0xf27a1e; tracker still contains
+the pick = true (must be false), slot 0 now 0xf27a1e with LIVE mesh 0xf27a1e —
+tracker and materials must move together (R3-2)
+[functional] RESULT: FAIL (27/28)
+```
+
+**M2 — delete `aiCars[i].setPaint(next)` but KEEP the tracker update** (the
+self-masking mutation round 2 could not see — tracker lies, meshes stale):
+
+```
+FAIL  swatch-click-repaints-colliding-ai-car — clicked swatch 0xf27a1e …
+tracker still contains the pick = false (must be false), slot 0 now 0x1f8fe0
+with LIVE mesh 0xf27a1e — tracker and materials must move together (R3-2)
+[functional] RESULT: FAIL (27/28)
+```
+
+**M3 — revert `selectModel` to the stored-first chain** (deletes the
+resolvePaintWithExplicit line):
+
+```
+FAIL  explicit-pick-survives-model-click — swatch click → 0x39c06a
+(explicit=true); stale vr.paint=0xe8b62e planted; card click switched model to
+'drift' and the car still wears 0xe8b62e (must equal the pick, not the
+stale/drift-signature 0xe8b62e — R3-2: reverting the resolvePaintWithExplicit
+line lands here)
+[functional] RESULT: FAIL (27/28)
+```
+
+**M4 — remove the four `wheel-*` GROUP names from keepNames, KEEP `wheel-spin`**
+(the R3-3(2) hole: subtree counting made the halves measure together):
+
+```
+FAIL  wheels-fold-stop-at-spin — spin groups 4/4, wheel groups 4/4, brake-disc
+chain … reaches wheel-spin = true, per-wheel DIRECT-CHILD batches
+wheel-f-l:spin=1,root=0 wheel-f-r:spin=1,root=0 wheel-r-l:spin=1,root=0
+wheel-r-r:spin=1,root=0 (each wheel needs >=1 batch as a direct child of spin +
+>=1 of its root — subtree traversal made the halves measure together),
+root-level WHEEL-HARDWARE footprint batches 2 (must be 0 …)
+[functional] RESULT: FAIL (27/28)
+```
+
+Restored green (all four counters back): `… wheel-f-l:spin=1,root=1 …
+root-level WHEEL-HARDWARE footprint batches 0 … RESULT: PASS (28/28)`.
+
+**M5 — sabotage the enter-on-start focus** (teeth for the R3-3(1)
+activeElement assertion; the mutation lives in the rec itself):
+
+```
+FAIL  enter-on-start-fires-once — focus did not land on btn-start
+(activeElement is elsewhere) — the Enter would ride the body/window confirm
+path, not the focused button
+[functional] RESULT: FAIL (24/26)
+```
+
+**M6 — delete `parkField(false)` from `Game.toMenu`** (teeth for the R3-3(4)
+precondition rec):
+
+```
+FAIL  tomenu-parks-field — precondition field-left-park = true (must be true —
+the rec is meaningless on an unparked start pose), toMenu → phase 'idle', all
+ai-car groups parked off-scene = false, cards re-enabled = true, .locked
+cleared = true (R2-2/R3-3)
+[functional] RESULT: FAIL (27/28)
+```
+
+Node-side mutations (this round):
+
+- **R3-1**: revert the gate to the bare `return` (no `pressed.add`) →
+  `FAIL input: interactive-target Enter marks pressed so body auto-repeat never dispatches confirm … got 'confirm'` (188 passed, 1 failed); restored green.
+- **R3-6(1)**: remove the `AUDIT_LIMIT` shift →
+  `FAIL static batching: the dev audit log stays bounded across repeated builds (R3-6) … (42)` (188 passed, 1 failed); restored green.
+- **R3-4(1)**: memoise only the chrome variant so the paint singleton is per-car →
+  `FAIL car lifecycle: disposeCarTree spares EVERY field-wide shared singleton (full surface, R3-4) … the REAL predicate recognises the REAL singleton (MeshStandardMaterial)`; restored green.
+
+**R3-4(2) injection proof** (`const x: number = "str"` appended to
+`tests/cases/ui.test.ts`):
+
+```
+> tsc --noEmit && tsc --noEmit -p tsconfig.tests.json
+tests/cases/ui.test.ts(354,7): error TS2322: Type 'string' is not assignable to type 'number'.
+injected exit=2
+```
+
+Removed → `npm run typecheck` exit 0. The gate compiles every test file
+against `src/`.
+
+### Corrections to the round-2 section (append-only amendment, 2026-11-23)
+
+1. The round-2 battery line claims `perf_review-fix2.json … no fatal`. That
+   claim was **not backed by the JSON** — pageerror was console.log-only.
+   Superseded: perf.mjs now records `report.fatal.pageErrorCount` and the
+   round-3 evidence below carries it.
+2. The round-2 `wheels-fold-stop-at-spin` paste
+   (`per-wheel batches … root=2 … stray root-level wheel batches 7` "informational")
+   measured SUBTREE batches and left the root counter decorative — under the
+   round-3 M4 mutation the old counters stayed green. Superseded by the
+   direct-child + extent-gated counters (M4 paste above).
+3. Round-2 "OPEN: none" predated R3-1/R3-2 being found; kept here for the
+   record, corrected by this section's OPEN line.
+
+### Battery (this round, final code commit 398fe4e)
+
+```
+npm run typecheck                    → tsc --noEmit && tsc --noEmit -p tsconfig.tests.json, exit 0 (tests ARE compiled)
+node scripts/tests.mjs               → 189 passed, 0 failed   (189 unique names)
+npm run build:harness                → ✓ built in 946ms
+node scripts/functional.mjs          → [functional] RESULT: PASS (28/28)
+node scripts/noleak.mjs              → [noleak] RESULT: CLEAN (runtime fails=0, asset leaks=0)
+node scripts/shots.mjs && node scripts/audit-shots.mjs → [audit] RESULT: ALL CLEAN (37 frames)
+npm run perf -- --nobisect --seconds 8 --label review-fix3 → exit 0,
+  shots/perf_review-fix3.json (gitHead 398fe4edb27b4b2e50b165f07dca28924e6fc119
+  = final code commit; gitDirty true = package-lock only, as in rounds 1-2;
+  SwiftShader CPU fps — evidences stability: heap −0.005..0.077 MB/s, all
+  phaseEnd=racing, fatal.pageErrorCount=0)
+```
