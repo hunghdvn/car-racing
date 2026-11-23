@@ -1005,7 +1005,7 @@ left open.
 | add | `input: interactive-target Enter marks pressed so body auto-repeat never dispatches confirm` (replaces the R2-3 pin whose behaviour was the R3-1 bug — paired op, see replace row) |
 | replace | `input: a key aimed at a button never enters the pressed set (no later swallow)` → the interactive-target Enter pin above (the R3-1 gate INVERTS the round-2 expectation) |
 | replace | `car lifecycle: disposeCarTree (real predicate) frees geometry always, materials only when not shared` → `car lifecycle: disposeCarTree spares EVERY field-wide shared singleton (full surface, R3-4)` (old test used an injected predicate — the lying-predicate hole R3-4 flagged) |
-| remove | — (net: 186 + 4 adds − 2 replace-partners = 189; the replace partners are counted once in each direction, adds +4, replaces 2, removes 0) |
+| remove | ~~— (net: 186 + 4 adds − 2 replace-partners = 189…)~~ **CORRECTED 2026-11-23 (R4-F1): the formula evaluated to 188. True set-diff (tests/ at 8dce37b vs HEAD): REMOVED 2 — `car lifecycle: disposeCarTree (real predicate) frees geometry always, materials only when not shared` and `input: a key aimed at a button never enters the pressed set (no later swallow)`; ADDED 5 — the two `ai colours:` tests, `static batching: the dev audit log stays bounded across repeated builds (R3-6)`, plus the two replace-partners named in the rows above. Arithmetic: 186 − 2 removed + 5 added = 189.** |
 
 Functional battery: 23 → **28** recs. Added: `pkeys-boot-ready`,
 `pkeys-loading-hidden`, `pkeys-no-page-errors`, `ai-paint-tracker-shape`,
@@ -1069,12 +1069,31 @@ root-level WHEEL-HARDWARE footprint batches 0 … RESULT: PASS (28/28)`.
 **M5 — sabotage the enter-on-start focus** (teeth for the R3-3(1)
 activeElement assertion; the mutation lives in the rec itself):
 
+> **RE-RUN + CORRECTION 2026-11-23 (R4-F2):** the transcript originally pasted
+> here (`RESULT: FAIL (24/26)`) was a mid-round baseline. Re-run on the
+> current head, with one genuine bug the re-run exposed and fixed: when the
+> focus gate failed, the two else-branch recs
+> (`cards-locked-during-race`/`cards-unfocusable-during-race`) were silently
+> NEVER RECORDED — the RESULT denominator shrank (24/26). The battery now
+> records them as honest failures (`not evaluated — the focus gate failed`),
+> so the denominator is always the full 28. Real transcript, current head:
+
 ```
 FAIL  enter-on-start-fires-once — focus did not land on btn-start
 (activeElement is elsewhere) — the Enter would ride the body/window confirm
 path, not the focused button
-[functional] RESULT: FAIL (24/26)
+FAIL  cards-locked-during-race — not evaluated — the focus gate failed, the
+race never started through the button (R4)
+FAIL  cards-unfocusable-during-race — not evaluated — the focus gate failed,
+the race never started through the button (R4)
+[functional] RESULT: FAIL (24/28)
 ```
+
+(The round-4 brief predicted 27/28 — that arithmetic assumed the two
+dependent card recs would still pass; their precondition, the race starting
+through the focused button, did not happen, so failing them is the truthful
+record. What matters for teeth: the focus gate went red under sabotage and
+every one of the 28 recs is accounted for.)
 
 **M6 — delete `parkField(false)` from `Game.toMenu`** (teeth for the R3-3(4)
 precondition rec):
@@ -1137,3 +1156,54 @@ npm run perf -- --nobisect --seconds 8 --label review-fix3 → exit 0,
   SwiftShader CPU fps — evidences stability: heap −0.005..0.077 MB/s, all
   phaseEnd=racing, fatal.pageErrorCount=0)
 ```
+
+---
+
+## PR review round 4
+
+Fixer round for the two findings + two optional items on head eb8b8d6 (the
+four green threads — Input gate, Game wiring M1-M3, functional teeth,
+full-surface dispose — were reviewer-verified; nothing was re-litigated).
+
+### Finding ledger
+
+| # | Status | Fix | Proof grade |
+|---|--------|-----|-------------|
+| F1 | FIXED | ledger arithmetic line struck and corrected in place (186 − 2 removed + 5 added = 189, removes and adds named, 2 of the 5 adds are the replace-partners) | doc — controller-derived set-diff adopted verbatim |
+| F2 | FIXED | M5 focus-sabotage re-run at the current head; the stale (24/26) transcript corrected in place with a dated note — and the re-run CAUGHT a real battery bug: the two else-branch card recs vanished from the RESULT denominator when the focus gate failed. They now record honest failures; the battery always accounts for all 28 recs | MUTATION (re-run transcript above) |
+| F3 | FIXED | CarModel `sharedCarMaterials` comment: "the other twelve" → "the other fourteen (all 15 minus chrome)" | doc (count verified against the 15-entry return list) |
+| opt-a | FIXED | main battery page pageerror now `rec('main-no-page-errors', false, …)` like pKeys | MUTATION (throw probe below) |
+| opt-b | FIXED | cards-locked/unfocusable recs use a waitForFunction gate (≤5 s, honest fail on timeout) instead of the fixed setTimeout(250) one-shot sample | battery stays 28/28 |
+
+**Round-3 disclosure update:** the functional battery now has 29 unique rec
+NAMES — `main-no-page-errors` was added alongside `pkeys-no-page-errors`;
+both are failure-only (recorded when an error fires), so a green run records
+28/28 and the RESULT line is unchanged. PR-body expectation: "28/28 with a
+29th rec name that only appears as a FAIL".
+
+### Round-4 mutation evidence
+
+**R4-a — throw probe on the MAIN page** (`setTimeout(() => { throw new
+Error('MUTANT-R4A') }, 0)` injected into `src/main.ts` after the error
+listeners, harness rebuilt):
+
+```
+FAIL  main-no-page-errors — page error: Error: MUTANT-R4A
+[functional] RESULT: FAIL (26/30)
+```
+
+Before this fix the same mutation was a console.log the summary passed over.
+(The denominator grew to 30 under the probe because the fatal page error also
+tripped four dependent main-page recs — every one of them now lands in the
+results instead of the console.) `main.ts` restored from `cp` backup,
+`diff -q` verified identical + `git diff --exit-code` clean; the battery
+returned to PASS (28/28).
+
+**M5 re-run** (focus sabotage at the current head): transcript in the
+corrected round-3 block above — `FAIL (24/28)`, focus gate red, both
+dependent recs recorded as honest not-evaluated failures.
+
+**Round-4 fixes verified together:** node 189/189 · typecheck (src+tests)
+exit 0 · harness built · functional PASS (28/28) · noleak CLEAN ·
+shots+audit ALL CLEAN (37 frames; the only src change was a comment — audit
+pixels unchanged, churned PNG bytes restored to HEAD as in round 3).

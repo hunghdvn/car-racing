@@ -54,7 +54,9 @@ try {
   }
   if (!gpuBacked) console.log('[functional] SwiftShader detected — race-timing gates require --gpu and will be reported as SKIPPED')
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
-  page.on('pageerror', (e) => console.log('[page error]', String(e).slice(0, 300)))
+  // R4-optional(a): like the pKeys page, a pageerror on the MAIN battery page
+  // is a FAILING result, not a console.log the summary can pass over.
+  page.on('pageerror', (e) => rec('main-no-page-errors', false, `page error: ${String(e).slice(0, 200)}`))
   await page.goto(`${prev.url}/`, { waitUntil: 'load' })
   await page.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 })
   await page.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
@@ -626,6 +628,8 @@ try {
   // #title-screen is a silent no-op, and Enter on <body> reaches beginRace
   // through the window-confirm path this rec exists to guard. Assert the
   // activeElement landed on btn-start in the same evaluate that focuses.
+  const kbRecorded = new Set() // R4: honest RESULT accounting — see below
+  const kbRec = (name, pass, detail) => { kbRecorded.add(name); rec(name, pass, detail) }
   try {
     const focusLanded = await pKeys.evaluate(() => {
       const g = window.__dbg.game
@@ -636,7 +640,15 @@ try {
       return document.activeElement?.id === 'btn-start'
     })
     if (!focusLanded) {
-      rec('enter-on-start-fires-once', false, 'focus did not land on btn-start (activeElement is elsewhere) — the Enter would ride the body/window confirm path, not the focused button')
+      kbRec('enter-on-start-fires-once', false, 'focus did not land on btn-start (activeElement is elsewhere) — the Enter would ride the body/window confirm path, not the focused button')
+      // R4 (honest RESULT accounting, found by re-running M5): the card-lock
+      // recs live in the else branch below; if the focus gate fails they used
+      // to be silently NEVER RECORDED, and the RESULT line counted a smaller
+      // denominator (24/26 under M5) — the same class of hole R3-3 closed for
+      // boots. They still fail: their precondition (the race started through
+      // the focused button) did not happen.
+      kbRec('cards-locked-during-race', false, 'not evaluated — the focus gate failed, the race never started through the button (R4)')
+      kbRec('cards-unfocusable-during-race', false, 'not evaluated — the focus gate failed, the race never started through the button (R4)')
     } else {
       await pKeys.keyboard.press('Enter')
       await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
@@ -646,22 +658,33 @@ try {
         locked: document.getElementById('model-cards').classList.contains('locked'),
         stillFocused: document.activeElement?.id === 'btn-start',
       }))
-      rec('enter-on-start-fires-once', startOnce.n === 1 && (startOnce.phase === 'countdown' || startOnce.phase === 'racing'),
+      kbRec('enter-on-start-fires-once', startOnce.n === 1 && (startOnce.phase === 'countdown' || startOnce.phase === 'racing'),
         `Enter on focused START RACE invoked beginRace ${startOnce.n}× (expect exactly 1), phase '${startOnce.phase}', focus verified on btn-start before the press (R3-3)`)
       // R2-12: through a live race the card row announces disabled and drops
-      // out of the tab order (edge-written by UIManager, checked a few frames
-      // later).
-      rec('cards-locked-during-race', startOnce.locked, `card row carries .locked during '${startOnce.phase}' (R2-12)`)
+      // out of the tab order (edge-written by UIManager). R4-optional(b): a
+      // waitForFunction GATE, not a fixed-timeout one-shot sample — the lock
+      // edge (countdown/racing) is written on the next ui.update, so poll
+      // until present and fail honestly on timeout, consistent with the boot
+      // gates. The attribute read for the sibling rec reuses the settled DOM.
+      const lockedGate = await pKeys.waitForFunction(
+        () => document.getElementById('model-cards')?.classList.contains('locked') === true,
+        null, { timeout: 5000 }).then(() => true).catch(() => false)
+      kbRec('cards-locked-during-race', lockedGate,
+        `card row carries .locked during '${startOnce.phase}' (gated via waitForFunction ≤5s, R2-12/R4)`)
       const lockAttrs = await pKeys.evaluate(() => {
         const cards = Array.from(document.querySelectorAll('#model-cards .model-card'))
         return { n: cards.length, all: cards.every((c) => c.getAttribute('tabindex') === '-1' && c.getAttribute('aria-disabled') === 'true') }
-      }).catch((e) => { rec('cards-unfocusable-during-race', false, `boot failed: ${String(e).slice(0, 160)}`); return null })
+      }).catch((e) => { rec('cards-unfocusable-during-race', false, `boot failed: ${String(e).slice(0, 160)}`); kbRecorded.add('cards-unfocusable-during-race'); return null })
       if (lockAttrs) {
-        rec('cards-unfocusable-during-race', lockAttrs.n === 4 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
+        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 4 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
       }
     }
   } catch (e) {
-    rec('enter-on-start-fires-once', false, `boot failed: ${String(e).slice(0, 160)}`)
+    // R4: emit exactly the recs this section never got to record — never a
+    // silent shrink of the RESULT denominator, never a double count.
+    for (const name of ['enter-on-start-fires-once', 'cards-locked-during-race', 'cards-unfocusable-during-race']) {
+      if (!kbRecorded.has(name)) kbRec(name, false, `boot failed: ${String(e).slice(0, 160)}`)
+    }
   }
 
   // R2-2: MAIN MENU abandons the race AND parks the retired field — with the

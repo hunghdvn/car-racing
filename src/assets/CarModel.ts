@@ -421,7 +421,7 @@ export const shared = {
  *  asserts the real isSharedCarMaterial recognises EVERY entry and the
  *  production disposeCarTree spares every one; pinning a single singleton
  *  (the old chrome-only test) let a memoDetailMat regression regress the
- *  other twelve into the F1 bug class unnoticed. */
+ *  other fourteen (all 15 minus chrome) into the F1 bug class unnoticed. */
 export function sharedCarMaterials(): THREE.Material[] {
   const f = HERO_SPEC.finish
   return [
