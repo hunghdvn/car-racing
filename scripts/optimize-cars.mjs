@@ -50,7 +50,7 @@ const CARS = {
   },
   '930': {
     file: '930.glb', page: 'https://sketchfab.com/3d-models/none-8568d9d14a994b9cae59499f0dbed21e',
-    tris: 45000, tex: 1024, nose: '-z', error: 3e-3,
+    tris: 45000, tex: 1024, nose: '+z', error: 3e-3,
     wheelMatch: 'tire|rim', wheelExclude: 'spare',
     drop: 'lights_refraction|930_lights|wunderbaum', glass: 'glass',
   },
@@ -64,7 +64,7 @@ const CARS = {
   },
   centenario: {
     file: 'centenario.glb', page: 'https://sketchfab.com/3d-models/none-d679af35b5694301a185c7454a700c73',
-    tris: 45000, tex: 1024, nose: '-z', error: 3e-3,
+    tris: 45000, tex: 1024, nose: '+z', error: 3e-3,
     wheelMatch: 'wheel|pneu|crbn_jante|tire32', wheelExclude: 'spare',
     drop: 'display|logo|^Object_12$', glass: 'glass|vitre',
     paint: 'plastique',
@@ -72,7 +72,7 @@ const CARS = {
   },
   terzo: {
     file: 'terzo.glb', page: 'https://sketchfab.com/3d-models/none-7ad3dffa9d344c3c978eafcc220cb709',
-    tris: 45000, tex: 1024, nose: '-z',
+    tris: 45000, tex: 1024, nose: '+z',
     wheelMatch: 'tire|wheel|jante', wheelExclude: 'spare',
     drop: 'display|Material\\.044', glass: 'vitres|glass',
   },
@@ -689,6 +689,24 @@ function primFromSubset(doc, src, verts, triList, material) {
   if (material) out.setMaterial(material)
   return out
 }
+/** per-face normals for the synthesized disc/caliper geometry. MeshStandard-
+ *  shaded primitives WITHOUT a NORMAL attribute make three sample an unbound
+ *  attribute (zeros) → normalize(0) = NaN → one NaN pixel blooms across the
+ *  whole HDR chain (black canvas under ANGLE/OpenGL, invisible under
+ *  SwiftShader). Flat faces ⇒ last-write-per-vertex is exact. */
+function flatNormalAttr(doc, pos, idx) {
+  const n = new Float32Array(pos.length)
+  for (let t = 0; t + 2 < idx.length; t += 3) {
+    const ia = idx[t] * 3, ib = idx[t + 1] * 3, ic = idx[t + 2] * 3
+    const ux = pos[ib] - pos[ia], uy = pos[ib + 1] - pos[ia + 1], uz = pos[ib + 2] - pos[ia + 2]
+    const vx = pos[ic] - pos[ia], vy = pos[ic + 1] - pos[ia + 1], vz = pos[ic + 2] - pos[ia + 2]
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    const l = Math.hypot(nx, ny, nz) || 1
+    nx /= l; ny /= l; nz /= l
+    for (const i of [ia, ib, ic]) { n[i] = nx; n[i + 1] = ny; n[i + 2] = nz }
+  }
+  return doc.createAccessor().setType(Accessor.Type.VEC3).setArray(n)
+}
 function buildDiscMesh(doc, name, radius, cx, cy, cz) {
   const SEGS = 20
   const pos = [], idx = []
@@ -702,7 +720,7 @@ function buildDiscMesh(doc, name, radius, cx, cy, cz) {
   const p = doc.createAccessor().setType(Accessor.Type.VEC3).setArray(new Float32Array(pos))
   const inx = doc.createAccessor().setType(Accessor.Type.SCALAR).setArray(new Uint16Array(idx))
   const mat = doc.createMaterial('brake-disc').setBaseColorFactor([0.25, 0.25, 0.27, 1]).setRoughnessFactor(0.5).setMetallicFactor(0.6)
-  const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setIndices(inx).setMaterial(mat))
+  const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setAttribute('NORMAL', flatNormalAttr(doc, pos, idx)).setIndices(inx).setMaterial(mat))
   return doc.createNode(name).setMesh(mesh)
 }
 function buildCaliperMesh(doc, name, wheelR, cx, cy, cz, sideSign = 1) {
@@ -723,7 +741,7 @@ function buildCaliperMesh(doc, name, wheelR, cx, cy, cz, sideSign = 1) {
   const p = doc.createAccessor().setType(Accessor.Type.VEC3).setArray(new Float32Array(pos))
   const inx = doc.createAccessor().setType(Accessor.Type.SCALAR).setArray(new Uint16Array(idx))
   const mat = doc.createMaterial('caliper-paint').setBaseColorFactor([0.76, 0.23, 0.16, 1]).setRoughnessFactor(0.4)
-  const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setIndices(inx).setMaterial(mat))
+  const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setAttribute('NORMAL', flatNormalAttr(doc, pos, idx)).setIndices(inx).setMaterial(mat))
   return doc.createNode(name).setMesh(mesh)
 }
 
