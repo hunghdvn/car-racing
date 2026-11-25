@@ -8,6 +8,7 @@ import { isGLBMaterialShared, isSharedCarGeometry } from './CarShared'
 
 export { markCarGeometryShared } from './CarShared'
 import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
+import { cloneRealCar, forceProcedural, libraryReady } from './CarLibrary'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -689,6 +690,13 @@ function diffuserFinXs(count: number): number[] {
  * (null → the spec's signature finish), so poses/dev callers can pass one and
  * spec-only callers get the model's signature without hardcoding a colour. */
 export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec = HERO_SPEC): CarModel {
+  // real-model fast path (spec §5): a cached, rig-validated GLB clone wins;
+  // any miss (cold cache, ?proc=1, rig violation) falls through to the
+  // untouched procedural builder below.
+  if (!forceProcedural() && libraryReady()) {
+    const real = cloneRealCar(spec.id, paintHex ?? resolvePaint(null, spec), spec)
+    if (real) return real
+  }
   const bodyHex = paintHex ?? resolvePaint(null, spec)
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []

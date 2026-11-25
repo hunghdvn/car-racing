@@ -13,6 +13,8 @@ import { spurAt, spurNear, spurTotal } from '../vehicles/TrackProbe'
 import { densityAudit } from '../world/StaticMerge'
 import { gridSlot } from '../game/RaceDirector'
 import { buildCar, disposeCarTree, isSharedCarMaterial, validateCarShape } from '../assets/CarModel'
+import { CAR_RIGS } from '../assets/CarRigs'
+import { libraryReady, preloadCars, setForceProcedural } from '../assets/CarLibrary'
 import { CAR_SPECS, type CarId } from '../vehicles/CarSpecs'
 import type { Game } from '../game/Game'
 
@@ -41,7 +43,11 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   // colours and the real shared-material dispose path through the SHIPPED
   // builders — expose them on the dev probe (harness chunk only, no-leak grep
   // covers the shipped bundle) instead of re-implementing them in the driver.
-  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal, CAR_SPECS, buildCar, disposeCarTree, isSharedCarMaterial }
+  const dbg = { scene: view.scene, cam: view.camera, slice, THREE, game, Renderer, QUALITY, TRACK, spurAt, spurNear, spurTotal, CAR_SPECS, buildCar, disposeCarTree, isSharedCarMaterial,
+    // real-car rigs (Task 6): the functional battery audits GLB clones + the
+    // rig table through these, and forces the procedural fallback for its
+    // proc-rec page context. __dbg additions ONLY (no new top-level globals).
+    CarRigs: CAR_RIGS, preloadCars, libraryReady, forceProcedural: setForceProcedural }
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = buildMs
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the
@@ -452,7 +458,7 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
   // (Gate-C battery). End-registration matters: shots.mjs captures in registry order
   // on one page, so every pre-existing pose renders before the first selectModel call
   // and the hero/grid/state battery stays untouched; each model shot sets its own body.
-  for (const id of ['hero', 'hyper', 'grip', 'drift']) {
+  for (const id of ['r34', '930', 's15', 'centenario', 'terzo', 'carrera']) {
     Debug.registerPose(`car_model_${id}`, onRoad([7.55, 0.64, 0.10], [0, 0.58, 0], 26, { model: id }))
   }
 
