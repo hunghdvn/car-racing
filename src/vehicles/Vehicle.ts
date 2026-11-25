@@ -33,27 +33,32 @@ export interface PoseVisual {
 const clampSym = (v: number, lim: number): number => (v < -lim ? -lim : v > lim ? lim : v)
 
 export class VehicleVisual {
-  private spin = 0
+  /* per-wheel spin accumulators — real-car rigs (real-car-models spec) give
+   * each corner its own radius, so spin integrates dist/R per wheel; with the
+   * procedural builder's uniform radius this is the shipped single-R formula
+   * term-for-term (same operation order, so shots stay bit-identical). */
+  private spin: number[] = []
   private brakeAfter = 0
 
   constructor(private car: CarModel) {
     car.setHeadlights(false)
     this.baseY = (car.wheels[0]?.radius ?? VEHICLE.wheelRadius) - 0.012
+    this.spin = new Array<number>(car.wheels.length).fill(0)
   }
   private readonly baseY: number
 
   /** live binding from physics (drive mode) */
   bind(dt: number, v: VehiclePhysics, cmd: DriveCommand, nitroLevel: number): void {
-    const R = this.car.wheels[0]?.radius ?? VEHICLE.wheelRadius
-    this.spin += (v.forwardSpeed / R) * dt
-    if (!Number.isFinite(this.spin)) this.spin = 0
     const steerA = v.steerVis
     for (let i = 0; i < this.car.wheels.length; i++) {
       const w = this.car.wheels[i]
       const root: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       root.rotation.y = w.front ? steerA : 0
       root.position.y = this.baseY + clampSym(v.susp[i], TRAVEL)
-      w.spin.rotation.x = -this.spin
+      const R = w.radius > 0 ? w.radius : VEHICLE.wheelRadius
+      this.spin[i] = (this.spin[i] ?? 0) + (v.forwardSpeed / R) * dt
+      if (!Number.isFinite(this.spin[i])) this.spin[i] = 0
+      w.spin.rotation.x = -this.spin[i]
     }
     const g = this.car.group
     g.position.set(v.x, v.y, v.z)
