@@ -178,11 +178,11 @@ the PR-policy/docs checks if they enumerate top-level docs.
 - Whether `n`/`p` keyboard model-switch keys need regenerating for 5 cards.
 - Small stat re-tuning within the existing ±40% clamp.
 
-## Open — awaiting partner
+## Resolved — partner provisioning decision
 
-- **Raw-asset provisioning.** The whole pipeline (rigs, simplify tuning,
-  shots) is authored against the five real GLBs, which only exist behind a
-  logged-in Sketchfab download. Options: (a) partner creates a free Sketchfab
-  account and supplies the API token so `scripts/fetch-cars.mjs` pulls the
-  five originals into `assets-src/`; (b) partner manually downloads the five
-  listed files into `assets-src/`; (c) partner supplies files some other way.
+- **Raw-asset provisioning: partner manual download (option b).** The partner
+  downloads the five listed models from Sketchfab (free account) choosing the
+  **glTF** format, and drops the archives into `assets-src/` (gitignored, one
+  archive/folder per car). `scripts/optimize-cars.mjs` verifies all five
+  expected sources are present and fails loudly with the missing car's page
+  link otherwise, so a forgotten download can't slip into a build.
