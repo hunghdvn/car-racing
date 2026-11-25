@@ -80,9 +80,9 @@ test('physics: same seed + same tuning replays bit-identical', () => {
   assert(run() === run(), 'trajectory identity')
 })
 
-test('catalog: the five real models exist in order', () => {
-  assert(CAR_SPECS.map((s) => s.id).join(',') === 'r34,930,s15,centenario,terzo', 'catalog order')
-  assert(CAR_SPECS.length === 5, 'five models')
+test('catalog: the six real models exist in order', () => {
+  assert(CAR_SPECS.map((s) => s.id).join(',') === 'r34,930,s15,centenario,terzo,carrera', 'catalog order')
+  assert(CAR_SPECS.length === 6, 'six models')
   assert(CAR_SPECS.every((s) => s.name.length > 0 && s.class.length > 0), 'every model is named and classed')
 })
 
@@ -146,7 +146,7 @@ test('finishes: hero paint is byte-pinned to the shipped default PAINTS[1].color
     `hero paint ${HERO_SPEC.finish.paint.toString(16)} !== ${PAINTS[1].color.toString(16)} (never-touch path)`)
 })
 
-test('finishes: the five signature paints are pairwise distinct', () => {
+test('finishes: the six signature paints are pairwise distinct', () => {
   const sigs = CAR_SPECS.map((s) => s.finish.paint)
   assert(new Set(sigs).size === CAR_SPECS.length,
     `signatures must differ — got ${sigs.map((v) => v.toString(16)).join(', ')}`)
@@ -190,8 +190,8 @@ const stationFingerprint = (s: (typeof CS)[number]): string => {
   return `${b[0].z.toFixed(3)}|${b[b.length - 1].z.toFixed(3)}|${Math.max(...b.map((v) => v.hw)).toFixed(3)}|${Math.min(...b.map((v) => v.ty)).toFixed(3)}`
 }
 
-test('shapes: the five fallback silhouettes reuse the four procedural bodies', () => {
-  assert(new Set(CS.map(stationFingerprint)).size === 4, 'five cars, four distinct fallback bodies')
+test('shapes: the six fallback silhouettes reuse the four procedural bodies', () => {
+  assert(new Set(CS.map(stationFingerprint)).size === 4, 'six cars, four distinct fallback bodies')
 })
 
 test('shapes: the Centenario is longer+lower, the 930 more compact, the S15 wider', () => {
@@ -314,10 +314,12 @@ const APPROVED_STATS: Record<string, Record<string, number>> = {
   '930': { topSpeed: 0.9, nitroTopSpeed: 0.9, engineAccel: 1.0, gripMax: 1.12, gripDrift: 1.1, driftYawBoost: 1.0, yawResponse: 1.08, brakeForce: 1.08, drag: 1.0 },
   s15: { topSpeed: 0.96, nitroTopSpeed: 0.96, engineAccel: 1.0, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.3, yawResponse: 1.2, brakeForce: 1.0, drag: 1.0 },
   terzo: { topSpeed: 1.2, nitroTopSpeed: 1.14, engineAccel: 1.12, gripMax: 1.05, gripDrift: 1.05, driftYawBoost: 0.9, yawResponse: 1.0, brakeForce: 1.0, drag: 0.88 },
+  carrera: { topSpeed: 1.02, nitroTopSpeed: 1.03, engineAccel: 1.06, gripMax: 1.04, gripDrift: 0.98, driftYawBoost: 1.0, yawResponse: 1.02, brakeForce: 1.04, drag: 1.0 },
 }
 
-test('catalog: the approved §7 stat table lands literally on all five models', () => {
+test('catalog: the approved §7 stat table lands literally on all six models', () => {
   for (const [id, table] of Object.entries(APPROVED_STATS)) {
+    assert(Object.keys(APPROVED_STATS).length === CAR_SPECS.length, 'the table covers the whole catalog')
     const t = resolveTuning(getSpec(id).stat)
     for (const [field, mul] of Object.entries(table)) {
       const base = VEHICLE[field as keyof typeof VEHICLE]

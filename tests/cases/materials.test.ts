@@ -67,7 +67,7 @@ test('materials: flake density and env reflection scale with the finish', () => 
   assert(cen[2] > g930[2], `Centenario (cc ${cen[1]}) must reflect more sky than satin 930 (${g930[1]})`)
 })
 
-test('materials: the five paint maps are mutually distinct', () => {
+test('materials: the six paint maps are mutually distinct', () => {
   const sig = CAR_SPECS.map((s) => {
     const p = paintMaterialParams(s.finish)
     return `${p.roughness.toFixed(3)}|${p.clearcoat.toFixed(3)}|${p.clearcoatRoughness.toFixed(4)}|${p.flakeSpeckle.toFixed(4)}|${p.envMapIntensity.toFixed(3)}`
@@ -154,7 +154,7 @@ test('materials: carMaterialParamsFor lands distinct per-model numbers through t
   // material colour against these same literals)
   assert(b.r34.caliper === 0xc23a28,
     'r34 caliper stays the shipped 0xc23a28 (never-touch byte-look)')
-  assert(b.centenario.caliper === 0xe8b62e && b['930'].caliper === 0x39c06a && b.s15.caliper === 0xf27a1e && b.terzo.caliper === 0xc23a28,
+  assert(b.centenario.caliper === 0xe8b62e && b['930'].caliper === 0x39c06a && b.s15.caliper === 0xf27a1e && b.terzo.caliper === 0xc23a28 && b.carrera.caliper === 0xf2d21c,
     'the catalog wears its kit caliper colours')
   const sig = CAR_SPECS.map((s) => {
     const p = fn!(s)

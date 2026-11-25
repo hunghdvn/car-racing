@@ -345,7 +345,7 @@ try {
   // audited here (the node suite runs headless — buildCar cannot execute there).
   // A dedicated boot carrying a persisted model selection lets the BOOT path
   // itself (not only selectModel) be checked for physics + mesh + grid.
-  const EXPECT_SPOKES = { r34: 20, '930': 32, s15: 24, centenario: 48, terzo: 48 } // spokeCountForStyle(style)*4, per CarSpecs.ts
+  const EXPECT_SPOKES = { r34: 20, '930': 32, s15: 24, centenario: 48, terzo: 48, carrera: 48 } // spokeCountForStyle(style)*4, per CarSpecs.ts
   await page.close() // the 11-check page has served; free its WebGL context
   const EXPECT_STANDINGS = ['YOU', 'PORSCHE 911 TURBO', 'LAMBORGHINI CENTENARIO LP 770-4', 'NISSAN SILVIA S15', 'NISSAN SKYLINE GT-R R34', 'PORSCHE 911 TURBO']
   const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
@@ -463,9 +463,9 @@ try {
     const minCardW = Math.min(...Array.from(row.children).map((c) => c.getBoundingClientRect().width))
     return { ok: true, left: r.left, right: r.right, scrollW: document.documentElement.scrollWidth, cards: row.children.length, rows, minCardW }
   })
-  const phoneOk = rowFit.ok && rowFit.cards === 5 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
+  const phoneOk = rowFit.ok && rowFit.cards === 6 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
     && rowFit.rows >= 2 && rowFit.minCardW >= 64
-  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards across ${rowFit.rows} rows, min card width ${rowFit.minCardW?.toFixed?.(1)} (F11/R2-6: the five-card row must genuinely wrap, never shrink-to-fit or clip)`)
+  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards across ${rowFit.rows} rows, min card width ${rowFit.minCardW?.toFixed?.(1)} (F11/R2-6: the six-card row must genuinely wrap, never shrink-to-fit or clip)`)
   await pPhone.close()
 
   // ---- PR review R2-1/R2-2/R2-3/R2-8/R2-12 ---------------------------------
@@ -573,7 +573,7 @@ try {
   // door (which buildCar now calls — no side-read of spec.kit.caliper), so
   // the BUILT car must actually carry each model's kit caliper hex on some
   // material. Expectations are catalog literals, same as materials.test.ts.
-  const CALIPER = { r34: 0xc23a28, '930': 0x39c06a, s15: 0xf27a1e, centenario: 0xe8b62e, terzo: 0xc23a28 }
+  const CALIPER = { r34: 0xc23a28, '930': 0x39c06a, s15: 0xf27a1e, centenario: 0xe8b62e, terzo: 0xc23a28, carrera: 0xf2d21c }
   let calipers = null
   try {
     calipers = await pKeys.evaluate((expected) => {
@@ -597,8 +597,8 @@ try {
     rec('caliper-colour-on-built-car', false, `boot failed: ${String(e).slice(0, 160)}`)
   }
   if (calipers) {
-    rec('caliper-colour-on-built-car', Object.values(calipers).length === 5 && calipers.r34 && calipers['930'] && calipers.s15 && calipers.centenario && calipers.terzo,
-      `built cars carry their kit caliper hex: r34 ${calipers.r34}, 930 ${calipers['930']}, s15 ${calipers.s15}, centenario ${calipers.centenario}, terzo ${calipers.terzo} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
+    rec('caliper-colour-on-built-car', Object.values(calipers).length === 6 && calipers.r34 && calipers['930'] && calipers.s15 && calipers.centenario && calipers.terzo && calipers.carrera,
+      `built cars carry their kit caliper hex: r34 ${calipers.r34}, 930 ${calipers['930']}, s15 ${calipers.s15}, centenario ${calipers.centenario}, terzo ${calipers.terzo}, carrera ${calipers.carrera} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
   }
 
   // R2-3 end-to-end: real keyboard Enter on a focused garage card must pick
@@ -676,7 +676,7 @@ try {
         return { n: cards.length, all: cards.every((c) => c.getAttribute('tabindex') === '-1' && c.getAttribute('aria-disabled') === 'true') }
       }).catch((e) => { rec('cards-unfocusable-during-race', false, `boot failed: ${String(e).slice(0, 160)}`); kbRecorded.add('cards-unfocusable-during-race'); return null })
       if (lockAttrs) {
-        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 5 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
+        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 6 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
       }
     }
   } catch (e) {

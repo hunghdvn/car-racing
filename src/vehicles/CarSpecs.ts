@@ -13,7 +13,7 @@ import type { CarStat } from './CarTuning'
  * Geometry data lives here — config.ts stays the tuning surface.
  * ------------------------------------------------------------------------- */
 
-export type CarId = 'r34' | '930' | 's15' | 'centenario' | 'terzo'
+export type CarId = 'r34' | '930' | 's15' | 'centenario' | 'terzo' | 'carrera'
 
 export interface CarStation { z: number; hw: number; by: number; ty: number; rt: number; rb: number; ts?: number }
 export interface CarShape { bodyStations: readonly CarStation[]; cabinStations: readonly CarStation[] }
@@ -139,6 +139,7 @@ const REAL: Record<CarId, { name: string; maker: string; license: string }> = {
   s15: { name: 'Nissan Silvia S15', maker: 'Nissan', license: 'CC-BY 4.0 — model by autoNgraphic (Sketchfab)' },
   centenario: { name: 'Lamborghini Centenario LP 770-4', maker: 'Lamborghini', license: 'CC-BY 4.0 — model by SDC (Sketchfab)' },
   terzo: { name: 'Lamborghini Terzo Millennio', maker: 'Lamborghini', license: 'CC-BY-NC 4.0 — model by SDC (Sketchfab)' },
+  carrera: { name: 'Porsche 911 Carrera 4S', maker: 'Porsche', license: 'CC-BY-SA 4.0 — model by Lionsharp Studios (Sketchfab)' },
 }
 
 const identityFor = (id: CarId): CarIdentity => ({ ...REAL[id], realBranding: true })
@@ -256,6 +257,11 @@ export const CAR_SPECS: readonly CarSpec[] = [
     identity: identityFor('terzo'),
     shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xc23a28 },
     finish: { paint: PAINTS[3].color, clearcoat: 0.95, flake: 0.65, roughness: 0.15, glassTint: 0x101a2a, carbon: 0.06, accent: 0xff8c1a } },
+  { id: 'carrera', name: displayName('carrera', 'Circuit Four'), fictionalName: 'Circuit Four', class: 'ALL-ROAD',
+    stat: { topSpeed: 1.02, nitroTopSpeed: 1.03, engineAccel: 1.06, gripMax: 1.04, gripDrift: 0.98, yawResponse: 1.02, brakeForce: 1.04 },
+    identity: identityFor('carrera'),
+    shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'low', wheelStyle: 'mesh', wheelRadiusMul: 1.03, trackMul: 1.06, archExtension: 0.04, caliper: 0xf2d21c },
+    finish: { paint: PAINTS[4].color, clearcoat: 0.85, flake: 0.55, roughness: 0.22, glassTint: 0x10202e, carbon: 0.05, accent: 0xd0d4da } },
 ]
 
 export function getSpec(id: string): CarSpec {
