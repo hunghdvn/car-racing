@@ -18,3 +18,8 @@ declare module 'three/addons/postprocessing/*.js' {
   const anyExport: any
   export = anyExport
 }
+
+declare module 'three/addons/loaders/*.js' {
+  const anyExport: any
+  export = anyExport
+}

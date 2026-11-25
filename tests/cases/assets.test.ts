@@ -191,3 +191,32 @@ test('static batching: the dev audit log stays bounded across repeated builds (R
   const last = a[a.length - 1] as { root?: string }
   assert(last.root === 'ring-root-39', 'the ring keeps the MOST RECENT folds (harness still reads the live tail)')
 })
+
+/* ---------------------------------------------------------------- car library */
+
+test('car library: module contract is safe to import in node (no window/fetch at module scope)', async () => {
+  const lib = await import('../../src/assets/CarLibrary')
+  assert(typeof lib.preloadCars === 'function' && typeof lib.cloneRealCar === 'function'
+    && typeof lib.libraryReady === 'function' && typeof lib.disposeLibrary === 'function', 'library API surface')
+  assert(lib.libraryReady() === false, 'the cache is cold at import time (boot fires preloadCars itself)')
+})
+
+test('car library: disposeCarTree spares GLB-shared geometry (clones share buffers)', async () => {
+  const mod = await import('../../src/assets/CarModel').catch(() => null)
+  const disposeCarTree = mod?.disposeCarTree as unknown as ((root: Group) => void) | undefined
+  const markCarGeometryShared = mod?.markCarGeometryShared as unknown as ((g: unknown) => void) | undefined
+  assert(typeof disposeCarTree === 'function' && typeof markCarGeometryShared === 'function',
+    'disposeCarTree + markCarGeometryShared are exported from CarModel')
+  const seen = { shared: false, own: false }
+  const shared = new BoxGeometry()
+  shared.addEventListener('dispose', () => { seen.shared = true })
+  markCarGeometryShared!(shared)
+  const own = new BoxGeometry()
+  own.addEventListener('dispose', () => { seen.own = true })
+  const root = new Group()
+  root.add(new Mesh(shared, new MeshStandardMaterial()))
+  root.add(new Mesh(own, new MeshStandardMaterial()))
+  disposeCarTree!(root)
+  assert(seen.shared === false, 'a GLB-shared geometry must survive car disposal — the preload cache still references it')
+  assert(seen.own === true, 'per-instance geometry (glow planes, flames) still disposes normally')
+})

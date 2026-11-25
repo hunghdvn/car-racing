@@ -4,6 +4,9 @@ import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
 import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams } from './MaterialSpecs'
+import { isGLBMaterialShared, isSharedCarGeometry } from './CarShared'
+
+export { markCarGeometryShared } from './CarShared'
 import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
 
 /* ------------------------------------------------------------------------- *
@@ -35,6 +38,8 @@ export interface CarModel {
   setHeadlights(on: boolean): void
   setPaint(hex: number): void
   paintMats: THREE.MeshPhysicalMaterial[]
+  /** nitro flame meshes (scale/opacity driven by setNitro); GLB clones + procedural */
+  nitroTips?: THREE.Object3D[]
 }
 
 interface Station {
@@ -302,21 +307,23 @@ function memoDetailMat<T extends THREE.Material>(key: string, make: () => T): T 
   return m
 }
 
-/** True for the memoised car materials every mounted car shares. */
+/** True for the memoised car materials every mounted car shares, plus the
+ *  GLB-authored materials the preload cache owns (Task 5 clones share them). */
 export function isSharedCarMaterial(m: unknown): boolean {
-  return m != null && sharedCarMats.has(m as THREE.Material)
+  return m != null && (sharedCarMats.has(m as THREE.Material) || isGLBMaterialShared(m))
 }
 
 /**
- * Dispose a retired car tree: geometry always (every buildCar mints fresh),
- * materials only when they are NOT field-wide singletons (per-car paint,
- * headlight, brake and flame materials). Mirrors util.disposeTree's shape.
+ * Dispose a retired car tree: geometry only when NOT preload-owned (GLB clones
+ * share buffers with the cache), materials only when they are NOT field-wide
+ * singletons (per-car paint, headlight, brake and flame materials).
+ * Mirrors util.disposeTree's shape.
  */
 export function disposeCarTree(root: THREE.Object3D, isShared: (m: unknown) => boolean = isSharedCarMaterial): void {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
-    mesh.geometry?.dispose()
+    if (mesh.geometry && !isSharedCarGeometry(mesh.geometry)) mesh.geometry.dispose()
     const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
     for (const m of mats) if (!isShared(m)) m.dispose()
   })
@@ -1102,6 +1109,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     group,
     wheels,
     paintMats,
+    nitroTips: flames,
     setBrake(v: number) {
       if (brakeVal === v) return
       brakeVal = v
