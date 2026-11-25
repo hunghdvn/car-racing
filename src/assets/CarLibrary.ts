@@ -28,6 +28,13 @@ const HERO_MICRO = 0.293
 let preload: Promise<void> | null = null
 const cache = new Map<CarId, THREE.Group>()
 
+/* session kill switch (?proc=1, harness override): force every buildCar back
+ * to the procedural builder — A/B shots, offline dev, and the functional
+ * battery's proc-fallback rec all lean on this. */
+let forcedProcedural = typeof location !== 'undefined' && new URLSearchParams(location.search).has('proc')
+export function forceProcedural(): boolean { return forcedProcedural }
+export function setForceProcedural(v: boolean): void { forcedProcedural = v }
+
 export function libraryReady(): boolean {
   return cache.size === CAR_IDS.length
 }
@@ -157,21 +164,34 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
 
   // wheel rebuild: canonical pivots → procedural handle contract
   // (steer group 'wheel-<c>' at the hub, 'wheel-spin' child, whole wheel
-  // subtree reparented into spin so brake/caliper spin with it)
+  // subtree reparented into spin so brake/caliper spin with it).
+  // The pipeline BAKES wheel geometry in world space and leaves the pivot at
+  // identity — node origins say nothing about the hub (they read the grouper
+  // anchor). CAR_RIGS.wheelPos are the pipeline-measured hubs and the only
+  // hub truth; the wheel's world box is validated against them so a stale
+  // rig table or misbaked asset degrades to the procedural builder instead
+  // of shipping wheels that orbit the cabin when steered.
   group.updateMatrixWorld(true)
   const wheels: WheelHandle[] = []
+  const wbox = new THREE.Box3()
   for (let i = 0; i < 4; i++) {
     const corner = corners[i]
     const node = byName(group, `wheel-${corner}-lr`)
-    if (!node?.parent) { console.warn(`[carlib] ${id}: wheel-${corner}-lr vanished mid-clone`); return null }
-    const hub = new THREE.Vector3()
-    node.getWorldPosition(hub)
+    if (!node) { console.warn(`[carlib] ${id}: wheel-${corner}-lr vanished mid-clone`); return null }
+    const hub = new THREE.Vector3(rig.wheelPos[i][0], rig.wheelPos[i][1], rig.wheelPos[i][2])
+    wbox.setFromObject(node)
+    const cc = new THREE.Vector3()
+    wbox.getCenter(cc)
+    if (cc.distanceTo(hub) > 0.07 || wbox.min.y < -0.07 || wbox.min.y > 0.12) {
+      console.warn(`[carlib] ${id}: ${corner} wheel box centre (${cc.x.toFixed(2)},${cc.y.toFixed(2)},${cc.z.toFixed(2)}) / bottom ${wbox.min.y.toFixed(2)} disagrees with the rig hub (${hub.x.toFixed(2)},${hub.y.toFixed(2)},${hub.z.toFixed(2)})`)
+      return null
+    }
     const steer = new THREE.Group(); steer.name = `wheel-${corner}`
     steer.position.copy(hub)
     const spin = new THREE.Group(); spin.name = 'wheel-spin'
     steer.add(spin)
-    node.parent.add(steer)
-    spin.attach(node) // keeps the GLB hub's world transform under the new parents
+    group.add(steer) // model space — NOT node.parent (the vr-rig grouper, whose TRS would double the hub)
+    spin.attach(node) // keeps the baked world placement (bakes the grouper TRS in); parks spin's origin on the hub
     wheels.push({ steer, spin, radius: rig.wheelRadius[i], front: i < 2 })
   }
 

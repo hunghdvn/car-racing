@@ -125,6 +125,14 @@ function xformPoint(m, p) {
     m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14],
   ]
 }
+/** direction transform (rotation/scale part only) + normalise — for NORMALs */
+function xformDir(m, v) {
+  const x = m[0] * v[0] + m[4] * v[1] + m[8] * v[2]
+  const y = m[1] * v[0] + m[5] * v[1] + m[9] * v[2]
+  const z = m[2] * v[0] + m[6] * v[1] + m[10] * v[2]
+  const l = Math.hypot(x, y, z) || 1
+  return [x / l, y / l, z / l]
+}
 function attrMinMax(pos) {
   // Accessor.getMin caches into metadata and throws without it — compute manually
   const arr = pos.getArray(), n = pos.getCount(), item = arr.length / n
@@ -313,6 +321,9 @@ async function processCar(id) {
       const idxAcc = prim.getIndices(), ia = idxAcc ? idxAcc.getArray() : null
       const nTri = Math.floor((ia ? ia.length : pos.getCount()) / 3)
       const material = prim.getMaterial()
+      const nrmAcc = prim.getAttribute('NORMAL')
+      const na = nrmAcc ? nrmAcc.getArray() : null
+      const nes = nrmAcc ? nrmAcc.getElementSize() : 0
       for (let t = 0; t < nTri; t++) {
         const li = ia ? [ia[t * 3], ia[t * 3 + 1], ia[t * 3 + 2]] : [t * 3, t * 3 + 1, t * 3 + 2]
         const ws = new Array(9)
@@ -322,7 +333,7 @@ async function processCar(id) {
           if (w[0] < sMinX) sMinX = w[0]; if (w[0] > sMaxX) sMaxX = w[0]
           if (w[2] < sMinZ) sMinZ = w[2]; if (w[2] > sMaxZ) sMaxZ = w[2]
         }
-        triPool.push({ prim, material, ws, li })
+        triPool.push({ prim, material, mat, na, nes, ws, li })
       }
     }
   }
@@ -341,7 +352,14 @@ async function processCar(id) {
     const ni = []
     for (let k = 0; k < 3; k++) {
       let n = e.vmap.get(t.li[k])
-      if (n === undefined) { n = e.verts.length; e.vmap.set(t.li[k], n); e.verts.push({ li: t.li[k], world: [t.ws[k * 3], t.ws[k * 3 + 1], t.ws[k * 3 + 2]] }) }
+      if (n === undefined) {
+        n = e.verts.length; e.vmap.set(t.li[k], n)
+        e.verts.push({
+          li: t.li[k],
+          world: [t.ws[k * 3], t.ws[k * 3 + 1], t.ws[k * 3 + 2]],
+          nrm: t.na ? xformDir(t.mat, [t.na[t.li[k] * t.nes], t.na[t.li[k] * t.nes + 1], t.na[t.li[k] * t.nes + 2]]) : null,
+        })
+      }
       ni.push(n)
     }
     e.tris.push(ni)
@@ -637,7 +655,22 @@ async function processCar(id) {
 /* synthesized meshes (no three.js in node: hand-built accessors) */
 function primFromSubset(doc, src, verts, triList, material) {
   const out = doc.createPrimitive()
+  // POSITION/NORMAL must land in WORLD space (the pivot node is identity and
+  // the wheel report / brake / caliper are all measured in world): copying the
+  // source array would bake wheels at their SOURCE node's local origin — the
+  // merged Sketchfab wheel meshes put all four wheels around (0,0,0), which
+  // once shipped every GLB with its wheels stacked inside the cabin.
+  const worldNrm = src.getAttribute('NORMAL') && verts.every((v) => v.nrm)
   for (const semantic of src.listSemantics()) {
+    if (semantic === 'POSITION' || (semantic === 'NORMAL' && worldNrm)) {
+      const dst = new Float32Array(verts.length * 3)
+      for (let v = 0; v < verts.length; v++) {
+        const s = semantic === 'POSITION' ? verts[v].world : verts[v].nrm
+        dst[v * 3] = s[0]; dst[v * 3 + 1] = s[1]; dst[v * 3 + 2] = s[2]
+      }
+      out.setAttribute(semantic, doc.createAccessor().setType(Accessor.Type.VEC3).setArray(dst))
+      continue
+    }
     const a = src.getAttribute(semantic)
     const arr = a?.getArray()
     if (!arr) continue

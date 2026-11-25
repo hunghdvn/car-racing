@@ -345,7 +345,6 @@ try {
   // audited here (the node suite runs headless — buildCar cannot execute there).
   // A dedicated boot carrying a persisted model selection lets the BOOT path
   // itself (not only selectModel) be checked for physics + mesh + grid.
-  const EXPECT_SPOKES = { r34: 20, '930': 32, s15: 24, centenario: 48, terzo: 48, carrera: 48 } // spokeCountForStyle(style)*4, per CarSpecs.ts
   await page.close() // the 11-check page has served; free its WebGL context
   const EXPECT_STANDINGS = ['YOU', 'PORSCHE 911 TURBO', 'LAMBORGHINI CENTENARIO LP 770-4', 'NISSAN SILVIA S15', 'NISSAN SKYLINE GT-R R34', 'PORSCHE 911 TURBO']
   const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
@@ -358,12 +357,16 @@ try {
 
   const boot = await mp.evaluate(() => {
     const g = window.__dbg.game
-    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
-    const byName = (name) => window.__dbg.scene.children.find((o) => o.name === name)
+    const RIGS = window.__dbg.CarRigs
+    const radii = (car) => car.wheels.map((w) => +w.radius.toFixed(3))
+    const hasPivot = (root) => { let f = false; root.traverse((o) => { if (!f && o.name === 'wheel-fl-lr') f = true }); return f }
     return {
       aiSpecIds: g.ai.map((a) => a.spec.id),
-      aiSpokes: [0, 1, 2, 3, 4].map((i) => spokeTotal(byName(`ai-car-${i}`))),
-      playerSpokes: spokeTotal(g.car.group),
+      aiRadii: g.aiCars.map((c) => radii(c)),
+      expectRadii: g.ai.map((a) => RIGS[a.spec.id].wheelRadius),
+      playerRadii: radii(g.car),
+      expectPlayerRadii: RIGS[g.selectedSpec.id].wheelRadius,
+      playerGlb: hasPivot(g.car.group),
       playerTop: g.player.phys.tuning.topSpeed,
       heroRef: g.ai.find((a) => a.spec.id === 'r34')?.tuning?.topSpeed ?? null,
       selectedId: g.selectedSpec.id,
@@ -371,18 +374,21 @@ try {
     }
   })
 
-  // §10.2 / C2: the AI field renders the ASSIGNED models, not five hero clones
-  // (every wheel of a hero build reads 20 spokes; a mixed grid cannot).
+  // §10.2 / C2: the AI field renders the ASSIGNED models, not five hero clones.
+  // Real-model rigs give every car its CAR_RIGS wheel-radius signature (the
+  // s15's 0.248 rears vs r34's 0.32 vs Centenario's 0.326) — five r34 clones
+  // would all read the same four radii.
   const aiFieldOk = boot.aiSpecIds.join(',') === '930,centenario,s15,r34,930'
-    && boot.aiSpokes.every((n, i) => n === EXPECT_SPOKES[boot.aiSpecIds[i]])
-  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-spoke totals ${JSON.stringify(boot.aiSpokes)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(Object.values(EXPECT_SPOKES))}); five r34 clones would all read 20`)
+    && boot.aiRadii.every((r, i) => JSON.stringify(r) === JSON.stringify(boot.expectRadii[i]))
+  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-radius signatures ${JSON.stringify(boot.aiRadii)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(boot.expectRadii)}); five r34 clones would all read the r34 rig`)
 
   // C1: a persisted model must retune the BOOT physics, not just the mesh.
   const bootDriftOk = boot.selectedId === 's15'
-    && boot.playerSpokes === EXPECT_SPOKES.s15
+    && JSON.stringify(boot.playerRadii) === JSON.stringify(boot.expectPlayerRadii)
+    && boot.playerGlb === true
     && boot.heroRef != null
     && Math.abs(boot.playerTop - boot.heroRef * 0.96) < 1e-6
-  rec('boot-retunes-physics', bootDriftOk, `stored 's15' → selected=${boot.selectedId}, mesh spokes=${boot.playerSpokes} (s15=${EXPECT_SPOKES.s15}), topSpeed=${boot.playerTop?.toFixed?.(3)} vs r34 ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
+  rec('boot-retunes-physics', bootDriftOk, `stored 's15' → selected=${boot.selectedId}, mesh radii=${JSON.stringify(boot.playerRadii)} (s15 rig=${JSON.stringify(boot.expectPlayerRadii)}), GLB pivot present=${boot.playerGlb}, topSpeed=${boot.playerTop?.toFixed?.(3)} vs r34 ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
 
   // §10.5: standings carry the model names, never the paint names.
   const standingsOk = Array.isArray(boot.standings)
@@ -392,21 +398,24 @@ try {
   rec('standings-are-model-names', standingsOk, `standings ${JSON.stringify(boot.standings)} (expect ${JSON.stringify(EXPECT_STANDINGS)})`)
 
   // §10.4: the garage onModel seam rebuilds the live player group + retunes it.
+  // Real clones are identified by their rig's radius signature per model.
   const garage = await mp.evaluate(() => {
     const g = window.__dbg.game
-    const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
-    const before = spokeTotal(g.car.group)
+    const RIGS = window.__dbg.CarRigs
+    const radii = () => g.car.wheels.map((w) => +w.radius.toFixed(3))
+    const before = radii()
     const id = window.__selectModel('centenario')
-    const after = spokeTotal(g.car.group)
+    const after = radii()
     const top = g.player.phys.tuning.topSpeed
     window.__selectModel('r34')
-    const back = spokeTotal(g.car.group)
-    return { before, id, after, top, back }
+    const back = radii()
+    return { before, id, after, top, back,
+      sig: { s15: RIGS.s15.wheelRadius, centenario: RIGS.centenario.wheelRadius, r34: RIGS.r34.wheelRadius } }
   })
-  const garageOk = garage.id === 'centenario' && garage.before === EXPECT_SPOKES.s15
-    && garage.after === EXPECT_SPOKES.centenario && garage.back === EXPECT_SPOKES.r34
+  const garageOk = garage.id === 'centenario' && JSON.stringify(garage.before) === JSON.stringify(garage.sig.s15)
+    && JSON.stringify(garage.after) === JSON.stringify(garage.sig.centenario) && JSON.stringify(garage.back) === JSON.stringify(garage.sig.r34)
     && boot.heroRef != null && Math.abs(garage.top - boot.heroRef * 1.12) < 1e-6
-  rec('garage-rebuilds-on-model', garageOk, `s15(${garage.before})→centenario(${garage.after}, top ${garage.top?.toFixed?.(3)})→r34(${garage.back}); selectModel returned '${garage.id}'`)
+  rec('garage-rebuilds-on-model', garageOk, `s15(${JSON.stringify(garage.before)})→centenario(${JSON.stringify(garage.after)}, top ${garage.top?.toFixed?.(3)})→r34(${JSON.stringify(garage.back)}); selectModel returned '${garage.id}'`)
 
   // ---- PR review F7/R2-10: vr.paint storage validation on the boot path ----
   // Seeds exercise readPaintSelection's full contract: a palette hex boots the
@@ -497,11 +506,18 @@ try {
   // 'static-batch' meshes land: every wheel must own its hardware batches
   // inside its own spin / wheel-root subtree, and the car root must not
   // accumulate wheel-position batches.
+  // R2-1 (procedural FALLBACK insurance): with real models wired in, the
+  // static-merge fold landmarks only exist on the procedural builder — drive
+  // the ?proc path via the same session lever and keep the original teeth.
   let wheelTree = null
   try {
     wheelTree = await pKeys.evaluate(() => {
-      const { CAR_SPECS, buildCar, disposeCarTree, THREE } = window.__dbg
-      const car = buildCar(0xf27a1e, CAR_SPECS.find((s) => s.id === 'r34'))
+      const { CAR_SPECS, buildCar, disposeCarTree, THREE, forceProcedural } = window.__dbg
+      forceProcedural(true)
+      let car = null
+      try {
+        car = buildCar(0xf27a1e, CAR_SPECS.find((s) => s.id === 'r34'))
+      } finally { forceProcedural(false) }
       let spinGroups = 0
       let wheelGroups = 0
       let disc = null
@@ -554,7 +570,8 @@ try {
       return { spinGroups, wheelGroups, hasDisc: !!disc, chain, reachedSpin, wheels, rootWheelBatches }
     })
   } catch (e) {
-    rec('wheels-fold-stop-at-spin', false, `boot failed: ${String(e).slice(0, 160)}`)
+    try { await pKeys.evaluate(() => window.__dbg.forceProcedural(false)) } catch { /* page gone */ }
+    rec('proc-wheel-fold-fallback', false, `boot failed: ${String(e).slice(0, 160)}`)
   }
   if (wheelTree) {
     // Direct-child thresholds (measured on the shipped hero build): every wheel
@@ -565,8 +582,82 @@ try {
     // side has real teeth while staying honest about the shipped geometry.
     const wheelsOwnBatches = wheelTree.wheels.length === 4
       && wheelTree.wheels.every((w) => w.spinBatches >= 1 && w.wheelBatches >= 1)
-    rec('wheels-fold-stop-at-spin', wheelTree.spinGroups === 4 && wheelTree.wheelGroups === 4 && wheelTree.hasDisc && wheelTree.reachedSpin && wheelsOwnBatches && wheelTree.rootWheelBatches === 0,
+    rec('proc-wheel-fold-fallback', wheelTree.spinGroups === 4 && wheelTree.wheelGroups === 4 && wheelTree.hasDisc && wheelTree.reachedSpin && wheelsOwnBatches && wheelTree.rootWheelBatches === 0,
       `spin groups ${wheelTree.spinGroups}/4, wheel groups ${wheelTree.wheelGroups}/4, brake-disc chain [${wheelTree.chain.join(' > ')}] reaches wheel-spin = ${wheelTree.reachedSpin}, per-wheel DIRECT-CHILD batches ${wheelTree.wheels.map((w) => `${w.name}:spin=${w.spinBatches},root=${w.wheelBatches}`).join(' ')} (each wheel needs >=1 batch as a direct child of spin + >=1 of its root — subtree traversal made the halves measure together), root-level WHEEL-HARDWARE footprint batches ${wheelTree.rootWheelBatches} (must be 0 — R2-1/R3-3: hardware folds into spin/wheel, never past it to the car root)`)
+  }
+
+  // ---- real-model rig integrity (real-car-models spec Task 7) -------------
+  // The shipped cars are GLB clones: audit the pipeline contract end-to-end
+  // through the SHIPPED builder — canonical pivots, spin reparenting, ground
+  // sit, rig-driven radii, paint/logo/nitro add-ons, and cache survival.
+  let rigsOut = null
+  try {
+    rigsOut = await pKeys.evaluate(async () => {
+      const d = window.__dbg
+      await d.preloadCars()
+      const out = {}
+      for (const spec of d.CAR_SPECS) {
+        const car = d.buildCar(0xf27a1e, spec)
+        const byName = (n) => { let f = null; car.group.traverse((o) => { if (!f && o.name === n) f = o }); return f }
+        const rig = d.CarRigs[spec.id]
+        const corners = ['fl', 'fr', 'rl', 'rr']
+        const wheels = corners.map((c) => byName(`wheel-${c}-lr`))
+        const spinOk = !!byName('wheel-spin')
+        const brakeParented = corners.every((c, i) => {
+          let o = byName(`brake-${c}-lr`)
+          let ok = false
+          while (o) { if (o === wheels[i]) { ok = true; break } o = o.parent }
+          return !!byName(`brake-${c}-lr`) && ok
+        })
+        const box = new d.THREE.Box3().setFromObject(car.group)
+        out[spec.id] = {
+          root: car.group.name === `car-model-${spec.id}`,
+          wheels: wheels.every(Boolean),
+          spin: spinOk, brakeParented,
+          grounded: box.min.y >= Math.min(0, rig.groundClearance) - 0.06 && box.min.y <= 0.12,
+          radius: car.wheels.every((w) => w.radius >= 0.2 && w.radius <= 0.44),
+          frontMinusZ: (() => { const rootOf = (w) => w.steer ?? w.spin.parent ?? w.spin; return rootOf(car.wheels[0]).getWorldPosition(new d.THREE.Vector3()).z < 0 && rootOf(car.wheels[2]).getWorldPosition(new d.THREE.Vector3()).z > 0 })(),
+          paint: car.paintMats.length > 0 || d.CarRigs[spec.id].bakedPaint,
+          logo: !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2,
+        }
+        d.disposeCarTree(car.group)
+        // cache-survives-dispose: a retired clone must not blank the cache
+        const again = d.buildCar(0xf27a1e, spec)
+        out[spec.id].cache = again.group.name === `car-model-${spec.id}` && again.paintMats[0] !== car.paintMats[0]
+        d.disposeCarTree(again.group)
+      }
+      return out
+    })
+  } catch (e) {
+    rec('glb-rigs-integrity', false, `boot failed: ${String(e).slice(0, 160)}`)
+  }
+  if (rigsOut) {
+    const ids = Object.keys(rigsOut)
+    const bad = ids.filter((id) => !Object.values(rigsOut[id]).every(Boolean))
+    rec('glb-rigs-integrity', ids.length === 6 && bad.length === 0,
+      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, front-at-−z, paint, logo, nitro, cache-survives-dispose)`
+        : `failed flags: ${bad.map((id) => `${id}: ${Object.entries(rigsOut[id]).filter(([, v]) => !v).map(([k]) => k).join(',')}`).join(' | ')}`)
+  }
+
+  // rig-table data gate (the agreed replacement for the material-side caliper
+  // check under baked textures): every CAR_RIGS row is a plausible rig. The
+  // material-side caliper gate below stays too — clones still carry the hex.
+  const rigData = await pKeys.evaluate(() => Object.fromEntries(
+    window.__dbg.CAR_SPECS.map((s) => {
+      const r = window.__dbg.CarRigs[s.id]
+      return [s.id, {
+        caliper: Number.isInteger(r.caliperColor),
+        radii: r.wheelRadius.length === 4 && r.wheelRadius.every((v) => v >= 0.2 && v <= 0.44),
+        clearance: r.groundClearance >= -0.06 && r.groundClearance <= 0.25,
+        anchors: [...r.logoAnchor, ...r.nitroAnchor.flat()].every(Number.isFinite),
+      }]
+    }),
+  )).catch(() => null)
+  if (rigData) {
+    const bad = Object.entries(rigData).filter(([, v]) => !Object.values(v).every(Boolean))
+    rec('glb-rig-data', Object.keys(rigData).length === 6 && bad.length === 0,
+      bad.length === 0 ? 'CAR_RIGS rows are sane for all six (integer caliper, radii band, clearance band, finite anchors)'
+        : `bad rig rows: ${bad.map(([id, v]) => `${id}:${Object.entries(v).filter(([, ok]) => !ok).map(([k]) => k).join(',')}`).join(' ')}`)
   }
 
   // R2-8: the caliper colour must arrive through the carMaterialParamsFor
