@@ -1,14 +1,19 @@
 import { globalObject } from '../core/globals'
-import { PAINTS } from '../config'
+import { CAR, PAINTS } from '../config'
 import type { CarStat } from './CarTuning'
 
 /* ------------------------------------------------------------------------- *
- * The car catalog (car-models spec §5): four models, each one a resolved
- * record of silhouette (authored stations), cosmetic kit and stat bias.
+ * The car catalog (car-models spec §5 + real-car-models spec): five real
+ * production cars, each one a resolved record of silhouette (authored
+ * stations), cosmetic kit and stat bias. The GLB pipeline owns the visual
+ * truth; this table remains the runtime contract — the shape/kit pair is the
+ * procedural FALLBACK blueprint (shared between cars where the fallback body
+ * reads close), the finish is the paint-material recipe, and `identity`
+ * carries the real-world branding behind the CAR.realBranding toggle.
  * Geometry data lives here — config.ts stays the tuning surface.
  * ------------------------------------------------------------------------- */
 
-export type CarId = 'hero' | 'hyper' | 'grip' | 'drift'
+export type CarId = 'r34' | '930' | 's15' | 'centenario' | 'terzo'
 
 export interface CarStation { z: number; hw: number; by: number; ty: number; rt: number; rb: number; ts?: number }
 export interface CarShape { bodyStations: readonly CarStation[]; cabinStations: readonly CarStation[] }
@@ -43,6 +48,16 @@ export interface CarFinish {
   accent: number
 }
 
+export interface CarIdentity {
+  /** real-world display name, e.g. "Nissan Skyline GT-R R34" */
+  name: string
+  maker: string
+  /** attribution for ASSETS.md parity: licence + Sketchfab author */
+  license: string
+  /** per-car kill switch, ANDed with CAR.realBranding */
+  realBranding: boolean
+}
+
 export interface CarSpec {
   id: CarId
   name: string
@@ -51,6 +66,12 @@ export interface CarSpec {
   shape: CarShape
   kit: CarKit
   finish: CarFinish
+  /** real-world branding metadata (optional so synthetic test specs stay valid) */
+  identity?: CarIdentity
+  /** the pre-branding fictional name, kept for the REAL_BRANDING=off path */
+  fictionalName?: string
+  /** rig lookup override; defaults to spec.id (CarRigs.ts) */
+  rigId?: CarId
 }
 
 /* Hero silhouette, verbatim from the shipped car (car-models spec §5). The
@@ -108,8 +129,24 @@ const HERO_FINISH: CarFinish = {
   accent: BASE_KIT.caliper,
 }
 
+/* Real-world identity table (real-car-models spec §branding). Model sources +
+ * licences live in ASSETS.md; CAR.realBranding is the publish-time kill
+ * switch, identity.realBranding the per-car one. When both are on, `name`
+ * carries the real car name; otherwise the catalog's fictionalName. */
+const REAL: Record<CarId, { name: string; maker: string; license: string }> = {
+  r34: { name: 'Nissan Skyline GT-R R34', maker: 'Nissan', license: 'CC-BY 4.0 — model by Lexyc16 (Sketchfab)' },
+  '930': { name: 'Porsche 911 Turbo', maker: 'Porsche', license: 'CC-BY 4.0 — model by Lionsharp (Sketchfab)' },
+  s15: { name: 'Nissan Silvia S15', maker: 'Nissan', license: 'CC-BY 4.0 — model by autoNgraphic (Sketchfab)' },
+  centenario: { name: 'Lamborghini Centenario LP 770-4', maker: 'Lamborghini', license: 'CC-BY 4.0 — model by SDC (Sketchfab)' },
+  terzo: { name: 'Lamborghini Terzo Millennio', maker: 'Lamborghini', license: 'CC-BY-NC 4.0 — model by SDC (Sketchfab)' },
+}
+
+const identityFor = (id: CarId): CarIdentity => ({ ...REAL[id], realBranding: true })
+const displayName = (id: CarId, fictional: string): string => (CAR.realBranding ? REAL[id].name : fictional)
+
 export const HERO_SPEC: CarSpec = {
-  id: 'hero', name: 'Velocity GT', class: 'BALANCED', stat: {},
+  id: 'r34', name: displayName('r34', 'Velocity GT'), fictionalName: 'Velocity GT',
+  class: 'BALANCED', stat: {}, identity: identityFor('r34'),
   shape: { bodyStations: BODY_STATIONS, cabinStations: CABIN_STATIONS },
   kit: { ...BASE_KIT },
   finish: { ...HERO_FINISH },
@@ -193,20 +230,32 @@ const DRIFT_SHAPE: CarShape = {
  * glossier + denser flake than hero; grip is Night Shift satin graphite with a
  * carbon-forward (darkest) weave and a yellow caliper-pop accent; drift wears
  * Plasma Gold at flake-max/roughness-min so it reads metallic, warm glass. */
+/* The catalog (order is the garage card order). Signatures are palette
+ * members only (the picker can never disagree with the car). Shape/kit/finish
+ * ride the procedural fallback blueprint noted per entry; the GLB pipeline
+ * replaces the visual layer but never these records. */
 export const CAR_SPECS: readonly CarSpec[] = [
   HERO_SPEC,
-  { id: 'hyper', name: 'Solaris Hyper', class: 'TOP SPEED',
-    stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, yawResponse: 0.95, drag: 0.92 },
-    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e },
-    finish: { paint: PAINTS[4].color, clearcoat: 0.9, flake: 0.75, roughness: 0.18, glassTint: 0x101a2a, carbon: 0.08, accent: 0x18d8e8 } },
-  { id: 'grip', name: 'Apex Grip', class: 'CORNER GRIP',
+  { id: '930', name: displayName('930', 'Apex Grip'), fictionalName: 'Apex Grip', class: 'CORNER GRIP',
     stat: { topSpeed: 0.90, nitroTopSpeed: 0.90, gripMax: 1.12, gripDrift: 1.10, yawResponse: 1.08, brakeForce: 1.08 },
+    identity: identityFor('930'),
     shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'none', wheelStyle: 'multi-spoke', wheelRadiusMul: 1.04, trackMul: 1.05, archExtension: 0.05, caliper: 0x39c06a },
-    finish: { paint: PAINTS[2].color, clearcoat: 0.2, flake: 0.25, roughness: 0.55, glassTint: 0x151c25, carbon: 0.04, accent: 0xf2d21c } },
-  { id: 'drift', name: 'Slide King', class: 'DRIFT',
+    finish: { paint: PAINTS[0].color, clearcoat: 0.2, flake: 0.25, roughness: 0.55, glassTint: 0x151c25, carbon: 0.04, accent: 0xf2d21c } },
+  { id: 's15', name: displayName('s15', 'Slide King'), fictionalName: 'Slide King', class: 'DRIFT',
     stat: { topSpeed: 0.96, nitroTopSpeed: 0.96, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.30, yawResponse: 1.20 },
+    identity: identityFor('s15'),
     shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e },
     finish: { paint: PAINTS[5].color, clearcoat: 0.7, flake: 0.85, roughness: 0.15, glassTint: 0x241a10, carbon: 0.12, accent: 0xf29a1e } },
+  { id: 'centenario', name: displayName('centenario', 'Solaris Hyper'), fictionalName: 'Solaris Hyper', class: 'TOP SPEED',
+    stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, yawResponse: 0.95, drag: 0.92 },
+    identity: identityFor('centenario'),
+    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e },
+    finish: { paint: PAINTS[2].color, clearcoat: 0.9, flake: 0.75, roughness: 0.18, glassTint: 0x101a2a, carbon: 0.08, accent: 0x18d8e8 } },
+  { id: 'terzo', name: displayName('terzo', 'Vector Zero'), fictionalName: 'Vector Zero', class: 'HYPER',
+    stat: { topSpeed: 1.20, nitroTopSpeed: 1.14, engineAccel: 1.12, gripMax: 1.05, gripDrift: 1.05, driftYawBoost: 0.90, yawResponse: 1.00, drag: 0.88 },
+    identity: identityFor('terzo'),
+    shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xc23a28 },
+    finish: { paint: PAINTS[3].color, clearcoat: 0.95, flake: 0.65, roughness: 0.15, glassTint: 0x101a2a, carbon: 0.06, accent: 0xff8c1a } },
 ]
 
 export function getSpec(id: string): CarSpec {
@@ -266,8 +315,8 @@ export function readModelSelection(): CarId {
   try {
     const store = (globalObject().localStorage as Storage | undefined) ?? undefined
     const v = store?.getItem(MODEL_KEY)
-    return CAR_SPECS.find((s) => s.id === v)?.id ?? 'hero'
-  } catch { return 'hero' }
+    return CAR_SPECS.find((s) => s.id === v)?.id ?? 'r34'
+  } catch { return 'r34' }
 }
 
 export function writeModelSelection(id: CarId): void {

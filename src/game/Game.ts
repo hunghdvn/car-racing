@@ -98,7 +98,7 @@ export class Game {
   private readonly mapAi: { x: number; z: number }[] = []
   private mapAiCount = 0
 
-  constructor(canvas: HTMLCanvasElement, paintHex: number = PAINTS[1].color, modelId: CarId = 'hero') {
+  constructor(canvas: HTMLCanvasElement, paintHex: number = PAINTS[1].color, modelId: CarId = 'r34') {
     this.view = new Renderer(canvas)
     this.sky = new Sky()
     this.view.attachSky(this.sky)

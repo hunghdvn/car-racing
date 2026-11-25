@@ -281,7 +281,11 @@ export const PAINTS: PaintDef[] = [
  *  deterministic AI grid model assignment (slot order, AI.count entries). */
 export const CAR = {
   statClamp: 0.4,
-  aiModels: ['grip', 'hyper', 'drift', 'hero', 'grip'] as const,
+  /** REAL_BRANDING (real-car-models spec): false publishes the fictional-name
+   *  catalog with zero code change; ?proc=1 / forceProcedural is the sibling
+   *  kill switch for the GLB layer. Attribution: ASSETS.md. */
+  realBranding: true,
+  aiModels: ['930', 'centenario', 's15', 'r34', '930'] as const,
 }
 
 /** Determinism: master seed for all seeded placement (spec §22). */

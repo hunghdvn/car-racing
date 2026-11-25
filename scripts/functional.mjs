@@ -345,12 +345,12 @@ try {
   // audited here (the node suite runs headless — buildCar cannot execute there).
   // A dedicated boot carrying a persisted model selection lets the BOOT path
   // itself (not only selectModel) be checked for physics + mesh + grid.
-  const EXPECT_SPOKES = { hero: 20, hyper: 48, grip: 32, drift: 24 } // spokeCountForStyle(style)*4, per CarSpecs.ts
+  const EXPECT_SPOKES = { r34: 20, '930': 32, s15: 24, centenario: 48, terzo: 48 } // spokeCountForStyle(style)*4, per CarSpecs.ts
   await page.close() // the 11-check page has served; free its WebGL context
-  const EXPECT_STANDINGS = ['YOU', 'APEX GRIP', 'SOLARIS HYPER', 'SLIDE KING', 'VELOCITY GT', 'APEX GRIP']
+  const EXPECT_STANDINGS = ['YOU', 'PORSCHE 911 TURBO', 'LAMBORGHINI CENTENARIO LP 770-4', 'NISSAN SILVIA S15', 'NISSAN SKYLINE GT-R R34', 'PORSCHE 911 TURBO']
   const PAINT_NAMES = ['SOLAR FLARE', 'VELOCITY RED', 'NIGHT SHIFT', 'VIPER GREEN', 'VELOCITY BLUE', 'PLASMA GOLD']
   const mp = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
-  await mp.addInitScript(() => { try { localStorage.setItem('vr.model', 'drift') } catch { /* private mode */ } })
+  await mp.addInitScript(() => { try { localStorage.setItem('vr.model', 's15') } catch { /* private mode */ } })
   await mp.goto(`${prev.url}/`, { waitUntil: 'load' })
   await mp.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 }).catch(() => {})
   await mp.waitForFunction('window.__probe && window.__probe().loadingHidden', null, { timeout: 30000 }).catch(() => {})
@@ -365,7 +365,7 @@ try {
       aiSpokes: [0, 1, 2, 3, 4].map((i) => spokeTotal(byName(`ai-car-${i}`))),
       playerSpokes: spokeTotal(g.car.group),
       playerTop: g.player.phys.tuning.topSpeed,
-      heroRef: g.ai.find((a) => a.spec.id === 'hero')?.tuning?.topSpeed ?? null,
+      heroRef: g.ai.find((a) => a.spec.id === 'r34')?.tuning?.topSpeed ?? null,
       selectedId: g.selectedSpec.id,
       standings: g.ui.standingNames ? Array.from(g.ui.standingNames) : null,
     }
@@ -373,16 +373,16 @@ try {
 
   // §10.2 / C2: the AI field renders the ASSIGNED models, not five hero clones
   // (every wheel of a hero build reads 20 spokes; a mixed grid cannot).
-  const aiFieldOk = boot.aiSpecIds.join(',') === 'grip,hyper,drift,hero,grip'
+  const aiFieldOk = boot.aiSpecIds.join(',') === '930,centenario,s15,r34,930'
     && boot.aiSpokes.every((n, i) => n === EXPECT_SPOKES[boot.aiSpecIds[i]])
-  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-spoke totals ${JSON.stringify(boot.aiSpokes)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(Object.values(EXPECT_SPOKES))}); five hero clones would all read 20`)
+  rec('ai-field-mixed-models', aiFieldOk, `AI wheel-spoke totals ${JSON.stringify(boot.aiSpokes)} for specs ${JSON.stringify(boot.aiSpecIds)} (expect ${JSON.stringify(Object.values(EXPECT_SPOKES))}); five r34 clones would all read 20`)
 
   // C1: a persisted model must retune the BOOT physics, not just the mesh.
-  const bootDriftOk = boot.selectedId === 'drift'
-    && boot.playerSpokes === EXPECT_SPOKES.drift
+  const bootDriftOk = boot.selectedId === 's15'
+    && boot.playerSpokes === EXPECT_SPOKES.s15
     && boot.heroRef != null
     && Math.abs(boot.playerTop - boot.heroRef * 0.96) < 1e-6
-  rec('boot-retunes-physics', bootDriftOk, `stored 'drift' → selected=${boot.selectedId}, mesh spokes=${boot.playerSpokes} (drift=${EXPECT_SPOKES.drift}), topSpeed=${boot.playerTop?.toFixed?.(3)} vs hero ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
+  rec('boot-retunes-physics', bootDriftOk, `stored 's15' → selected=${boot.selectedId}, mesh spokes=${boot.playerSpokes} (s15=${EXPECT_SPOKES.s15}), topSpeed=${boot.playerTop?.toFixed?.(3)} vs r34 ${boot.heroRef?.toFixed?.(3)}×0.96=${(boot.heroRef * 0.96)?.toFixed?.(3)}`)
 
   // §10.5: standings carry the model names, never the paint names.
   const standingsOk = Array.isArray(boot.standings)
@@ -396,17 +396,17 @@ try {
     const g = window.__dbg.game
     const spokeTotal = (root) => { let n = 0; root.traverse((o) => { if (o.name === 'wheel-spoke') n++ }); return n }
     const before = spokeTotal(g.car.group)
-    const id = window.__selectModel('hyper')
+    const id = window.__selectModel('centenario')
     const after = spokeTotal(g.car.group)
     const top = g.player.phys.tuning.topSpeed
-    window.__selectModel('hero')
+    window.__selectModel('r34')
     const back = spokeTotal(g.car.group)
     return { before, id, after, top, back }
   })
-  const garageOk = garage.id === 'hyper' && garage.before === EXPECT_SPOKES.drift
-    && garage.after === EXPECT_SPOKES.hyper && garage.back === EXPECT_SPOKES.hero
+  const garageOk = garage.id === 'centenario' && garage.before === EXPECT_SPOKES.s15
+    && garage.after === EXPECT_SPOKES.centenario && garage.back === EXPECT_SPOKES.r34
     && boot.heroRef != null && Math.abs(garage.top - boot.heroRef * 1.12) < 1e-6
-  rec('garage-rebuilds-on-model', garageOk, `drift(${garage.before})→hyper(${garage.after}, top ${garage.top?.toFixed?.(3)})→hero(${garage.back}); selectModel returned '${garage.id}'`)
+  rec('garage-rebuilds-on-model', garageOk, `s15(${garage.before})→centenario(${garage.after}, top ${garage.top?.toFixed?.(3)})→r34(${garage.back}); selectModel returned '${garage.id}'`)
 
   // ---- PR review F7/R2-10: vr.paint storage validation on the boot path ----
   // Seeds exercise readPaintSelection's full contract: a palette hex boots the
@@ -463,9 +463,9 @@ try {
     const minCardW = Math.min(...Array.from(row.children).map((c) => c.getBoundingClientRect().width))
     return { ok: true, left: r.left, right: r.right, scrollW: document.documentElement.scrollWidth, cards: row.children.length, rows, minCardW }
   })
-  const phoneOk = rowFit.ok && rowFit.cards === 4 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
+  const phoneOk = rowFit.ok && rowFit.cards === 5 && rowFit.left >= -1 && rowFit.right <= 391 && rowFit.scrollW <= 391
     && rowFit.rows >= 2 && rowFit.minCardW >= 64
-  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards across ${rowFit.rows} rows, min card width ${rowFit.minCardW?.toFixed?.(1)} (F11/R2-6: the four-card row must genuinely wrap, never shrink-to-fit or clip)`)
+  rec('garage-row-fits-390px', phoneOk, `card row [${rowFit.left?.toFixed?.(1)}, ${rowFit.right?.toFixed?.(1)}] in a 390 px viewport, scrollWidth ${rowFit.scrollW}, ${rowFit.cards} cards across ${rowFit.rows} rows, min card width ${rowFit.minCardW?.toFixed?.(1)} (F11/R2-6: the five-card row must genuinely wrap, never shrink-to-fit or clip)`)
   await pPhone.close()
 
   // ---- PR review R2-1/R2-2/R2-3/R2-8/R2-12 ---------------------------------
@@ -501,7 +501,7 @@ try {
   try {
     wheelTree = await pKeys.evaluate(() => {
       const { CAR_SPECS, buildCar, disposeCarTree, THREE } = window.__dbg
-      const car = buildCar(0xf27a1e, CAR_SPECS.find((s) => s.id === 'hero'))
+      const car = buildCar(0xf27a1e, CAR_SPECS.find((s) => s.id === 'r34'))
       let spinGroups = 0
       let wheelGroups = 0
       let disc = null
@@ -573,7 +573,7 @@ try {
   // door (which buildCar now calls — no side-read of spec.kit.caliper), so
   // the BUILT car must actually carry each model's kit caliper hex on some
   // material. Expectations are catalog literals, same as materials.test.ts.
-  const CALIPER = { hero: 0xc23a28, hyper: 0xe8b62e, grip: 0x39c06a, drift: 0xf27a1e }
+  const CALIPER = { r34: 0xc23a28, '930': 0x39c06a, s15: 0xf27a1e, centenario: 0xe8b62e, terzo: 0xc23a28 }
   let calipers = null
   try {
     calipers = await pKeys.evaluate((expected) => {
@@ -597,8 +597,8 @@ try {
     rec('caliper-colour-on-built-car', false, `boot failed: ${String(e).slice(0, 160)}`)
   }
   if (calipers) {
-    rec('caliper-colour-on-built-car', Object.values(calipers).length === 4 && calipers.hero && calipers.hyper && calipers.grip && calipers.drift,
-      `built cars carry their kit caliper hex: hero ${calipers.hero}, hyper ${calipers.hyper}, grip ${calipers.grip}, drift ${calipers.drift} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
+    rec('caliper-colour-on-built-car', Object.values(calipers).length === 5 && calipers.r34 && calipers['930'] && calipers.s15 && calipers.centenario && calipers.terzo,
+      `built cars carry their kit caliper hex: r34 ${calipers.r34}, 930 ${calipers['930']}, s15 ${calipers.s15}, centenario ${calipers.centenario}, terzo ${calipers.terzo} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
   }
 
   // R2-3 end-to-end: real keyboard Enter on a focused garage card must pick
@@ -617,8 +617,8 @@ try {
     active: document.querySelector('#model-cards .model-card.selected')?.dataset.model ?? null,
   })).catch((e) => { rec('keyboard-enter-picks-model', false, `boot failed: ${String(e).slice(0, 160)}`); return null })
   if (kbPick) {
-    rec('keyboard-enter-picks-model', kbPick.id === 'hyper' && kbPick.phase === 'idle' && kbPick.active === 'hyper',
-      `focused card 2 + Enter → model '${kbPick.id}', selected marker '${kbPick.active}' (expect hyper), phase '${kbPick.phase}' (expect idle — Enter must not also start the race)`)
+    rec('keyboard-enter-picks-model', kbPick.id === '930' && kbPick.phase === 'idle' && kbPick.active === '930',
+      `focused card 2 + Enter → model '${kbPick.id}', selected marker '${kbPick.active}' (expect 930), phase '${kbPick.phase}' (expect idle — Enter must not also start the race)`)
   }
 
   // R2-3: Enter on a FOCUSED START RACE must invoke beginRace exactly once
@@ -676,7 +676,7 @@ try {
         return { n: cards.length, all: cards.every((c) => c.getAttribute('tabindex') === '-1' && c.getAttribute('aria-disabled') === 'true') }
       }).catch((e) => { rec('cards-unfocusable-during-race', false, `boot failed: ${String(e).slice(0, 160)}`); kbRecorded.add('cards-unfocusable-during-race'); return null })
       if (lockAttrs) {
-        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 4 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
+        kbRec('cards-unfocusable-during-race', lockedGate && lockAttrs.n === 5 && lockAttrs.all, `${lockAttrs.n} cards, all tabindex=-1 + aria-disabled=true = ${lockAttrs.all}`)
       }
     }
   } catch (e) {
@@ -782,12 +782,12 @@ try {
   // it to the stored-first chain lands on the stale colour instead.
   try {
     const PICKED = 0x39c06a // PAINTS Viper Green (config.ts literal)
-    const STALE = 0xe8b62e // PAINTS Plasma Gold — also the drift signature, so a stored-first revert lands HERE
+    const STALE = 0xe8b62e // PAINTS Plasma Gold — also the s15 signature, so a stored-first revert lands HERE
     await pKeys.click(`#paint-swatches button[data-paint="${PICKED}"]`)
     await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 150)))
     const afterSwatch = await pKeys.evaluate((p) => ({ hex: window.__dbg.game.paintHex, explicit: window.__dbg.game.paintExplicit }), PICKED)
     await pKeys.evaluate((s) => { localStorage.setItem('vr.paint', String(s)) }, STALE) // plant stale storage
-    await pKeys.click('#model-cards .model-card[data-model="drift"]') // trusted click on a real card
+    await pKeys.click('#model-cards .model-card[data-model="s15"]') // trusted click on a real card
     await pKeys.evaluate(() => new Promise((r) => setTimeout(r, 250)))
     const afterCard = await pKeys.evaluate(() => ({
       hex: window.__dbg.game.paintHex,
@@ -795,8 +795,8 @@ try {
     }))
     rec('explicit-pick-survives-model-click',
       afterSwatch.hex === PICKED && afterSwatch.explicit === true
-        && afterCard.id === 'drift' && afterCard.hex === PICKED,
-      `swatch click → 0x${afterSwatch.hex.toString(16)} (explicit=${afterSwatch.explicit}); stale vr.paint=0x${STALE.toString(16)} planted; card click switched model to '${afterCard.id}' and the car still wears 0x${afterCard.hex.toString(16)} (must equal the pick, not the stale/drift-signature 0x${STALE.toString(16)} — R3-2: reverting the resolvePaintWithExplicit line lands here)`)
+        && afterCard.id === 's15' && afterCard.hex === PICKED,
+      `swatch click → 0x${afterSwatch.hex.toString(16)} (explicit=${afterSwatch.explicit}); stale vr.paint=0x${STALE.toString(16)} planted; card click switched model to '${afterCard.id}' and the car still wears 0x${afterCard.hex.toString(16)} (must equal the pick, not the stale/s15-signature 0x${STALE.toString(16)} — R3-2: reverting the resolvePaintWithExplicit line lands here)`)
   } catch (e) {
     rec('explicit-pick-survives-model-click', false, `boot failed: ${String(e).slice(0, 160)}`)
   }

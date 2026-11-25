@@ -61,13 +61,13 @@ test('materials: flake density and env reflection scale with the finish', () => 
   assert(dense.flakeSpeckle > sparse.flakeSpeckle, 'the extremes genuinely separate')
   // gloss reads more sky: higher clearcoat ⇒ at least as much env reflection
   const mat = CAR_SPECS.map((s) => [s.id, s.finish.clearcoat, paintMaterialParams(s.finish).envMapIntensity] as const)
-  const hyper = mat.find((m) => m[0] === 'hyper')!
-  const grip = mat.find((m) => m[0] === 'grip')!
-  assert(hyper[1] > grip[1], 'hyper is the glossiest clear')
-  assert(hyper[2] > grip[2], `hyper (cc ${hyper[1]}) must reflect more sky than satin grip (${grip[1]})`)
+  const cen = mat.find((m) => m[0] === 'centenario')!
+  const g930 = mat.find((m) => m[0] === '930')!
+  assert(cen[1] > g930[1], 'the Centenario is the glossiest clear')
+  assert(cen[2] > g930[2], `Centenario (cc ${cen[1]}) must reflect more sky than satin 930 (${g930[1]})`)
 })
 
-test('materials: the four paint maps are mutually distinct', () => {
+test('materials: the five paint maps are mutually distinct', () => {
   const sig = CAR_SPECS.map((s) => {
     const p = paintMaterialParams(s.finish)
     return `${p.roughness.toFixed(3)}|${p.clearcoat.toFixed(3)}|${p.clearcoatRoughness.toFixed(4)}|${p.flakeSpeckle.toFixed(4)}|${p.envMapIntensity.toFixed(3)}`
@@ -100,8 +100,8 @@ test('materials: glass stays smoked + reflective, never transmissive-flat', () =
 })
 
 test('materials: glass tints differ per model (warm drift vs cool hyper)', () => {
-  const drift = glassMaterialParams(getSpec('drift').finish)
-  const hyper = glassMaterialParams(getSpec('hyper').finish)
+  const drift = glassMaterialParams(getSpec('s15').finish)
+  const hyper = glassMaterialParams(getSpec('centenario').finish)
   const warm = (c: number): number => ((c >> 16) & 255) - ((c >> 0) & 255)
   assert(warm(drift.color) > 15, 'drift glass leans warm (red over blue)')
   assert(warm(hyper.color) < 0, 'hyper glass leans cool (blue over red)')
@@ -125,7 +125,7 @@ test('materials: carbon weave tints and reads with the carbon scalar', () => {
 })
 
 test('materials: the pure translators never mutate the finish they are given', () => {
-  const s = getSpec('drift')
+  const s = getSpec('s15')
   const snap = { ...s.finish }
   const p: PaintParams = paintMaterialParams(s.finish)
   const g: GlassParams = glassMaterialParams(s.finish)
@@ -145,18 +145,17 @@ test('materials: carMaterialParamsFor lands distinct per-model numbers through t
     ((s: (typeof CAR_SPECS)[number]) => { paint: PaintParams; caliper: number }) | undefined
   assert(typeof fn === 'function', 'carMaterialParamsFor is exported from MaterialSpecs')
   const b = Object.fromEntries(CAR_SPECS.map((s) => [s.id, fn!(s)]))
-  // satin grip vs gloss hyper: the micro-roughness breakup must genuinely differ
-  assert(b.grip.paint.microRoughness > b.hyper.paint.microRoughness,
-    `grip satin breakup (${b.grip.paint.microRoughness}) must beat hyper gloss (${b.hyper.paint.microRoughness})`)
-  // per-model calipers come from the kit (spec §6), hero keeps the shipped red
+  // satin 930 vs gloss Centenario: the micro-roughness breakup must genuinely differ
+  assert(b['930'].paint.microRoughness > b.centenario.paint.microRoughness,
+    `930 satin breakup (${b['930'].paint.microRoughness}) must beat Centenario gloss (${b.centenario.paint.microRoughness})`)
   // per-model calipers come from the kit (spec §6), pinned as catalog
   // literals (R2-8: comparing against spec.kit.caliper would only restate
   // the implementation — the functional battery asserts the BUILT brake
   // material colour against these same literals)
-  assert(b.hero.caliper === 0xc23a28,
-    'hero caliper stays the shipped 0xc23a28 (never-touch byte-look)')
-  assert(b.hyper.caliper === 0xe8b62e && b.grip.caliper === 0x39c06a && b.drift.caliper === 0xf27a1e,
-    'hyper/grip/drift wear their kit caliper colours')
+  assert(b.r34.caliper === 0xc23a28,
+    'r34 caliper stays the shipped 0xc23a28 (never-touch byte-look)')
+  assert(b.centenario.caliper === 0xe8b62e && b['930'].caliper === 0x39c06a && b.s15.caliper === 0xf27a1e && b.terzo.caliper === 0xc23a28,
+    'the catalog wears its kit caliper colours')
   const sig = CAR_SPECS.map((s) => {
     const p = fn!(s)
     return `${p.paint.roughness}|${p.paint.clearcoat}|${p.paint.microRoughness}|${p.caliper}`
