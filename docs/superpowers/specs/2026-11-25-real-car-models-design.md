@@ -1,7 +1,7 @@
 # Real Car Models — Design
 
 Date: 2026-11-25
-Status: draft (awaiting partner approval)
+Status: builder-checked (fresh-eyes review round complete); awaiting partner approval.
 Supersedes: the model visuals of `docs/superpowers/specs/2026-09-24-car-models-design.md`
 (its physics/stat/garage contracts remain in force).
 
@@ -24,13 +24,14 @@ are the only way to the goal.
   |---|---|---|---|---|
   | `r34` | Nissan Skyline GT-R (R34) | BALANCED | Lexyc16, Sketchfab | CC-BY |
   | `930` | Porsche 911 Turbo (930) | CORNER GRIP | Lionsharp Studios, Sketchfab | CC-BY |
-  | `s15` | Nissan Silvia S15 (Origin widebody) | DRIFT | autoNgraphic, Sketchfab | CC-BY |
+  | `s15` | Nissan Silvia S15 | DRIFT | autoNgraphic "Nissan S15 Drift [FREE]" (Origin widebody fenders per its own description), Sketchfab | CC-BY |
   | `centenario` | Lamborghini Centenario LP-770 | TOP SPEED | SDC PERFORMANCE, Sketchfab | CC-BY |
   | `terzo` | Lamborghini Terzo Millennio | HYPER (aggressive all-rounder) | SDC PERFORMANCE, Sketchfab | CC-BY-**NC** |
 
   Both 911 candidates were the same car; the better Lionsharp version was
   chosen (builder's call). The Terzo's NC licence is a partner-accepted risk
-  (game is free, MIT; see Constraints).
+  (game is free, MIT; see Constraints). All five listings were verified
+  downloadable today with the licences as tabled.
 - Real names + logos by default, **all branding in one data table with a
   single toggle** (`REAL_BRANDING` in `config.ts`). Turning it off swaps in
   fictional names and removes logos with zero code changes — the "publish
@@ -83,6 +84,38 @@ script runs `@gltf-transform/core` + meshoptimizer: weld, simplify to budget,
 resize/recompress textures, quantise + meshopt compress, then writes
 `public/models/<id>.glb`. Vite serves them as static assets.
 
+**Paint zones — how swatches survive baked body textures (builder's call).**
+Real models bake paint colour and surface detail (vents, badges, shading)
+into the body textures, and the recognisability goal means those textures
+must survive. `optimize-cars.mjs` therefore splits each car's body into a
+*paint zone* (pixels hue-similar to the car's authored body colour) and a
+*non-paint zone*: the paint zone becomes its own mesh bound to the game's
+clearcoat paint material (swatches set its colour; its map is neutralised so
+`tint × map` reproduces the authored look at default paint), while grilles,
+lights, liveries and trim keep their authored materials untouched. The
+similarity threshold and per-car exclusion boxes live in the rig data. If a
+car's mask cannot be made to look right after tuning, that car ships with its
+baked paint and ignores swatches — a per-car data flag, never a code fork.
+
+**Scale & wheels (builder's call).**
+Each GLB is normalised at build time by *uniform* scale (proportions never
+distorted) so its overall length matches the shipped ~4.55 m footprint — the
+shared collision box, grid spacing, corridor width and chase-cam framing all
+keep working unchanged. Rig records carry per-wheel radius, position and
+steering-axis sign (front/rear radii differ on real cars), and `VehicleVisual`
+switches from the single `wheels[0].radius` assumption to per-wheel radii.
+
+**Light effects on real assets (builder's call).**
+Brake/nitro/headlight effects are best-effort per asset: where a lamp is a
+separable mesh the rig binds emissive behaviour to it; where lamps are baked
+into the body texture the rig adds a small emissive overlay plane (reusing
+the logo-decal machinery) at the lamp position; a car with neither gets a
+documented no-op. Nitro-flame anchors move from the fixed z-offset into the
+per-rig record. The three functional checks that only made sense for
+procedural cars (`EXPECT_SPOKES`, wheels-fold-stop-at-spin, caliper colour on
+the built car) are replaced by rig-resolution and behaviour equivalents; the
+`functional` gate itself must stay green.
+
 **Model runtime (`src/assets/CarLibrary.ts`).**
 Loads the five GLBs once at boot with `GLTFLoader` (+ MeshoptDecoder),
 caches one template `Group` per car, and vends **clones** that share geometry
@@ -98,9 +131,9 @@ record: mesh-name patterns → role (`body`, `glass`, `lights`, `wheel:<fl|fr|rl
 `caliper`), plus measured wheel radius/position and steering-axis sign, and
 body material override rules. A one-shot dev helper prints a GLB's node tree
 so rigs are authored by reading names, not guessing. Wheels are detached into
-steer/spin groups at their measured centres; body meshes receive the existing
-clearcoat paint material instance (so `setPaint` keeps working); glass keeps
-the game's tinted glass material.
+steer/spin groups at their measured centres; the body paint zone receives the
+game's clearcoat paint material (see *Paint zones*); glass keeps the game's
+tinted glass material.
 
 **`buildCar` keeps its shape.**
 `buildCar(paintHex, spec)` and the `CarModel` interface (`group`, `wheels`,
@@ -140,6 +173,16 @@ the PR-policy/docs checks if they enumerate top-level docs.
 
 - Exact simplify ratios and texture caps per car (within the budget above).
 - Rig mesh-name patterns per model, authored with the node-tree helper.
+- Paint-mask threshold and exclusion boxes per car, and neutralised-map prep.
 - Loading UX detail (progress line vs. instant) behind the title screen.
 - Whether `n`/`p` keyboard model-switch keys need regenerating for 5 cards.
 - Small stat re-tuning within the existing ±40% clamp.
+
+## Open — awaiting partner
+
+- **Raw-asset provisioning.** The whole pipeline (rigs, simplify tuning,
+  shots) is authored against the five real GLBs, which only exist behind a
+  logged-in Sketchfab download. Options: (a) partner creates a free Sketchfab
+  account and supplies the API token so `scripts/fetch-cars.mjs` pulls the
+  five originals into `assets-src/`; (b) partner manually downloads the five
+  listed files into `assets-src/`; (c) partner supplies files some other way.
