@@ -1,7 +1,7 @@
 import { AUDIO, NITRO, PAINTS, UI, VEHICLE } from '../config'
 import type { PaintDef } from '../config'
 import { fmtTime, hexToCss } from '../util'
-import { CAR_SPECS, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { CAR_SPECS, carDisplayName, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { resolveTuning } from '../vehicles/CarTuning'
 
 /* ------------------------------------------------------------------------- *
@@ -440,7 +440,7 @@ export class UIManager {
       const b = this.doc.createElement('button')
       b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
       b.dataset.model = s.id
-      b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
+      b.innerHTML = `<b>${carDisplayName(s).toUpperCase()}</b><i>${s.class}</i>`
       b.addEventListener('click', () => {
         b.blur() // R2-3: a clicked card must not keep focus — drive keys aim there
         this.host.onModel(s.id)

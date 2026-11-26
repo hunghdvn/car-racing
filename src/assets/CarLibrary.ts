@@ -1,12 +1,12 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clamp01 } from '../util'
+import { CAR } from '../config'
 import type { CarId, CarSpec } from '../vehicles/CarSpecs'
 import { CAR_RIGS } from './CarRigs'
 import { carMaterialParamsFor } from './MaterialSpecs'
-import { carPaintMaps, paintMicroRoughness } from './Textures'
 import { markCarGeometryShared, markGLBMaterialShared } from './CarShared'
-import { shared, type CarModel, type WheelHandle } from './CarModel'
+import { makeCarPaintMaterial, shared, type CarModel, type WheelHandle } from './CarModel'
 
 /* ------------------------------------------------------------------------- *
  * Real-car preload cache (spec §5, Task 5).
@@ -21,9 +21,6 @@ import { shared, type CarModel, type WheelHandle } from './CarModel'
  * ------------------------------------------------------------------------- */
 
 const CAR_IDS = Object.keys(CAR_RIGS) as CarId[]
-/** CarModel.ts mkPaint's calibration anchor — kept literal so this module
- *  stays import-free of CarModel's value exports (ESM cycle safety). */
-const HERO_MICRO = 0.293
 
 let preload: Promise<void> | null = null
 const cache = new Map<CarId, THREE.Group>()
@@ -58,7 +55,14 @@ export function preloadCars(): Promise<void> {
           const mesh = o as THREE.Mesh
           if (!mesh.isMesh) return
           markCarGeometryShared(mesh.geometry)
-          for (const m of Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []) markGLBMaterialShared(m)
+          for (const m of Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []) {
+            // the pipeline synthesizes the brake disc as a single-sided fan
+            // and two caliper faces wind inward — three culls them and the
+            // hub reads hollow through the spokes (PR #21 review). DoubleSide
+            // on the template once: every clone inherits it.
+            if (/^(brake|caliper)/.test(m.name ?? '')) m.side = THREE.DoubleSide
+            markGLBMaterialShared(m)
+          }
         })
         cache.set(id, scene)
       }
@@ -79,6 +83,12 @@ export function disposeLibrary(): void {
   }
   cache.clear()
   preload = null
+}
+
+/** The cached template for one id (functional battery: clone-vs-template
+ *  geometry identity + the per-id load-failure rec). Null when not cached. */
+export function getTemplate(id: CarId): THREE.Group | null {
+  return cache.get(id) ?? null
 }
 
 const byName = (root: THREE.Object3D, name: string): THREE.Object3D | null => {
@@ -123,7 +133,7 @@ function logoTexture(id: CarId, maker: string, accent: number): THREE.CanvasText
 export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarModel | null {
   const src = cache.get(id)
   if (!src) return null
-  const rig = CAR_RIGS[id]
+  const rig = CAR_RIGS[spec.rigId ?? spec.id] // rigId override is the lookup door (PR #21: was a dead field)
 
   // validate the pipeline contract BEFORE mutating anything
   const corners = ['fl', 'fr', 'rl', 'rr'] as const
@@ -136,20 +146,16 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
   const group = src.clone(true)
   group.name = `car-model-${id}`
 
-  // per-instance materials: paint (mkPaint recipe from CarModel), caliper, glass
-  const pp = carMaterialParamsFor(spec).paint
-  const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
-  const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
-  const paintMat = new THREE.MeshPhysicalMaterial({
-    color: paintHex, metalness: pp.metalness, roughness: pp.roughness,
-    roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
-    normalScale: new THREE.Vector2(ns, ns),
-    clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
-    clearcoatNormalMap: paintMicroRoughness(),
-    sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
-    envMapIntensity: pp.envMapIntensity,
+  // per-instance materials: paint (the ONE mkPaint recipe, CarModel.ts),
+  // caliper, glass
+  const paintMat = makeCarPaintMaterial(paintHex, carMaterialParamsFor(spec).paint)
+  // caliper tint comes from the catalog through MaterialSpecs — the same door
+  // the procedural builder and the functional battery use (PR #21: the old
+  // CarRigs.caliperColor literal column let a stale hand-pin diverge).
+  // DoubleSide: two of the synthesized caliper box faces wind inward.
+  const caliperMat = new THREE.MeshStandardMaterial({
+    color: carMaterialParamsFor(spec).caliper, roughness: 0.4, metalness: 0.3, side: THREE.DoubleSide,
   })
-  const caliperMat = new THREE.MeshStandardMaterial({ color: rig.caliperColor, roughness: 0.4, metalness: 0.1 })
   const glassMat = shared.glass(spec.finish) // memoised field-wide singleton (same as procedural)
   group.traverse((o) => {
     const mesh = o as THREE.Mesh
@@ -159,7 +165,13 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
         : /caliper/.test(m.name ?? '') ? caliperMat
           : /^glass/.test(m.name ?? '') ? glassMat : m
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material)
-    if (mesh.material === paintMat) { mesh.castShadow = true; mesh.receiveShadow = true }
+    // procedural parity (CarModel's finalize, PR #21 review): opaque meshes
+    // cast, glass/flames (transparent) don't, nothing receives — the old
+    // paint-only cast+receive left GLB bodies shadowless next to procedural
+    // ones and made paint meshes self-shadow differently.
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    mesh.castShadow = !mats.some((m) => m.transparent)
+    mesh.receiveShadow = false
   })
 
   // wheel rebuild: canonical pivots → procedural handle contract
@@ -198,34 +210,42 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
   // lamp glow + brake + nitro add-ons (procedural idiom: bloom-safe emissives)
   const glowMat = (emissive: number, intensity: number): THREE.MeshStandardMaterial =>
     new THREE.MeshStandardMaterial({ color: 0x14181f, emissive: new THREE.Color(emissive), emissiveIntensity: intensity, roughness: 0.3, metalness: 0, transparent: true, opacity: 0.95 })
-  const headMats = [glowMat(0xfff1d6, 0.95), glowMat(0xfff1d6, 0.95)]
-  const brakeMats = [glowMat(0xff2518, 0.8), glowMat(0xff2518, 0.8)]
-  const glowGeo = new THREE.PlaneGeometry(0.5, 0.18)
-  const gy = rig.groundClearance + 0.42
-  const gz = 2.16
-  for (const i of [-1, 1]) {
-    const g = new THREE.Mesh(glowGeo, headMats[i < 0 ? 0 : 1])
-    g.name = 'glow-front'
-    g.position.set(i * 0.62, gy, -gz)
-    g.rotation.y = Math.PI
-    g.renderOrder = 2
-    group.add(g)
-    const b = new THREE.Mesh(glowGeo, brakeMats[i < 0 ? 0 : 1])
-    b.name = 'glow-rear'
-    b.position.set(i * 0.62, gy, gz)
-    b.renderOrder = 2
-    group.add(b)
+  const headMats: THREE.MeshStandardMaterial[] = []
+  const brakeMats: THREE.MeshStandardMaterial[] = []
+  if (rig.lampGlow) { // the rig knob is honoured (PR #21: was decorative)
+    const geo = new THREE.PlaneGeometry(0.5, 0.18)
+    const gy = rig.groundClearance + 0.42
+    for (const i of [-1, 1]) {
+      const hm = glowMat(0xfff1d6, 0.95)
+      headMats.push(hm)
+      const g = new THREE.Mesh(geo, hm)
+      g.name = 'glow-front'
+      g.position.set(i * 0.62, gy, rig.lampZ[0]) // measured lamp faces, not ±2.16 inside the shell
+      g.rotation.y = Math.PI
+      g.renderOrder = 2
+      group.add(g)
+      const bm = glowMat(0xff2518, 0.8)
+      brakeMats.push(bm)
+      const b = new THREE.Mesh(geo, bm)
+      b.name = 'glow-rear'
+      b.position.set(i * 0.62, gy, rig.lampZ[1])
+      b.renderOrder = 2
+      group.add(b)
+    }
   }
 
-  // rear badge decal (wordmark over the tail, per-car accent)
-  const logo = logoTexture(id, spec.identity?.maker ?? spec.name.split(' ')[0], spec.finish.accent)
+  // rear badge decal (wordmark over the tail) — REAL_BRANDING gated: the flag
+  // is the trademark escape hatch, so a flag-off build must carry NO maker
+  // badge on track, matching the fictional names the UI already swaps to.
+  const logo = CAR.realBranding && (spec.identity?.realBranding ?? true)
+    ? logoTexture(id, spec.identity?.maker ?? spec.name.split(' ')[0], spec.finish.accent)
+    : null
   if (logo) {
     const decal = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.2), new THREE.MeshBasicMaterial({ map: logo, transparent: true, depthWrite: false }))
     decal.name = 'logo-rear'
-    decal.position.set(...rig.logoAnchor)
-    decal.rotation.y = Math.PI
+    decal.position.set(...rig.logoAnchor) // tail side (+z), measured tail face + 20 mm
     decal.renderOrder = 3
-    group.add(decal)
+    group.add(decal) // plane normal +z ⇒ reads correctly from behind, no mirror
   }
 
   // nitro flames (hidden until setNitro; scale along the +z tail axis)

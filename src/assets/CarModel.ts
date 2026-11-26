@@ -3,12 +3,12 @@ import { VEHICLE } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
-import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams } from './MaterialSpecs'
+import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams, type PaintParams } from './MaterialSpecs'
 import { isGLBMaterialShared, isSharedCarGeometry } from './CarShared'
 
 export { markCarGeometryShared } from './CarShared'
 import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
-import { cloneRealCar, forceProcedural, libraryReady } from './CarLibrary'
+import { cloneRealCar, forceProcedural } from './CarLibrary'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -337,6 +337,32 @@ const mixHex = (a: number, b: number, w: number): number =>
 /* paintMaterialParams' micro-roughness for the HERO finish (roughness 0.28,
  * flake 0.5) — the calibration anchor of the mkPaint normalScale mapping. */
 const HERO_MICRO = 0.293
+
+/** The paint recipe, shared by the procedural loft and the GLB clone path
+ *  (CarLibrary imports this instead of duplicating the construction — PR #21
+ *  review: the copies had already drifted in comments and HERO_MICRO was
+ *  kept literal in two places). The micro-roughness breakup drives the
+ *  normal strength: calibrated so the hero's own breakup reproduces the
+ *  shipped fixed 0.5. DIRECTION (R3-7, corrected from the earlier reversed
+ *  claim): microRoughness is clamp01(roughness·0.6 + flake·0.25), so the
+ *  DENSE-FLAKE models read MORE breakup than hero, not less — grip 0.3925
+ *  (satin: rough 0.55 carries it), drift 0.3025 and hyper 0.2955 (gloss,
+ *  but flake 0.85/0.75 lifts them) against HERO_MICRO 0.293. Only the
+ *  normal map's micro-roughness is raised; the clearcoat layer keeps gloss
+ *  models visibly glossier. */
+export function makeCarPaintMaterial(color: number, pp: PaintParams): THREE.MeshPhysicalMaterial {
+  const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
+  const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
+  return new THREE.MeshPhysicalMaterial({
+    color, metalness: pp.metalness, roughness: pp.roughness,
+    roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
+    normalScale: new THREE.Vector2(ns, ns),
+    clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
+    clearcoatNormalMap: paintMicroRoughness(),
+    sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
+    envMapIntensity: pp.envMapIntensity,
+  })
+}
 
 /* PR review F14b: every fixed-colour hardware material goes through the same
  * detailMats memo so the AI field (5 cars × 4 wheels) reuses one instance per
@@ -692,8 +718,11 @@ function diffuserFinXs(count: number): number[] {
 export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec = HERO_SPEC): CarModel {
   // real-model fast path (spec §5): a cached, rig-validated GLB clone wins;
   // any miss (cold cache, ?proc=1, rig violation) falls through to the
-  // untouched procedural builder below.
-  if (!forceProcedural() && libraryReady()) {
+  // untouched procedural builder below. Gated PER-ID on purpose (PR #21
+  // review): one failed GLB must not demote the other five, so the check is
+  // cloneRealCar's cache hit, not libraryReady()'s all-or-nothing — that one
+  // stays the Game-level "should I rebuild the player car" signal.
+  if (!forceProcedural()) {
     const real = cloneRealCar(spec.id, paintHex ?? resolvePaint(null, spec), spec)
     if (real) return real
   }
@@ -701,26 +730,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
-    const pp = carMaterialParamsFor(spec).paint
-    const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
-    // the micro-roughness breakup drives the normal strength: calibrated so
-    // the hero's own breakup reproduces the shipped fixed 0.5. DIRECTION (R3-7,
-    // corrected from the earlier reversed claim): microRoughness is
-    // clamp01(roughness·0.6 + flake·0.25), so the DENSE-FLAKE models read MORE
-    // breakup than hero, not less — grip 0.3925 (satin: rough 0.55 carries it),
-    // drift 0.3025 and hyper 0.2955 (gloss, but flake 0.85/0.75 lifts them)
-    // against HERO_MICRO 0.293. Only the normal map's micro-roughness is
-    // raised; the clearcoat layer keeps gloss models visibly glossier.
-    const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
-    const m = new THREE.MeshPhysicalMaterial({
-      color: bodyHex, metalness: pp.metalness, roughness: pp.roughness,
-      roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
-      normalScale: new THREE.Vector2(ns, ns),
-      clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
-      clearcoatNormalMap: paintMicroRoughness(),
-      sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
-      envMapIntensity: pp.envMapIntensity,
-    })
+    const m = makeCarPaintMaterial(bodyHex, carMaterialParamsFor(spec).paint)
     paintMats.push(m)
     return m
   }

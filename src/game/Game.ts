@@ -16,7 +16,7 @@ import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { getSpec, readPaintSelection, reconcileAiColours, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { carDisplayName, getSpec, readPaintSelection, reconcileAiColours, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor, type RacePhase } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -165,7 +165,9 @@ export class Game {
       onPaint: (hex) => this.onPaint(hex),
       onModel: (id) => this.selectModel(id),
     })
-    this.ui.setStandingNames(['YOU', ...this.ai.map((a) => a.spec.name.toUpperCase())])
+    // carDisplayName (not spec.name): the REAL_BRANDING toggle flips at render
+    // time, so a flag-off build must show fictional names in the standings too.
+    this.ui.setStandingNames(['YOU', ...this.ai.map((a) => carDisplayName(a.spec).toUpperCase())])
     this.ui.bindTrack(this.slice.spline)
     // the boot-resolved paint (stored pick or model signature) owns the swatch row
     this.ui.setPaintActive(this.paintHex)

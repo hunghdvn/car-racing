@@ -2,7 +2,7 @@ import { assert, assertNear, test } from '../harness'
 import { VEHICLE, CAR, PAINTS, AI } from '../../src/config'
 import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
-import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
+import { CAR_SPECS, HERO_SPEC, carDisplayName, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
@@ -102,10 +102,26 @@ test('identity: every spec carries real-world branding metadata', () => {
   }
 })
 
-test('identity: REAL_BRANDING swaps the display name', () => {
+test('identity: REAL_BRANDING swaps the display name AT RENDER TIME (PR #21: runtime flag flips take effect)', () => {
   assert(CAR.realBranding === true, 'branding ships on (partner decision; ASSETS.md records the licences)')
-  assert(getSpec('r34').name === 'Nissan Skyline GT-R R34', 'branded name')
+  assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'branded name (flag on)')
   assert(getSpec('r34').fictionalName === 'Velocity GT', 'fictional name kept for the toggle-off path')
+  const was = CAR.realBranding
+  try {
+    CAR.realBranding = false
+    for (const s of CAR_SPECS) assert(carDisplayName(s) === s.fictionalName, `flag-off shows the fictional name (${s.id})`)
+  } finally { CAR.realBranding = was }
+  assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'flag restored')
+})
+
+test('identity: per-car realBranding override drops one car name (CC-BY-NC escape hatch)', () => {
+  const s = getSpec('terzo')
+  const was = s.identity!.realBranding
+  try {
+    s.identity!.realBranding = false
+    assert(carDisplayName(s) === s.fictionalName, 'the per-car override wins over the global flag')
+    assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'other cars keep their real name')
+  } finally { s.identity!.realBranding = was }
 })
 
 test('catalog: getSpec falls back to hero for unknown ids', () => {

@@ -610,16 +610,71 @@ try {
           return !!byName(`brake-${c}-lr`) && ok
         })
         const box = new d.THREE.Box3().setFromObject(car.group)
+        // geometry-derived front test (PR #21 review): wheel ROOT positions
+        // come from the rig table (circular); Box3 over the actual baked
+        // vertices measures where the wheel geometry really is.
+        const frontMinusZ = (() => {
+          const fc = []; const rc = []; const wb = new d.THREE.Box3()
+          for (let i = 0; i < 4; i++) {
+            const n = byName(`wheel-${corners[i]}-lr`)
+            if (!n) return false
+            wb.setFromObject(n)
+            const c = new d.THREE.Vector3(); wb.getCenter(c)
+            ;(i < 2 ? fc : rc).push(c.z)
+          }
+          return (fc[0] + fc[1]) / 2 < -0.4 && (rc[0] + rc[1]) / 2 > 0.4
+        })()
+        // paint must be bound to REAL meshes, not just present in paintMats
+        // (the old check was `paintMats.length > 0` — always true, toothless).
+        let painted = 0
+        car.group.traverse((o) => {
+          if (!o.isMesh) return
+          const ms = Array.isArray(o.material) ? o.material : [o.material]
+          if (ms.some((m) => m === car.paintMats[0])) painted++
+        })
+        // clone shares geometry with the cached TEMPLATE (preload cache is
+        // really being reused, not rebuilt per clone)
+        const tpl = d.getTemplate(spec.id)
+        let sharesTpl = false
+        if (tpl) tpl.traverse((o) => { if (o.isMesh && !sharesTpl) { const g = o.geometry; car.group.traverse((m) => { if (m.isMesh && m.geometry === g) sharesTpl = true }) } })
+        // glow rectangles must MATCH the rig flag (all six ship baked lamp
+        // textures → lampGlow false → zero planes; flip the flag and the
+        // four planes must appear). And the synthesized brake disc fans are
+        // single-sided by construction → the template material must be
+        // DoubleSide or the hub reads hollow through the spokes.
+        let glowN = 0
+        let discSeen = false
+        let discOk = true
+        car.group.traverse((o) => {
+          if (!o.isMesh) return
+          if (o.name === 'glow-front' || o.name === 'glow-rear') glowN++
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+            if (m && /brake/.test(m.name ?? '')) { discSeen = true; if (m.side !== d.THREE.DoubleSide) discOk = false }
+          }
+        })
         out[spec.id] = {
           root: car.group.name === `car-model-${spec.id}`,
           wheels: wheels.every(Boolean),
           spin: spinOk, brakeParented,
           grounded: box.min.y >= Math.min(0, rig.groundClearance) - 0.06 && box.min.y <= 0.12,
           radius: car.wheels.every((w) => w.radius >= 0.2 && w.radius <= 0.44),
-          frontMinusZ: (() => { const rootOf = (w) => w.steer ?? w.spin.parent ?? w.spin; return rootOf(car.wheels[0]).getWorldPosition(new d.THREE.Vector3()).z < 0 && rootOf(car.wheels[2]).getWorldPosition(new d.THREE.Vector3()).z > 0 })(),
-          paint: car.paintMats.length > 0 || d.CarRigs[spec.id].bakedPaint,
+          frontMinusZ,
+          paint: painted > 0 || rig.bakedPaint,
           logo: !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2,
+          sharesTpl,
+          glowCoherent: glowN === (rig.lampGlow ? 4 : 0),
+          discDoubleSided: discSeen && discOk,
         }
+        // REAL_BRANDING is the trademark escape hatch: a flag-off clone must
+        // carry NO maker badge on track (PR #21 review — the decal was once
+        // ungated, so flag-off still raced with NISSAN/PORSCHE/LAMBORGHINI).
+        d.setRealBranding(false)
+        const offCar = d.buildCar(0xf27a1e, spec)
+        let offBadge = false
+        offCar.group.traverse((o) => { if (o.name === 'logo-rear') offBadge = true })
+        d.disposeCarTree(offCar.group)
+        d.setRealBranding(true)
+        out[spec.id].logoFlagOff = !offBadge
         d.disposeCarTree(car.group)
         // cache-survives-dispose: a retired clone must not blank the cache
         const again = d.buildCar(0xf27a1e, spec)
@@ -635,7 +690,7 @@ try {
     const ids = Object.keys(rigsOut)
     const bad = ids.filter((id) => !Object.values(rigsOut[id]).every(Boolean))
     rec('glb-rigs-integrity', ids.length === 6 && bad.length === 0,
-      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, front-at-−z, paint, logo, nitro, cache-survives-dispose)`
+      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, geometry front-at-−z, paint bound to meshes, logo on, logo GONE flag-off, nitro, clone shares template geometry, glow planes match the lampGlow flag, brake disc DoubleSide, cache-survives-dispose)`
         : `failed flags: ${bad.map((id) => `${id}: ${Object.entries(rigsOut[id]).filter(([, v]) => !v).map(([k]) => k).join(',')}`).join(' | ')}`)
   }
 
@@ -646,17 +701,22 @@ try {
     window.__dbg.CAR_SPECS.map((s) => {
       const r = window.__dbg.CarRigs[s.id]
       return [s.id, {
-        caliper: Number.isInteger(r.caliperColor),
         radii: r.wheelRadius.length === 4 && r.wheelRadius.every((v) => v >= 0.2 && v <= 0.44),
         clearance: r.groundClearance >= -0.06 && r.groundClearance <= 0.25,
         anchors: [...r.logoAnchor, ...r.nitroAnchor.flat()].every(Number.isFinite),
+        // left hubs at −x / right at +x with the nose at −z (the L/R mirror
+        // rule the 180°-flipped cars violated pre-fix, PR #21)
+        lr: r.wheelPos[0][0] < 0 && r.wheelPos[1][0] > 0 && r.wheelPos[2][0] < 0 && r.wheelPos[3][0] > 0,
+        // lamps measured onto the body ends; badge on the TAIL (+z), not the nose
+        lamps: r.lampZ.length === 2 && Number.isFinite(r.lampZ[0]) && Number.isFinite(r.lampZ[1]) && r.lampZ[0] < -1.5 && r.lampZ[1] > 1.5 && r.lampZ[0] < r.lampZ[1],
+        tail: r.logoAnchor[2] > 1.5,
       }]
     }),
   )).catch(() => null)
   if (rigData) {
     const bad = Object.entries(rigData).filter(([, v]) => !Object.values(v).every(Boolean))
     rec('glb-rig-data', Object.keys(rigData).length === 6 && bad.length === 0,
-      bad.length === 0 ? 'CAR_RIGS rows are sane for all six (integer caliper, radii band, clearance band, finite anchors)'
+      bad.length === 0 ? 'CAR_RIGS rows are sane for all six (radii band, clearance band, finite anchors, L/R x-sign rule, lampZ brackets the body, badge on +z tail)'
         : `bad rig rows: ${bad.map(([id, v]) => `${id}:${Object.entries(v).filter(([, ok]) => !ok).map(([k]) => k).join(',')}`).join(' ')}`)
   }
 
@@ -691,6 +751,105 @@ try {
     rec('caliper-colour-on-built-car', Object.values(calipers).length === 6 && calipers.r34 && calipers['930'] && calipers.s15 && calipers.centenario && calipers.terzo && calipers.carrera,
       `built cars carry their kit caliper hex: r34 ${calipers.r34}, 930 ${calipers['930']}, s15 ${calipers.s15}, centenario ${calipers.centenario}, terzo ${calipers.terzo}, carrera ${calipers.carrera} (R2-8: through the carMaterialParamsFor door, literals ${Object.values(CALIPER).map((h) => h.toString(16)).join(', ')})`)
   }
+
+  // ---- library safety branches (PR #21 review: the fallback doors had no
+  // coverage). Rig tamper → procedural; per-id load drop → only that id
+  // falls back; disposeLibrary → templates really disposed, cache refills.
+  const tamper = await pKeys.evaluate(async () => {
+    const d = window.__dbg
+    await d.preloadCars()
+    const spec = d.CAR_SPECS.find((s) => s.id === 's15')
+    const orig = JSON.parse(JSON.stringify(d.CarRigs.s15))
+    d.CarRigs.s15.wheelRadius[0] = 0.1 // outside the validated [0.2, 0.44] band
+    const bad = d.buildCar(0xf27a1e, spec)
+    const has = (n) => { let f = false; bad.group.traverse((o) => { if (o.name === n) f = true }); return f }
+    const fellBack = !has('wheel-fl-lr') && has('wheel-f-l') // procedural wheel roots are wheel-f-l/fr/r-l/r-r
+    d.disposeCarTree(bad.group)
+    Object.assign(d.CarRigs.s15, orig)
+    const good = d.buildCar(0xf27a1e, spec)
+    let restored = false; good.group.traverse((o) => { if (o.name === 'wheel-fl-lr') restored = true })
+    d.disposeCarTree(good.group)
+    return { fellBack, restored }
+  }).catch(() => null)
+  if (tamper) {
+    rec('carlib-rig-tamper-fallback', tamper.fellBack && tamper.restored,
+      `rigged wheelRadius 0.1 → clone rejected, buildCar served the procedural car (wheel-fl, no wheel-fl-lr) = ${tamper.fellBack}; after restoring the table the GLB clone returned = ${tamper.restored}`)
+  } else rec('carlib-rig-tamper-fallback', false, 'evaluate threw — tamper path unverified')
+
+  // Per-id load drop (PR #21 review): one dead GLB must degrade ONLY its own
+  // car. three.js FileLoader drives XHR, so the honest kill is a request-route
+  // abort on a dedicated page — not monkey-patching fetch under a loader that
+  // never calls it (first attempt proved that: libraryReady stayed true).
+  let dropOne = null
+  try {
+    const pDrop = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+    await pDrop.route('**/models/s15.glb', (r) => r.abort())
+    await pDrop.goto(`${prev.url}/`, { waitUntil: 'load' })
+    await pDrop.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 })
+    dropOne = await pDrop.evaluate(async () => {
+      const d = window.__dbg
+      await d.preloadCars() // boot already fired preload; await the settled, partially-failed load
+      const has = (g, n) => { let f = false; g.traverse((o) => { if (o.name === n) f = true }); return f }
+      const s15 = d.buildCar(0xf27a1e, d.CAR_SPECS.find((s) => s.id === 's15'))
+      const r34 = d.buildCar(0xf27a1e, d.CAR_SPECS.find((s) => s.id === 'r34'))
+      const out = {
+        s15Procedural: !has(s15.group, 'wheel-fl-lr') && has(s15.group, 'wheel-f-l'),
+        r34Real: has(r34.group, 'wheel-fl-lr'),
+        libraryNotReady: !d.libraryReady(),
+        templateNull: d.getTemplate('s15') === null,
+      }
+      d.disposeCarTree(s15.group); d.disposeCarTree(r34.group)
+      return out
+    })
+    await pDrop.close()
+  } catch { /* the rec below reports the failure */ }
+  if (dropOne) {
+    rec('carlib-per-id-load-drop', dropOne.s15Procedural && dropOne.r34Real && dropOne.libraryNotReady && dropOne.templateNull,
+      `s15 GLB request aborted at boot → s15 raced procedural (${dropOne.s15Procedural}) while r34 kept its GLB clone (${dropOne.r34Real}) — the dead GLB never demotes the other five; libraryReady() correctly false (${dropOne.libraryNotReady}), template slot empty (${dropOne.templateNull})`)
+  } else rec('carlib-per-id-load-drop', false, 'drop page failed to boot — per-id drop unverified')
+
+  const libDispose = await pKeys.evaluate(async () => {
+    const d = window.__dbg
+    await d.preloadCars()
+    const t = d.getTemplate('r34')
+    if (!t) return null
+    const geos = []; const mats = []
+    t.traverse((o) => { if (o.isMesh) { if (o.geometry) geos.push(o.geometry); for (const m of [].concat(o.material ?? [])) if (m) mats.push(m) } })
+    let gN = 0; let mN = 0
+    for (const g of geos) { const orig = g.dispose.bind(g); g.dispose = () => { gN++; orig() } }
+    for (const m of mats) { const orig = m.dispose.bind(m); m.dispose = () => { mN++; orig() } }
+    d.disposeLibrary()
+    const emptyAfter = d.getTemplate('r34') === null && !d.libraryReady()
+    await d.preloadCars()
+    return { gN, mN, emptyAfter, refilled: d.libraryReady() }
+  }).catch(() => null)
+  if (libDispose) {
+    rec('carlib-dispose-library', libDispose.gN > 0 && libDispose.mN > 0 && libDispose.emptyAfter && libDispose.refilled,
+      `disposeLibrary disposed ${libDispose.gN} template geometries + ${libDispose.mN} template materials (spy-counted, must be >0 — GPU memory is really returned), cache emptied (${libDispose.emptyAfter}), preload refilled (${libDispose.refilled})`)
+  } else rec('carlib-dispose-library', false, 'evaluate threw — disposeLibrary spy unverified')
+
+  // ?proc=1 COLD BOOT (PR #21 review: only the runtime toggle was covered —
+  // the boot-time kill switch must beat a healthy cache, not just an empty one)
+  let procBoot = null
+  try {
+    const pProc = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })
+    await pProc.goto(`${prev.url}/?proc=1`, { waitUntil: 'load' })
+    await pProc.waitForFunction('window.__vr && window.__vr.ready', null, { timeout: 30000 })
+    procBoot = await pProc.evaluate(async () => {
+      const d = window.__dbg
+      await d.preloadCars() // the GLBs load FINE — the boot flag must veto them anyway
+      const car = d.buildCar(0xf27a1e, d.CAR_SPECS.find((s) => s.id === 'r34'))
+      const has = (n) => { let f = false; car.group.traverse((o) => { if (o.name === n) f = true }); return f }
+      const out = { vetoed: !has('wheel-fl-lr') && has('wheel-f-l'), cacheWasWarm: d.libraryReady() }
+      d.disposeCarTree(car.group)
+      return out
+    })
+    await pProc.close()
+  } catch { /* rec below reports the failure */ }
+  if (procBoot) {
+    rec('boot-proc-flag-cold-boot', procBoot.vetoed && procBoot.cacheWasWarm,
+      `?proc=1 cold boot: preload cached all six (cache warm = ${procBoot.cacheWasWarm}) yet buildCar still served the procedural r34 (no wheel-fl-lr) = ${procBoot.vetoed} — the kill switch is the boot flag, not cache state`)
+  } else rec('boot-proc-flag-cold-boot', false, 'proc=1 page failed to boot — boot-time kill switch unverified')
 
   // R2-3 end-to-end: real keyboard Enter on a focused garage card must pick
   // the model (pre-fix the window-level confirm raced the native click and

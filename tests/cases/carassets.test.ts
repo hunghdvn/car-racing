@@ -80,7 +80,20 @@ for (const spec of CAR_SPECS) {
     // splitter legitimately dips a few cm below the road plane (s15 −0.036).
     assert(rig.groundClearance >= -0.06 && rig.groundClearance <= 0.25,
       `${id} groundClearance ${rig.groundClearance} outside [-0.06, 0.25]`)
-    assert(Number.isInteger(rig.caliperColor), `${id} caliperColor must be an integer hex`)
+    assert(Number.isFinite(rig.groundClearance), `${id} groundClearance finite`)
+    // L/R convention (PR #21 review): with the nose at −z the car's LEFT hubs
+    // (fl, rl) sit at world −x. Three models are 180°-flipped by the grouper;
+    // when the bucketing forgot to mirror x, wheel-fl-lr landed on +x — and
+    // node+hub pair out of the same bucket, so only this sign rule catches it.
+    assert(rig.wheelPos[0][0] < 0 && rig.wheelPos[2][0] < 0, `${id} left hubs must sit at −x`)
+    assert(rig.wheelPos[1][0] > 0 && rig.wheelPos[3][0] > 0, `${id} right hubs must sit at +x`)
+    // caliper tint is catalog-sourced (MaterialSpecs), NOT a rig column anymore.
+    for (const v of rig.lampZ) assert(Number.isFinite(v), `${id} lampZ finite`)
+    assert(rig.lampZ[0] < -1.5 && rig.lampZ[1] > 1.5 && rig.lampZ[0] < rig.lampZ[1],
+      `${id} lampZ [${rig.lampZ.join(', ')}] must bracket the body ends`)
+    // the badge is the TAIL wordmark (mesh name logo-rear): anchored +z (PR #21:
+    // the old fixed anchor planted it at the nose)
+    assert(rig.logoAnchor[2] > 1.5, `${id} logoAnchor must be on the tail (+z), got ${rig.logoAnchor[2]}`)
     for (const v of rig.logoAnchor) assert(Number.isFinite(v), `${id} logoAnchor finite`)
     for (const a of rig.nitroAnchor) for (const v of a) assert(Number.isFinite(v), `${id} nitroAnchor finite`)
     // nose convention: the two FRONT hubs live at −z (procedural CarModel puts
