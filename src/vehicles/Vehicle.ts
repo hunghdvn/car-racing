@@ -1,6 +1,6 @@
 import type * as THREE from 'three'
 import type { CarModel } from '../assets/CarModel'
-import { VEHICLE } from '../config'
+import { VEHICLE, WHEEL_SINK } from '../config'
 import type { VehiclePhysics, DriveCommand } from './VehiclePhysics'
 
 /* ------------------------------------------------------------------------- *
@@ -52,13 +52,13 @@ export class VehicleVisual {
       const w = this.car.wheels[i]
       const root: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       root.rotation.y = w.front ? steerA : 0
-      // hub height rides on THIS wheel's radius (PR #21 review: one shared
-      // baseY from wheels[0] floated the smaller rears / sank the bigger
-      // fronts on mixed-radius rigs like s15 0.262/0.248). Procedural cars
-      // have uniform radius, so the formula is term-for-term the old one and
-      // their shots stay bit-identical.
+      // hub height rides on THIS wheel: real rigs carry the measured hub
+      // (radius is max(dy,dz)/2 — a tread-dominant corner would otherwise
+      // sink the hub 20-40 mm the moment the sim takes over, PR #21 r3);
+      // procedural wheels have no hubY and keep R − WHEEL_SINK term-for-term,
+      // so their shots stay bit-identical.
       const R = w.radius > 0 ? w.radius : VEHICLE.wheelRadius
-      root.position.y = R - 0.012 + clampSym(v.susp[i], TRAVEL)
+      root.position.y = (w.hubY ?? R - WHEEL_SINK) + clampSym(v.susp[i], TRAVEL)
       this.spin[i] = (this.spin[i] ?? 0) + (v.forwardSpeed / R) * dt
       if (!Number.isFinite(this.spin[i])) this.spin[i] = 0
       w.spin.rotation.x = -this.spin[i]
@@ -81,7 +81,7 @@ export class VehicleVisual {
       const root: THREE.Object3D = w.steer ?? w.spin.parent ?? w.spin
       root.rotation.y = w.front ? p.wheelSteer ?? 0 : 0
       const R = w.radius > 0 ? w.radius : VEHICLE.wheelRadius // per-corner, see bind()
-      root.position.y = R - 0.012 + susp
+      root.position.y = (w.hubY ?? R - WHEEL_SINK) + susp
       w.spin.rotation.x = spinA
     }
     const g = this.car.group

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { VEHICLE } from '../config'
+import { VEHICLE, WHEEL_SINK } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
@@ -29,6 +29,11 @@ export interface WheelHandle {
   spin: THREE.Group
   radius: number
   front: boolean
+  /** measured hub centre height (real-GLB rigs). radius is max(dy,dz)/2, so
+   *  a tread-dominant staggered corner (s15 rear: R 0.248, hub 0.272) must
+   *  NOT ride on R − WHEEL_SINK — the hub does. Procedural cars leave it
+   *  undefined and keep the uniform-radius formula bit-identical. */
+  hubY?: number
 }
 
 export interface CarModel {
@@ -750,7 +755,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   for (const front of [true, false]) {
     const wz = VEHICLE.wheelbase / 2
     const z = front ? -wz : wz
-    const wy = wr - 0.012
+    const wy = wr - WHEEL_SINK
     const archR = wr + 0.042 + spec.kit.archExtension
     const linerR = wr + 0.014 + spec.kit.archExtension
     for (const side of [-1, 1]) {
@@ -1075,10 +1080,10 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
         steer = new THREE.Group()
         steer.add(root)
         group.add(named(steer, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        steer.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
+        steer.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - WHEEL_SINK, z)
       } else {
         group.add(named(root, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        root.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
+        root.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - WHEEL_SINK, z)
       }
       wheels.push({ steer, spin, radius: wr, front })
     }

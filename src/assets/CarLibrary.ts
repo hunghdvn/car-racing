@@ -131,9 +131,9 @@ function logoTexture(id: CarId, maker: string, accent: number): THREE.CanvasText
  * buildCar keeps the car on the procedural path — a wrong rig must never ship.
  */
 export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarModel | null {
-  const src = cache.get(id)
-  if (!src) return null
   const rig = CAR_RIGS[spec.rigId ?? spec.id] // rigId override is the lookup door (PR #21: was a dead field)
+  const src = cache.get(spec.rigId ?? id) // …and the template door: an aliased spec must load ITS geometry, not its own id (r3)
+  if (!src) return null
 
   // validate the pipeline contract BEFORE mutating anything
   const corners = ['fl', 'fr', 'rl', 'rr'] as const
@@ -154,6 +154,7 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
   // CarRigs.caliperColor literal column let a stale hand-pin diverge).
   // DoubleSide: two of the synthesized caliper box faces wind inward.
   const caliperMat = new THREE.MeshStandardMaterial({
+    name: 'caliper-paint', // named so the functional battery can find + assert it (r3)
     color: carMaterialParamsFor(spec).caliper, roughness: 0.4, metalness: 0.3, side: THREE.DoubleSide,
   })
   const glassMat = shared.glass(spec.finish) // memoised field-wide singleton (same as procedural)
@@ -204,7 +205,7 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
     steer.add(spin)
     group.add(steer) // model space — NOT node.parent (the vr-rig grouper, whose TRS would double the hub)
     spin.attach(node) // keeps the baked world placement (bakes the grouper TRS in); parks spin's origin on the hub
-    wheels.push({ steer, spin, radius: rig.wheelRadius[i], front: i < 2 })
+    wheels.push({ steer, spin, radius: rig.wheelRadius[i], front: i < 2, hubY: rig.wheelPos[i][1] })
   }
 
   // lamp glow + brake + nitro add-ons (procedural idiom: bloom-safe emissives)
@@ -257,7 +258,11 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
     const flame = new THREE.Mesh(flameGeo, mat)
     flame.name = tag
     flame.position.set(...rig.nitroAnchor[side < 0 ? 0 : 1])
-    flame.position.z += 0.12
+    // no z nudge: the pipeline bakes the anchor AT the tail face, 150 mm
+    // inboard so the cone (which grows toward +z from its origin) exits the
+    // bumper. The old + 0.12 here, stacked on the old TARGET_LEN constant,
+    // put the flame ORIGIN inside the shell on long-tail cars (930: origin
+    // 2.345 vs shell end 2.384 — over half the plume buried, PR #21 r3).
     group.add(flame)
     nitroTips.push(flame)
   }
