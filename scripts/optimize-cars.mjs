@@ -2,7 +2,8 @@
 /* -------------------------------------------------------------------------
  * Real-car asset pipeline (real-car-models plan, Task 4).
  *
- *   node scripts/optimize-cars.mjs [id ...]        (default: all five)
+ *   npm run optimize-cars [id ...]                 (default: all six)
+ *   (same as node scripts/optimize-cars.mjs)
  *
  * Reads the raw Sketchfab GLBs from assets-src/<id>.glb (gitignored, partner
  * download) and writes optimised runtime assets to public/models/<id>.glb:
@@ -17,10 +18,13 @@
  *   · glass candidates renamed glass-<n>
  *   · webp textures (sharp), unit-normalised to the 4.55 m footprint, wheels
  *     touching y=0 (ground-sit)
- *   · budget gate: ≤60k tris and ≤4 MB per car, ≤12 MB across all five
+ *   · budget gate: ≤60k tris and ≤4 MB per car, ≤12 MB across all six
  *
- * build/cars/<id>.report.json records measurements + a ready-to-paste CarRig
- * literal for src/assets/CarRigs.ts. Tuning knobs live in CARS below.
+ * build/cars/<id>.report.json records the measurements; scripts/emit-rigs.mjs
+ * consumes those reports and REGENERATES src/assets/CarRigs.ts — the rig
+ * table is never hand-pasted (PR #21: copy-paste is how stale caliperColors
+ * and mislabelled L/R hubs shipped). `npm run optimize-cars && npm run
+ * emit-rigs` is the full asset rebuild. Tuning knobs live in CARS below.
  * ----------------------------------------------------------------------- */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -43,19 +47,19 @@ const REPORTS = join(root, 'build', 'cars')
  * procedural convention (-z) — '+z' cars get a 180° spin in the rig grouper. */
 const CARS = {
   r34: {
-    file: 'r34.glb', page: 'https://sketchfab.com/3d-models/none-ff8fb2251dfa4bb9979e7022c5a6666c',
+    file: 'r34.glb', page: 'https://sketchfab.com/3d-models/nissan-skyline-gtr-r34-ff8fb2251dfa4bb9979e7022c5a6666c',
     tris: 45000, tex: 1024, nose: '+z',
     wheelMeshes: ['Object_13', 'Object_14'], wheelMatch: 'tire|tyre|wheel|rim|pneu|jante', wheelExclude: 'spare',
     drop: null, glass: 'glass|wind|window',
   },
   '930': {
-    file: '930.glb', page: 'https://sketchfab.com/3d-models/none-8568d9d14a994b9cae59499f0dbed21e',
+    file: '930.glb', page: 'https://sketchfab.com/3d-models/porsche-911-turbo-8568d9d14a994b9cae59499f0dbed21e',
     tris: 45000, tex: 1024, nose: '+z', error: 3e-3,
     wheelMatch: 'tire|rim', wheelExclude: 'spare',
     drop: 'lights_refraction|930_lights|wunderbaum', glass: 'glass',
   },
   s15: {
-    file: 's15.glb', page: 'https://sketchfab.com/3d-models/none-18348c1698f74d9db1497a791bd21a2f',
+    file: 's15.glb', page: 'https://sketchfab.com/3d-models/nissan-silvia-s15-18348c1698f74d9db1497a791bd21a2f',
     tris: 50000, tex: 1024, nose: '-z', error: 5e-3, wheelTris: 16000,
     wheelMatch: 'blitz03|blitz_bolts_gold', wheelExclude: 'spare',
     drop: 'lights', glass: 'windows|glass',
@@ -63,7 +67,7 @@ const CARS = {
     interior: 'steeringwheel|gauage|gauge|pedal|dashglow|interior_mats|pioneer_avh|pillownaoki|turbine|turboisolation|waterreservoir|sr20|nfsframe',
   },
   centenario: {
-    file: 'centenario.glb', page: 'https://sketchfab.com/3d-models/none-d679af35b5694301a185c7454a700c73',
+    file: 'centenario.glb', page: 'https://sketchfab.com/3d-models/lamborghini-centenario-lp-770-4-d679af35b5694301a185c7454a700c73',
     tris: 45000, tex: 1024, nose: '+z', error: 3e-3,
     wheelMatch: 'wheel|pneu|crbn_jante|tire32', wheelExclude: 'spare',
     drop: 'display|logo|^Object_12$', glass: 'glass|vitre',
@@ -71,7 +75,7 @@ const CARS = {
     interior: 'steering|dash|cuir|seat',
   },
   terzo: {
-    file: 'terzo.glb', page: 'https://sketchfab.com/3d-models/none-7ad3dffa9d344c3c978eafcc220cb709',
+    file: 'terzo.glb', page: 'https://sketchfab.com/3d-models/lamborghini-terzo-millennio-7ad3dffa9d344c3c978eafcc220cb709',
     tris: 45000, tex: 1024, nose: '+z',
     wheelMatch: 'tire|wheel|jante', wheelExclude: 'spare',
     drop: 'display|Material\\.044', glass: 'vitres|glass',
@@ -246,9 +250,12 @@ async function processCar(id) {
       const matHit = nodeMats(node).some((m) => dropRe.test(m.getName() ?? ''))
       if ((node.getMesh() && dropRe.test(node.getName() ?? '')) || matHit) { kill.push(node); killTris += nodeTris(node) }
     }
-    if (killTris / Math.max(1, totalTris) > 0.3) {
-      console.warn(`[cars] ${id}: drop-list covers ${(100 * killTris / totalTris).toFixed(1)}% of tris (>30%) — keeping all, REVIEW`)
+    const dropShare = killTris / Math.max(1, totalTris)
+    if (dropShare > 0.3) {
+      console.warn(`[cars] ${id}: drop-list covers ${(100 * dropShare).toFixed(1)}% of tris (>30%) — keeping all, REVIEW`)
     } else {
+      if (dropShare > 0.15)
+        console.warn(`[cars] ${id}: drop-list covers ${(100 * dropShare).toFixed(1)}% of tris (>15%) — dropping anyway, verify the drop list against the source model`)
       for (const n of kill) n.getParentNode()?.removeChild(n)
       console.log(`[cars] ${id}: dropped ${kill.length} light/display nodes (${killTris} tris)`)
     }
@@ -344,7 +351,14 @@ async function processCar(id) {
   for (const t of triPool) {
     const cxT = (t.ws[0] + t.ws[3] + t.ws[6]) / 3
     const czT = (t.ws[2] + t.ws[5] + t.ws[8]) / 3
-    const corner = `${(nosePlusZ ? czT > splitZ : czT < splitZ) ? 'f' : 'r'}${cxT < splitX ? 'l' : 'r'}`
+    // l/r follows the WORLD layout after the grouper: +z-nose cars get spun
+    // 180° about y, which mirrors x too — so their source +x wheel becomes the
+    // world front-left (world −x with the nose at −z). Labeling by raw source
+    // x left wheel-fl-lr on world +x for every flipped car: the hub box still
+    // validated (node + rig pair out of the same bucket) but the table said
+    // "fl" for the physical right wheel — wrong radius/brake owner the moment
+    // a model has asymmetric tyres.
+    const corner = `${(nosePlusZ ? czT > splitZ : czT < splitZ) ? 'f' : 'r'}${(nosePlusZ ? cxT > splitX : cxT < splitX) ? 'l' : 'r'}`
     let byPrim = cornerGroups.get(corner)
     if (!byPrim) cornerGroups.set(corner, byPrim = new Map())
     let e = byPrim.get(t.prim)
@@ -621,6 +635,11 @@ async function processCar(id) {
   for (const n of [...rootScene.listChildren()]) grouper.addChild(n)
   rootScene.addChild(grouper)
   const groundClearance = (bodyMinY - sitRef) * scale
+  // body end-faces in world z (same signed mapping as wheelPos; the +z-nose
+  // cars swap which source end is which, so both ends go through min/max).
+  const endA = -sgn * (min[2] - wheelMid[2]) * scale
+  const endB = -sgn * (max[2] - wheelMid[2]) * scale
+  const lampF = Math.min(endA, endB), lampR = Math.max(endA, endB)
 
   // 7. write + budgets + report
   const out = join(OUT, `${id}.glb`)
@@ -637,10 +656,22 @@ async function processCar(id) {
       return [-sgn * (p[0] - wheelMid[0]) * scale, (p[1] - sitRef) * scale, -sgn * (p[2] - wheelMid[2]) * scale].map((v) => +v.toFixed(3))
     }),
     groundClearance: +groundClearance.toFixed(3),
-    caliperColor: 0xc23a28,
     bakedPaint,
-    lampGlow: true,
-    logoAnchor: [0, +(groundClearance + 0.35).toFixed(3), -(TARGET_LEN / 2 - 0.15).toFixed(3)],
+    // All six shipped models carry BAKED head-/tail-light textures (verified
+    // in the camfix captures, PR #21 review round 2). Runtime glow rectangles
+    // were therefore always wrong: buried at ±2.16 inside the shell they were
+    // invisible (the original finding), and measured outboard they float as
+    // opaque slabs over the baked lamps. The runtime honours this flag — a
+    // future lamp-less GLB flips it true and the rectangles return.
+    lampGlow: false,
+    // world-z of the lamp faces, MEASURED off the body bbox (same transform as
+    // wheelPos), pushed 12 mm outboard so the glow planes sit in front of the
+    // shell instead of buried ~11 cm inside it at the old fixed ±2.16.
+    lampZ: [+(lampF - 0.012).toFixed(3), +(lampR + 0.012).toFixed(3)],
+    // rear badge decal on the TAIL (+z), measured off the body bbox: the old
+    // fixed −(L/2−0.15) planted it at the NOSE while the mesh is named
+    // logo-rear and the spec calls for a tail wordmark.
+    logoAnchor: [0, +(groundClearance + 0.35).toFixed(3), +(lampR + 0.02).toFixed(3)],
     nitroAnchor: [[-0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(TARGET_LEN / 2 - 0.05).toFixed(3)], [0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(TARGET_LEN / 2 - 0.05).toFixed(3)]],
   }
   const report = { id, bytes, tris, wheels: wheelReport, scale: +scale.toFixed(4), bakedPaint, rig }

@@ -28,7 +28,9 @@
     "noleak": "node scripts/noleak.mjs",
     "functional": "node scripts/functional.mjs",
     "perf": "node scripts/perf.mjs",
-    "audit": "node scripts/audit-shots.mjs"
+    "audit": "node scripts/audit-shots.mjs",
+    "optimize-cars": "node scripts/optimize-cars.mjs",
+    "emit-rigs": "node scripts/emit-rigs.mjs"
   },
   "dependencies": {
     "three": "^0.168.0"
