@@ -725,8 +725,11 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   // any miss (cold cache, ?proc=1, rig violation) falls through to the
   // untouched procedural builder below. Gated PER-ID on purpose (PR #21
   // review): one failed GLB must not demote the other five, so the check is
-  // cloneRealCar's cache hit, not libraryReady()'s all-or-nothing — that one
-  // stays the Game-level "should I rebuild the player car" signal.
+  // cloneRealCar's cache hit, not libraryReady()'s all-or-nothing. There is
+  // deliberately no rebuild-on-late-arrival machinery: a GLB that fails at
+  // boot keeps THAT car procedural for the session (documented in
+  // ASSETS.md), and libraryReady() is diagnostics only (preload warn + dev
+  // harness) — no consumer rebuilds on it (PR #21 r3 comment audit).
   if (!forceProcedural()) {
     const real = cloneRealCar(spec.id, paintHex ?? resolvePaint(null, spec), spec)
     if (real) return real

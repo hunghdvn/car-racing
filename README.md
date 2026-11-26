@@ -42,7 +42,7 @@ one `?proc=1` forces for every car — the offline/dev kill switch):
 |---|---|---|
 | Nissan Skyline GT-R R34 | Balanced | The all-rounder baseline |
 | Lamborghini Centenario LP 770-4 | Top speed | Fastest straight line, more to manage in corners |
-| Porsche 911 Turbo (930) | Corner grip | Hooks up mid-corner, trades terminal speed |
+| Porsche 911 Turbo | Corner grip | Hooks up mid-corner, trades terminal speed |
 | Nissan Silvia S15 | Drift | Loose and playful on the handbrake |
 | Lamborghini Terzo Millennio | Hyper | Concept-car wedge, highest ceiling |
 | Porsche 911 Carrera 4S | All-road | Wide-body grip with usable top end |

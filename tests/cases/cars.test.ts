@@ -2,7 +2,7 @@ import { assert, assertNear, test } from '../harness'
 import { VEHICLE, CAR, PAINTS, AI } from '../../src/config'
 import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
-import { CAR_SPECS, HERO_SPEC, carDisplayName, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
+import { CAR_SPECS, HERO_SPEC, brandingOn, carDisplayName, getSpec, identityFor, REAL, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
@@ -98,18 +98,18 @@ test('identity: every spec carries real-world branding metadata', () => {
   for (const s of CAR_SPECS) {
     assert((s.identity?.name.length ?? 0) > 0 && (s.identity?.maker.length ?? 0) > 0 && (s.identity?.license.length ?? 0) > 0, `identity ${s.id}`)
     assert(s.identity?.realBranding === true, `realBranding flag ${s.id}`)
-    assert((s.fictionalName ?? '').length > 0, `fictional name for ${s.id}`)
+    assert(s.name.length > 0 && s.name !== s.identity?.name, `fictional catalog name on ${s.id} (the real name lives ONLY in identity)`)
   }
 })
 
 test('identity: REAL_BRANDING swaps the display name AT RENDER TIME (PR #21: runtime flag flips take effect)', () => {
   assert(CAR.realBranding === true, 'branding ships on (partner decision; ASSETS.md records the licences)')
   assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'branded name (flag on)')
-  assert(getSpec('r34').fictionalName === 'Velocity GT', 'fictional name kept for the toggle-off path')
+  assert(getSpec('r34').name === 'Velocity GT', 'the catalog field is the FICTIONAL name; the real one is identity-only (default-safe data model)')
   const was = CAR.realBranding
   try {
     CAR.realBranding = false
-    for (const s of CAR_SPECS) assert(carDisplayName(s) === s.fictionalName, `flag-off shows the fictional name (${s.id})`)
+    for (const s of CAR_SPECS) assert(carDisplayName(s) === s.name, `flag-off shows the fictional catalog name (${s.id})`)
   } finally { CAR.realBranding = was }
   assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'flag restored')
 })
@@ -119,9 +119,18 @@ test('identity: per-car realBranding override drops one car name (CC-BY-NC escap
   const was = s.identity!.realBranding
   try {
     s.identity!.realBranding = false
-    assert(carDisplayName(s) === s.fictionalName, 'the per-car override wins over the global flag')
+    assert(carDisplayName(s) === s.name, 'the per-car override wins over the global flag')
     assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'other cars keep their real name')
   } finally { s.identity!.realBranding = was }
+  // the PINNED door, not just the mutated field: identityFor is where a
+  // REAL[id].realBranding = false entry takes effect, so the test must go
+  // through it (mutating s.identity directly let a broken spread order pass
+  // this test blind, PR #21 r3)
+  const pinned = identityFor('r34')
+  pinned.realBranding = false
+  assert(carDisplayName({ name: getSpec('r34').name, identity: pinned }) === getSpec('r34').name, 'identityFor honours a per-car pin')
+  assert(brandingOn({ identity: undefined }) === false, 'no identity = no branding (both gates agree, the safe direction)')
+  assert(typeof REAL.terzo.license === 'string' && REAL.terzo.license.includes('NC'), 'terzo carries the CC-BY-NC licence the per-car pin exists for')
 })
 
 test('catalog: getSpec falls back to hero for unknown ids', () => {

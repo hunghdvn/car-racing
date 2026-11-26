@@ -319,6 +319,12 @@ export class Game {
    *  already flipped. Any genuine restart arrives on a later frame. */
   private beginStamp: { phaseAfter: RacePhase; frame: number } | null = null
 
+  /** the REAL_BRANDING flag flipped on a running page (dev harness): card
+   *  labels bake names at build time, so re-render them (PR #21 r3). */
+  refreshBranding(): void {
+    this.ui.refreshModelCards()
+  }
+
   beginRace(): void {
     if (this.beginStamp !== null && this.beginStamp.phaseAfter === this.director.phase
       && this.beginStamp.frame === this.frameCount) return

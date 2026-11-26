@@ -432,6 +432,7 @@ export class UIManager {
    *  ACCEPTED path (setModelActive/renderModelStats), so a rejected switch
    *  (same-id / phase guard) can never leave the UI ahead of the car. */
   private buildModelCards(selectedId: CarId): void {
+    this.lastModelId = selectedId
     const host = this.$('model-cards')
     if (!host) return
     host.textContent = ''
@@ -453,9 +454,19 @@ export class UIManager {
 
   /** moves the active marker to the accepted model (Game calls it on accept) */
   setModelActive(id: CarId): void {
+    this.lastModelId = id
     for (const c of this.modelCardEls) {
       c.classList.toggle('selected', c.dataset.model === id)
     }
+  }
+
+  private lastModelId?: CarId
+
+  /** rebuild the card row labels — Game.refreshBranding calls this when
+   *  CAR.realBranding flips on a running page (names render at build time,
+   *  so without this the garage kept stale labels until reload, PR #21 r3) */
+  refreshModelCards(): void {
+    this.buildModelCards(this.lastModelId ?? readModelSelection())
   }
 
   /** five normalised stat bars for the selected model (spec §8 garage) */

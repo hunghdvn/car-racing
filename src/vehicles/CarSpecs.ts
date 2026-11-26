@@ -66,10 +66,10 @@ export interface CarSpec {
   shape: CarShape
   kit: CarKit
   finish: CarFinish
-  /** real-world branding metadata (optional so synthetic test specs stay valid) */
+  /** real-world branding metadata (optional so synthetic test specs stay
+   *  valid); the REAL name lives ONLY here. Missing identity = no branding
+   *  (see brandingOn) — the safe direction for the trademark gate. */
   identity?: CarIdentity
-  /** the pre-branding fictional name, kept for the REAL_BRANDING=off path */
-  fictionalName?: string
   /** rig lookup override; defaults to spec.id (CarRigs.ts) */
   rigId?: CarId
 }
@@ -131,9 +131,12 @@ const HERO_FINISH: CarFinish = {
 
 /* Real-world identity table (real-car-models spec §branding). Model sources +
  * licences live in ASSETS.md; CAR.realBranding is the publish-time kill
- * switch, identity.realBranding the per-car one. When both are on, `name`
- * carries the real car name; otherwise the catalog's fictionalName. */
-const REAL: Record<CarId, { name: string; maker: string; license: string }> = {
+ * switch, identity.realBranding the per-car one. The default-safe data
+ * model (PR #21 r3): spec.name is the FICTIONAL catalog name, the real
+ * name lives ONLY in identity.name — forgetting a display gate anywhere
+ * degrades to the fictional name, it can never leak a trademark. REAL is
+ * exported as the test door (cars.test pins entries through it). */
+export const REAL: Record<CarId, { name: string; maker: string; license: string; realBranding?: boolean }> = {
   r34: { name: 'Nissan Skyline GT-R R34', maker: 'Nissan', license: 'CC-BY 4.0 — model by Lexyc16 (Sketchfab)' },
   '930': { name: 'Porsche 911 Turbo', maker: 'Porsche', license: 'CC-BY 4.0 — model by Lionsharp (Sketchfab)' },
   s15: { name: 'Nissan Silvia S15', maker: 'Nissan', license: 'CC-BY 4.0 — model by autoNgraphic (Sketchfab)' },
@@ -145,17 +148,24 @@ const REAL: Record<CarId, { name: string; maker: string; license: string }> = {
 /* realBranding DEFAULTS to true here but REAL[id] may pin it false — the
  * per-car override that makes the CC-BY-NC `terzo` (or any single car) drop
  * its real name/badge without touching the global flag. */
-const identityFor = (id: CarId): CarIdentity => ({ realBranding: true, ...REAL[id] })
+export const identityFor = (id: CarId): CarIdentity => ({ realBranding: true, ...REAL[id] })
 
-/** The branding gate, evaluated AT RENDER TIME on purpose (PR #21 review):
- *  a module-load-time `displayName` baked names into the catalog at import,
- *  so flipping CAR.realBranding later changed nothing. Pure over spec fields
- *  → tests and the UI can toggle the flag and see the swap immediately. */
-export const carDisplayName = (spec: Pick<CarSpec, 'name' | 'fictionalName' | 'identity'>): string =>
-  CAR.realBranding && spec.identity?.realBranding ? spec.identity.name : (spec.fictionalName ?? spec.name)
+/** THE one branding gate (PR #21 r3): the decal attachment in CarLibrary
+ *  and every display name route through it, so the two can never disagree
+ *  on what a spec WITHOUT identity means (the decal gate once defaulted
+ *  `?? true` and badge-printed a made-up maker while the name said
+ *  fictional). Evaluated at RENDER time on purpose: a module-load-time
+ *  displayName baked names into the catalog at import, so flipping
+ *  CAR.realBranding later changed nothing. Pure over spec fields → tests
+ *  and the UI can toggle the flag and see the swap immediately. */
+export const brandingOn = (spec: Pick<CarSpec, 'identity'>): boolean =>
+  CAR.realBranding && (spec.identity?.realBranding ?? false)
+
+export const carDisplayName = (spec: Pick<CarSpec, 'name' | 'identity'>): string =>
+  brandingOn(spec) ? spec.identity!.name : spec.name
 
 export const HERO_SPEC: CarSpec = {
-  id: 'r34', name: REAL.r34.name, fictionalName: 'Velocity GT',
+  id: 'r34', name: 'Velocity GT',
   class: 'BALANCED', stat: {}, identity: identityFor('r34'),
   shape: { bodyStations: BODY_STATIONS, cabinStations: CABIN_STATIONS },
   kit: { ...BASE_KIT },
@@ -246,27 +256,27 @@ const DRIFT_SHAPE: CarShape = {
  * replaces the visual layer but never these records. */
 export const CAR_SPECS: readonly CarSpec[] = [
   HERO_SPEC,
-  { id: '930', name: REAL['930'].name, fictionalName: 'Apex Grip', class: 'CORNER GRIP',
+  { id: '930', name: 'Apex Grip', class: 'CORNER GRIP',
     stat: { topSpeed: 0.90, nitroTopSpeed: 0.90, gripMax: 1.12, gripDrift: 1.10, yawResponse: 1.08, brakeForce: 1.08 },
     identity: identityFor('930'),
     shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'none', wheelStyle: 'multi-spoke', wheelRadiusMul: 1.04, trackMul: 1.05, archExtension: 0.05, caliper: 0x39c06a },
     finish: { paint: PAINTS[0].color, clearcoat: 0.2, flake: 0.25, roughness: 0.55, glassTint: 0x151c25, carbon: 0.04, accent: 0xf2d21c } },
-  { id: 's15', name: REAL.s15.name, fictionalName: 'Slide King', class: 'DRIFT',
+  { id: 's15', name: 'Slide King', class: 'DRIFT',
     stat: { topSpeed: 0.96, nitroTopSpeed: 0.96, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.30, yawResponse: 1.20 },
     identity: identityFor('s15'),
     shape: DRIFT_SHAPE, kit: { ...BASE_KIT, splitter: 'none', spoiler: 'low', diffuserFins: 0, roofScoop: true, wheelStyle: 'teardrop', wheelWidthMul: 1.08, trackMul: 1.07, archExtension: 0.07, caliper: 0xf27a1e },
     finish: { paint: PAINTS[5].color, clearcoat: 0.7, flake: 0.85, roughness: 0.15, glassTint: 0x241a10, carbon: 0.12, accent: 0xf29a1e } },
-  { id: 'centenario', name: REAL.centenario.name, fictionalName: 'Solaris Hyper', class: 'TOP SPEED',
+  { id: 'centenario', name: 'Solaris Hyper', class: 'TOP SPEED',
     stat: { topSpeed: 1.12, nitroTopSpeed: 1.10, engineAccel: 1.02, gripMax: 0.90, gripDrift: 1.05, yawResponse: 0.95, drag: 0.92 },
     identity: identityFor('centenario'),
     shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xe8b62e },
     finish: { paint: PAINTS[2].color, clearcoat: 0.9, flake: 0.75, roughness: 0.18, glassTint: 0x101a2a, carbon: 0.08, accent: 0x18d8e8 } },
-  { id: 'terzo', name: REAL.terzo.name, fictionalName: 'Vector Zero', class: 'HYPER',
+  { id: 'terzo', name: 'Vector Zero', class: 'HYPER',
     stat: { topSpeed: 1.20, nitroTopSpeed: 1.14, engineAccel: 1.12, gripMax: 1.05, gripDrift: 1.05, driftYawBoost: 0.90, yawResponse: 1.00, drag: 0.88 },
     identity: identityFor('terzo'),
     shape: HYPER_SHAPE, kit: { ...BASE_KIT, spoiler: 'gt', wheelStyle: 'mesh', wheelRadiusMul: 0.98, wheelWidthMul: 1.06, caliper: 0xc23a28 },
     finish: { paint: PAINTS[3].color, clearcoat: 0.95, flake: 0.65, roughness: 0.15, glassTint: 0x101a2a, carbon: 0.06, accent: 0xff8c1a } },
-  { id: 'carrera', name: REAL.carrera.name, fictionalName: 'Circuit Four', class: 'ALL-ROAD',
+  { id: 'carrera', name: 'Circuit Four', class: 'ALL-ROAD',
     stat: { topSpeed: 1.02, nitroTopSpeed: 1.03, engineAccel: 1.06, gripMax: 1.04, gripDrift: 0.98, yawResponse: 1.02, brakeForce: 1.04 },
     identity: identityFor('carrera'),
     shape: GRIP_SHAPE, kit: { ...BASE_KIT, splitter: 'big', spoiler: 'low', wheelStyle: 'mesh', wheelRadiusMul: 1.03, trackMul: 1.06, archExtension: 0.04, caliper: 0xf2d21c },

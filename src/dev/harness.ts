@@ -15,7 +15,8 @@ import { gridSlot } from '../game/RaceDirector'
 import { buildCar, disposeCarTree, isSharedCarMaterial, validateCarShape } from '../assets/CarModel'
 import { CAR_RIGS } from '../assets/CarRigs'
 import { disposeLibrary, getTemplate, libraryReady, preloadCars, setForceProcedural } from '../assets/CarLibrary'
-import { CAR_SPECS, type CarId } from '../vehicles/CarSpecs'
+import { CAR_SPECS, carDisplayName, type CarId } from '../vehicles/CarSpecs'
+import { RIG_BANDS } from '../assets/CarShared'
 import type { Game } from '../game/Game'
 
 /* ---------------------------------------------------------------------------
@@ -48,7 +49,14 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
     // rig table through these, and forces the procedural fallback for its
     // proc-rec page context. __dbg additions ONLY (no new top-level globals).
     CarRigs: CAR_RIGS, preloadCars, libraryReady, forceProcedural: setForceProcedural,
-    getTemplate, disposeLibrary, setRealBranding: (on: boolean): void => { CAR.realBranding = on } }
+    getTemplate, disposeLibrary, RIG_BANDS, carDisplayName,
+    getRealBranding: (): boolean => CAR.realBranding,
+    setRealBranding: (on: boolean): void => {
+      CAR.realBranding = on
+      // card labels bake names at build time; without this a live flip
+      // left stale text on screen (PR #21 r3 branding-text rec)
+      ;(game as unknown as { refreshBranding?: () => void }).refreshBranding?.()
+    } }
   ;(globalThis as unknown as { __buildMs?: number }).__buildMs = buildMs
   /* dev-only: drive the fixed-dt sim + presentation deterministically so the
      event-aggregating effects pipeline can be verified without waiting on the

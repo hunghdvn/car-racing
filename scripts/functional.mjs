@@ -371,6 +371,11 @@ try {
       heroRef: g.ai.find((a) => a.spec.id === 'r34')?.tuning?.topSpeed ?? null,
       selectedId: g.selectedSpec.id,
       standings: g.ui.standingNames ? Array.from(g.ui.standingNames) : null,
+      // TEXT expectations computed from the catalog fields directly — the
+      // old rec compared against a literal only, so pointing the UI back at
+      // spec.name (fictional since the data-model flip) stayed green
+      brandingOn: window.__dbg.getRealBranding(),
+      expectStandings: ['YOU', ...g.ai.map((a) => (window.__dbg.getRealBranding() && a.spec.identity?.realBranding ? a.spec.identity.name : a.spec.name).toUpperCase())],
     }
   })
 
@@ -393,7 +398,8 @@ try {
   // §10.5: standings carry the model names, never the paint names.
   const standingsOk = Array.isArray(boot.standings)
     && boot.standings.length === EXPECT_STANDINGS.length
-    && boot.standings.every((n, i) => n === EXPECT_STANDINGS[i])
+    && boot.standings.every((n, i) => n === boot.expectStandings[i])
+    && (!boot.brandingOn || boot.standings.join('|') === EXPECT_STANDINGS.join('|'))
     && !boot.standings.some((n) => PAINT_NAMES.includes(n))
   rec('standings-are-model-names', standingsOk, `standings ${JSON.stringify(boot.standings)} (expect ${JSON.stringify(EXPECT_STANDINGS)})`)
 
@@ -643,38 +649,74 @@ try {
         // single-sided by construction → the template material must be
         // DoubleSide or the hub reads hollow through the spokes.
         let glowN = 0
-        let discSeen = false
+        let discSeen = false, caliperSeen = false
         let discOk = true
         car.group.traverse((o) => {
           if (!o.isMesh) return
           if (o.name === 'glow-front' || o.name === 'glow-rear') glowN++
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-            if (m && /brake/.test(m.name ?? '')) { discSeen = true; if (m.side !== d.THREE.DoubleSide) discOk = false }
+            // brake-disc fan AND the cloned caliper: the r3 audit matched
+            // only /brake/, so dropping DoubleSide from caliperMat (two
+            // caliper box faces wind inward → culled, caliper reads hollow)
+            // passed every suite. Name-match both doors now.
+            if (!m || !/^(brake|caliper)/.test(m.name ?? '')) continue
+            if (/^brake/.test(m.name)) discSeen = true
+            else caliperSeen = true
+            if (m.side !== d.THREE.DoubleSide) discOk = false
           }
         })
+        // the badge decal must FACE the chase camera: plane normal +z in
+        // world space (the mirror/rotation that flipped it read only from
+        // inside the bumper, PR #21 r3)
+        const decal = byName('logo-rear')
+        let decalFacedBack = true
+        if (decal) {
+          const q = new d.THREE.Quaternion(); decal.getWorldQuaternion(q)
+          decalFacedBack = new d.THREE.Vector3(0, 0, 1).applyQuaternion(q).z > 0.9
+        }
+        // the flag-OFF direction of the glow check is degenerate for all
+        // six shipped rows (lampGlow false ⇒ glowN === 0 even with the
+        // branch broken). Flip the TABLE row — the proven tamper door —
+        // and demand the four planes really materialise on a fresh clone.
+        let glowOnN = 0
+        const row = d.CarRigs[spec.rigId ?? spec.id]
+        const glowWas = row.lampGlow
+        row.lampGlow = true
+        try {
+          const glowCar = d.buildCar(0xf27a1e, spec)
+          glowCar.group.traverse((o) => { if (o.name === 'glow-front' || o.name === 'glow-rear') glowOnN++ })
+          d.disposeCarTree(glowCar.group)
+        } finally { row.lampGlow = glowWas }
         out[spec.id] = {
           root: car.group.name === `car-model-${spec.id}`,
           wheels: wheels.every(Boolean),
           spin: spinOk, brakeParented,
           grounded: box.min.y >= Math.min(0, rig.groundClearance) - 0.06 && box.min.y <= 0.12,
-          radius: car.wheels.every((w) => w.radius >= 0.2 && w.radius <= 0.44),
+          radius: car.wheels.every((w) => w.radius >= d.RIG_BANDS.radius[0] && w.radius <= d.RIG_BANDS.radius[1]),
           frontMinusZ,
           paint: painted > 0 || rig.bakedPaint,
-          logo: !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2,
+          logo: !d.getRealBranding() || !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2,
           sharesTpl,
           glowCoherent: glowN === (rig.lampGlow ? 4 : 0),
-          discDoubleSided: discSeen && discOk,
+          glowOn: glowOnN === 4,
+          discDoubleSided: discSeen && caliperSeen && discOk,
+          decalFacedBack,
         }
         // REAL_BRANDING is the trademark escape hatch: a flag-off clone must
         // carry NO maker badge on track (PR #21 review — the decal was once
         // ungated, so flag-off still raced with NISSAN/PORSCHE/LAMBORGHINI).
-        d.setRealBranding(false)
-        const offCar = d.buildCar(0xf27a1e, spec)
-        let offBadge = false
-        offCar.group.traverse((o) => { if (o.name === 'logo-rear') offBadge = true })
-        d.disposeCarTree(offCar.group)
-        d.setRealBranding(true)
-        out[spec.id].logoFlagOff = !offBadge
+        // save/restore, never pin: REAL_BRANDING=false is a documented
+        // build, and restoring `true` here both broke that build's audit
+        // and leaked branding ON into every later rec of the run (r3).
+        const brandWas = d.getRealBranding()
+        try {
+          d.setRealBranding(false)
+          const offCar = d.buildCar(0xf27a1e, spec)
+          let offBadge = false
+          offCar.group.traverse((o) => { if (o.name === 'logo-rear') offBadge = true })
+          d.disposeCarTree(offCar.group)
+          out[spec.id].logoFlagOff = !offBadge
+        } finally { d.setRealBranding(brandWas) }
         d.disposeCarTree(car.group)
         // cache-survives-dispose: a retired clone must not blank the cache
         const again = d.buildCar(0xf27a1e, spec)
@@ -690,7 +732,7 @@ try {
     const ids = Object.keys(rigsOut)
     const bad = ids.filter((id) => !Object.values(rigsOut[id]).every(Boolean))
     rec('glb-rigs-integrity', ids.length === 6 && bad.length === 0,
-      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, geometry front-at-−z, paint bound to meshes, logo on, logo GONE flag-off, nitro, clone shares template geometry, glow planes match the lampGlow flag, brake disc DoubleSide, cache-survives-dispose)`
+      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, geometry front-at-−z, paint bound to meshes, logo on, logo GONE flag-off, nitro, clone shares template geometry, glow planes match the lampGlow flag BOTH ways, brake disc + caliper DoubleSide, badge faces +z, cache-survives-dispose)`
         : `failed flags: ${bad.map((id) => `${id}: ${Object.entries(rigsOut[id]).filter(([, v]) => !v).map(([k]) => k).join(',')}`).join(' | ')}`)
   }
 
@@ -701,8 +743,8 @@ try {
     window.__dbg.CAR_SPECS.map((s) => {
       const r = window.__dbg.CarRigs[s.id]
       return [s.id, {
-        radii: r.wheelRadius.length === 4 && r.wheelRadius.every((v) => v >= 0.2 && v <= 0.44),
-        clearance: r.groundClearance >= -0.06 && r.groundClearance <= 0.25,
+        radii: r.wheelRadius.length === 4 && r.wheelRadius.every((v) => v >= window.__dbg.RIG_BANDS.radius[0] && v <= window.__dbg.RIG_BANDS.radius[1]),
+        clearance: r.groundClearance >= window.__dbg.RIG_BANDS.clearance[0] && r.groundClearance <= window.__dbg.RIG_BANDS.clearance[1],
         anchors: [...r.logoAnchor, ...r.nitroAnchor.flat()].every(Number.isFinite),
         // left hubs at −x / right at +x with the nose at −z (the L/R mirror
         // rule the 180°-flipped cars violated pre-fix, PR #21)
@@ -760,12 +802,18 @@ try {
     await d.preloadCars()
     const spec = d.CAR_SPECS.find((s) => s.id === 's15')
     const orig = JSON.parse(JSON.stringify(d.CarRigs.s15))
-    d.CarRigs.s15.wheelRadius[0] = 0.1 // outside the validated [0.2, 0.44] band
-    const bad = d.buildCar(0xf27a1e, spec)
-    const has = (n) => { let f = false; bad.group.traverse((o) => { if (o.name === n) f = true }); return f }
-    const fellBack = !has('wheel-fl-lr') && has('wheel-f-l') // procedural wheel roots are wheel-f-l/fr/r-l/r-r
-    d.disposeCarTree(bad.group)
-    Object.assign(d.CarRigs.s15, orig)
+    d.CarRigs.s15.wheelRadius[0] = 0.1 // outside the validated radius band
+    let fellBack = false
+    try {
+      const bad = d.buildCar(0xf27a1e, spec)
+      const has = (n) => { let f = false; bad.group.traverse((o) => { if (o.name === n) f = true }); return f }
+      fellBack = !has('wheel-fl-lr') && has('wheel-f-l') // procedural wheel roots are wheel-f-l/fr/r-l/r-r
+      d.disposeCarTree(bad.group)
+    } finally {
+      // restore must survive a throw mid-block: an unrecovered 0.1 poisoned
+      // s15 for EVERY later rec on the shared page (PR #21 r3)
+      Object.assign(d.CarRigs.s15, orig)
+    }
     const good = d.buildCar(0xf27a1e, spec)
     let restored = false; good.group.traverse((o) => { if (o.name === 'wheel-fl-lr') restored = true })
     d.disposeCarTree(good.group)
@@ -775,6 +823,24 @@ try {
     rec('carlib-rig-tamper-fallback', tamper.fellBack && tamper.restored,
       `rigged wheelRadius 0.1 → clone rejected, buildCar served the procedural car (wheel-fl, no wheel-fl-lr) = ${tamper.fellBack}; after restoring the table the GLB clone returned = ${tamper.restored}`)
   } else rec('carlib-rig-tamper-fallback', false, 'evaluate threw — tamper path unverified')
+
+  // rigId alias door (PR #21 r3): a spec with spec.rigId must clone ITS
+  // RIG's template — the template lookup once followed spec.id, silently
+  // mixing rig 930's numbers onto the s15 mesh.
+  const alias = await pKeys.evaluate(async () => {
+    const d = window.__dbg
+    await d.preloadCars()
+    const spec = { ...d.CAR_SPECS.find((s) => s.id === 's15'), rigId: '930' }
+    const car = d.buildCar(0xf27a1e, spec)
+    let cloned = false; car.group.traverse((o) => { if (o.name === 'wheel-fl-lr') cloned = true })
+    const r0 = car.wheels[0]?.radius ?? -1
+    d.disposeCarTree(car.group)
+    return { cloned, matches930: Math.abs(r0 - d.CarRigs['930'].wheelRadius[0]) < 1e-9, notS15: Math.abs(r0 - d.CarRigs.s15.wheelRadius[0]) > 1e-3 }
+  }).catch(() => null)
+  if (alias) {
+    rec('carlib-rigid-alias-template', alias.cloned && alias.matches930 && alias.notS15,
+      `spec s15 + rigId 930 → GLB clone = ${alias.cloned}, front radius is the 930 rig's = ${alias.matches930} and not the s15 one = ${alias.notS15} (template door follows spec.rigId ?? id, same as the rig lookup)`)
+  } else rec('carlib-rigid-alias-template', false, 'evaluate threw — alias path unverified')
 
   // Per-id load drop (PR #21 review): one dead GLB must degrade ONLY its own
   // car. three.js FileLoader drives XHR, so the honest kill is a request-route
@@ -966,6 +1032,29 @@ try {
     rec('tomenu-parks-field', preMenu.left && menuBack.phase === 'idle' && menuBack.parked && menuBack.unlocked && !menuBack.locked,
       `precondition field-left-park = ${preMenu.left} (must be true — the rec is meaningless on an unparked start pose), toMenu → phase '${menuBack.phase}', all ai-car groups parked off-scene = ${menuBack.parked}, cards re-enabled = ${menuBack.unlocked}, .locked cleared = ${!menuBack.locked} (R2-2/R3-3)`)
   }
+
+  // branding TEXT both ways (PR #21 r3): the card labels must follow a LIVE
+  // flag flip. Old recs read only dataset.model, so regressing the UI to
+  // spec.name (fictional since the data-model flip) never reddened anything.
+  const cardText = await pKeys.evaluate(() => {
+    const d = window.__dbg
+    const texts = () => Array.from(document.querySelectorAll('#model-cards .model-card b')).map((b) => b.textContent)
+    const want = (on) => d.CAR_SPECS.map((s) => (on && s.identity?.realBranding ? s.identity.name : s.name).toUpperCase())
+    const on0 = d.getRealBranding()
+    const res = { boot: texts() }
+    try {
+      d.setRealBranding(false); res.off = texts()
+      d.setRealBranding(true); res.on = texts()
+    } finally { d.setRealBranding(on0) }
+    return { ...res, wantOn: want(true), wantOff: want(false) }
+  }).catch(() => null)
+  if (cardText) {
+    const ok = cardText.boot.join() === cardText.wantOn.join()
+      && cardText.off.join() === cardText.wantOff.join()
+      && cardText.on.join() === cardText.wantOn.join()
+    rec('branding-text-cards-both-ways', ok,
+      `card <b> labels follow the flag live (six cards): boot first = ${JSON.stringify(cardText.boot[0])}, flag-off = ${JSON.stringify(cardText.off[0])}, flag-back = ${JSON.stringify(cardText.on[0])} — setRealBranding must fire refreshModelCards`)
+  } else rec('branding-text-cards-both-ways', false, 'evaluate threw — card text unverified')
   // ---- PR review R3-2: reconcileAiColours WIRING coverage (core-only pins
   // stayed green under the reviewer's mutations). pKeys is back on the idle
   // title board (toMenu above): swatches + cards take real trusted clicks and

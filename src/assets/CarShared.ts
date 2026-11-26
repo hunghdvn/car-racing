@@ -33,3 +33,17 @@ export function markGLBMaterialShared(m: unknown): void {
 export function isGLBMaterialShared(m: unknown): boolean {
   return m != null && sharedGLBMats.has(m as THREE.Material)
 }
+
+/** Rig sanity bands — the ONE contract module the runtime clone gate
+ *  (CarLibrary), the unit suite (carassets.test) and the functional battery
+ *  (through the dev harness) all read: nudging the band for one big-tire
+ *  car moves all three readers at once. PR #21 r3: [0.2, 0.44] was
+ *  photocopied into four files, and narrowing one copy silently demoted
+ *  cars to procedural while the other gates stayed green. */
+export const RIG_BANDS = {
+  /** per-corner tyre radius, metres */
+  radius: [0.2, 0.44] as const,
+  /** body lowest point relative to the contact patch, metres (negative =
+   *  splitter clipping the road — the accepted trade, see optimize-cars) */
+  clearance: [-0.06, 0.25] as const,
+}

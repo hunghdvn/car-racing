@@ -1,11 +1,11 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clamp01 } from '../util'
-import { CAR } from '../config'
+import { brandingOn } from '../vehicles/CarSpecs'
 import type { CarId, CarSpec } from '../vehicles/CarSpecs'
 import { CAR_RIGS } from './CarRigs'
 import { carMaterialParamsFor } from './MaterialSpecs'
-import { markCarGeometryShared, markGLBMaterialShared } from './CarShared'
+import { markCarGeometryShared, markGLBMaterialShared, RIG_BANDS } from './CarShared'
 import { makeCarPaintMaterial, shared, type CarModel, type WheelHandle } from './CarModel'
 
 /* ------------------------------------------------------------------------- *
@@ -140,7 +140,7 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
   const probe = byName(src, 'wheel-fl-lr')
   if (!probe) { console.warn(`[carlib] ${id}: wheel pivots missing from the cached GLB`); return null }
   for (const r of rig.wheelRadius) {
-    if (!(r >= 0.2 && r <= 0.44)) { console.warn(`[carlib] ${id}: wheel radius ${r} outside the sane band`); return null }
+    if (!(r >= RIG_BANDS.radius[0] && r <= RIG_BANDS.radius[1])) { console.warn(`[carlib] ${id}: wheel radius ${r} outside the sane band`); return null }
   }
 
   const group = src.clone(true)
@@ -238,8 +238,12 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
   // rear badge decal (wordmark over the tail) — REAL_BRANDING gated: the flag
   // is the trademark escape hatch, so a flag-off build must carry NO maker
   // badge on track, matching the fictional names the UI already swaps to.
-  const logo = CAR.realBranding && (spec.identity?.realBranding ?? true)
-    ? logoTexture(id, spec.identity?.maker ?? spec.name.split(' ')[0], spec.finish.accent)
+  // ONE gate with the display names (brandingOn): the old `?? true` here
+  // defaulted the OPPOSITE way from carDisplayName — a spec without an
+  // identity raced badge-less in the standings but still wore a decal with
+  // a made-up maker on track (PR #21 r3).
+  const logo = brandingOn(spec)
+    ? logoTexture(id, spec.identity!.maker, spec.finish.accent)
     : null
   if (logo) {
     const decal = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.2), new THREE.MeshBasicMaterial({ map: logo, transparent: true, depthWrite: false }))

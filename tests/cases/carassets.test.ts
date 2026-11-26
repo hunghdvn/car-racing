@@ -1,5 +1,7 @@
 import { test, assert } from '../harness'
 import { readFileSync, existsSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { RIG_BANDS } from '../../src/assets/CarShared'
 import { CAR_SPECS } from '../../src/vehicles/CarSpecs'
 import { CAR_RIGS } from '../../src/assets/CarRigs'
 
@@ -74,12 +76,12 @@ for (const spec of CAR_SPECS) {
     assert(rig.wheelRadius.length === 4, 'four wheel radii')
     for (const r of rig.wheelRadius) {
       // 0.20 floor (plan said 0.28): the s15's staggered 18×19 rear set measures 0.248
-      assert(r >= 0.2 && r <= 0.44, `${id} wheelRadius ${r} outside [0.20, 0.44]`)
+      assert(r >= RIG_BANDS.radius[0] && r <= RIG_BANDS.radius[1], `${id} wheelRadius ${r} outside the contract band`)
     }
     // −0.06 floor (plan said 0.08): the model sits ON its wheels, so a deep
     // splitter legitimately dips a few cm below the road plane (s15 −0.036).
-    assert(rig.groundClearance >= -0.06 && rig.groundClearance <= 0.25,
-      `${id} groundClearance ${rig.groundClearance} outside [-0.06, 0.25]`)
+    assert(rig.groundClearance >= RIG_BANDS.clearance[0] && rig.groundClearance <= RIG_BANDS.clearance[1],
+      `${id} groundClearance ${rig.groundClearance} outside the contract band`)
     assert(Number.isFinite(rig.groundClearance), `${id} groundClearance finite`)
     // L/R convention (PR #21 review): with the nose at −z the car's LEFT hubs
     // (fl, rl) sit at world −x. Three models are 180°-flipped by the grouper;
@@ -108,4 +110,22 @@ test('carassets: total GLB payload within the 12 MB network budget', () => {
   // sum() accumulates during registration, but assert at RUN time against fs
   const bytes = CAR_SPECS.reduce((a, s) => a + (existsSync(`public/models/${s.id}.glb`) ? statSync(`public/models/${s.id}.glb`).size : 0), 0)
   assert(bytes <= 12 * GB, `total model payload ${(bytes / GB).toFixed(1)} MB > 12 MB`)
+})
+
+test('carassets/reports: the committed reports tie the GLBs to the generated table', () => {
+  // rigs/reports/ is the regeneration SOURCE for CarRigs.ts (npm run
+  // emit-rigs) and the CI evidence that public/models holds the VERY GLB
+  // that was measured: a hand-edited table or a re-baked GLB reddens this
+  // test even when every other gate only reads the emitted table
+  // (PR #21 r3 — reports used to live in disposable build/, unregeneratable).
+  for (const spec of CAR_SPECS) {
+    const p = `rigs/reports/${spec.id}.report.json`
+    assert(existsSync(p), `${p} must be committed`)
+    const rep = JSON.parse(readFileSync(p, 'utf8')) as { glbSha256: string; rig: Record<string, unknown> }
+    const hash = createHash('sha256').update(readFileSync(`public/models/${spec.id}.glb`)).digest('hex')
+    assert(hash === rep.glbSha256, `${spec.id}: public/models/${spec.id}.glb is NOT the GLB the committed report measured`)
+    const rig = CAR_RIGS[spec.rigId ?? spec.id] as unknown as Record<string, unknown>
+    for (const [k, v] of Object.entries(rep.rig))
+      assert(JSON.stringify(rig[k]) === JSON.stringify(v), `${spec.id}.${k}: CarRigs.ts diverged from the committed report`)
+  }
 })

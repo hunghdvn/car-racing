@@ -250,7 +250,7 @@ Do **not** touch `scripts/shots.mjs`, `scripts/audit-shots.mjs`, `scripts/noleak
 - [ ] **Step 3: Pipeline stages** (all via `@gltf-transform/functions` unless noted):
   1. **Missing-file gate** — for each id, `existsSync('assets-src/'+file)` else `throw` printing the Sketchfab page URL from the table in this plan.
   2. `flatten()` → `dedup()` → `join()` (merge by material) → `weld()`.
-  3. **Prune authored light/emissive meshes** by node-name regex from config (`drop`), and any material with `emissiveTexture` whose name matches — best-effort per spec; keep the mesh if removal would delete >15% of tris (log WARN instead).
+  3. **Prune authored light/emissive meshes** by node-name regex from config (`drop`), and any material with `emissiveTexture` whose name matches — best-effort per spec; two-tier guard: a drop list over 15% of tris WARNs and drops anyway (verify it), over 30% keeps everything and demands review.
   4. `simplify({ ratio })` — bisect ratio until `triangles ≤ tris` budget (spec: ≤ 60k/car hard cap).
   5. **Texture pass:** dominant-hue detection — composite each material's baseColorTexture with `sharp().raw()`, histogram in HSL; the **body hue** = the hue bin with the largest saturated pixel count (s ≥ `paintSat`). Materials whose pixels ≥ 55% match the body hue bin (±10°) and have tri-count ≥ 5% of the car → rename material to `paint-<n>` (this is the spec's "hue-similarity mask picks body-panel material ids"). If **zero** materials match → set report `bakedPaint: true` (spec fallback).
   6. Rename glass candidates (material names containing `glass|wind|window|mesh_glass`) to `glass-<n>` if not already.
@@ -447,7 +447,8 @@ The review round closed 15 findings. Deltas against the plan text above:
   `CAR.realBranding` × `identity.realBranding` gate at render time
   (`carDisplayName`), so flag-off ships no real badge or name.
 - Prune gate is two-tier: >15% tri share WARNs and still drops; >30% keeps
-  everything and demands review (what the header always documented).
+  everything and demands review (plan step 3 and the script header now both
+  document it — the earlier one-tier "keeps at 15%" wording was stale).
 - README publishes the six-car catalog with ASSETS.md as the licence door;
   the four fictional-era `car_model_*` frames are retired.
 
