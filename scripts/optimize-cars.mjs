@@ -8,7 +8,8 @@
  * Reads the raw Sketchfab GLBs from assets-src/<id>.glb (gitignored, partner
  * download) and writes optimised runtime assets to public/models/<id>.glb:
  *
- *   · prune authored light meshes (best-effort; >15% tri share keeps + WARN)
+ *   · prune authored light meshes (>15% tri share WARNs and still drops;
+ *     >30% keeps everything and demands review)
  *   · cluster wheel meshes → canonical wheel-fl-lr / -fr-lr / -rl-lr / -rr-lr
  *     nodes, plus synthesized brake-<c>-lr disc + caliper-<c>-lr lug
  *   · weld + simplify to the per-car triangle budget
@@ -27,6 +28,7 @@
  * emit-rigs` is the full asset rebuild. Tuning knobs live in CARS below.
  * ----------------------------------------------------------------------- */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NodeIO, Accessor } from '@gltf-transform/core'
@@ -443,6 +445,29 @@ async function processCar(id) {
   // bolts, stitching — are topologically locked triangle tax (meshopt only
   // collapses edges, it never deletes a component). A component with ≤64
   // tris and a sub-12 cm bbox is garnish: drop it, then let simplify breathe.
+  //
+  // ORIENTED BODY CLOUD: sampled here, BEFORE the strip — the strip rewrites
+  // primitive index buffers (local indexing), and measuring after it let a
+  // merged wheel mesh read with the first wheel's node matrix drop a bogus
+  // 5 m lever-arm cloud into every rig measurement (PR #21 r3 CI finding:
+  // scale collapsed 10x, anchors buried inside the shell). Outlier rejection
+  // below needs the node world matrix, so we sample bbox corners exactly
+  // like meshBBox — the same sampling the bbox min/max use.
+  const bodySample = [] // every non-wheel LEAF node with a mesh, pre-strip
+  for (const { node, mat } of sceneNodes(doc)) {
+    if (!node.getMesh() || node.getMesh().listPrimitives().length === 0) continue
+    if (/^(wheel-|brake-|caliper-)/.test(node.getName() ?? '')) continue
+    // LEAVES ONLY: weld()+dedup() merge the authored Sketchfab subtree into
+    // its first leaf (Object_2 carries the whole 18k-tri body under its own
+    // matrix; the group nodes end up meshless shells). Sampling group nodes
+    // re-baked already-world vertices with a mid-subtree matrix — a 3x-depth
+    // skew that pushed the percentile tail to 46 m, collapsed the pose scale
+    // 10x and buried every lamp/badge/nitro anchor inside the shell (the
+    // PR #21 r3 CI finding). Leaves read each vertex under exactly one
+    // matrix, the same one meshBBox uses.
+    if (node.listChildren().length) continue
+    bodySample.push({ node, mat })
+  }
   const MICRO_TRIS = 64, MICRO_DIAG = 0.12
   let microTris = 0
   for (const mesh of [...doc.getRoot().listMeshes()]) {
@@ -598,9 +623,18 @@ async function processCar(id) {
   const maxSpan = 1.9 * Math.max(wheelbase, wheelR * 4)
   let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity]
   let bodyMinY = Infinity
+  // Oriented body vertex cloud (source space) for the rig measurements below.
+  // A plain bbox let one stray spire — an unpruned light bar, a decal that
+  // survived the name filters — define the tail end-face: every lamp/logo/
+  // nitro anchor then shifted by the spike's depth on that one car (PR #21
+  // r3). Per-axis 1st/99th percentiles say "the body is HERE" and ignore
+  // outliers that only thin the cloud.
+  const keepNodes = new Set(bodySample.map(({ node }) => node))
+  const bodyPts = []
   for (const { node, mat } of sceneNodes(doc)) {
     if (!node.getMesh() || node.getMesh().listPrimitives().length === 0) continue
     if (/^(wheel-|brake-|caliper-)/.test(node.getName() ?? '')) continue
+    if (!keepNodes.has(node)) continue // authored leaves only (husks/strays out)
     const b = meshBBox(node.getMesh(), mat)
     // fully-sub-floor strays — paint-shop decals, jack stands, parking lines —
     // can never be seen once the wheels sit on the road: delete them outright
@@ -614,13 +648,25 @@ async function processCar(id) {
       console.log(`  [dbg ${id} low] ${node.getName()} mats=${nodeMats(node).map((m) => m.getName()).join('/')} min=[${b.min.map((v) => v.toFixed(2))}]`)
     const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2
     const ex = b.max[0] - b.min[0], ez = b.max[2] - b.min[2]
-    if (Math.abs(cx - wheelMid[0]) > 1.2 * Math.max(track, 1) || Math.abs(cz - wheelMid[2]) > wheelbase / 2 + 2 * wheelR) continue
+    if (Math.abs(cx - wheelMid[0]) > 1.2 * Math.max(track, 1) || Math.abs(cz - wheelMid[2]) > wheelbase / 2 + 2 * wheelR) {
+      continue
+    }
     if (ex > maxSpan || ez > maxSpan) continue
     for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], b.min[k]); max[k] = Math.max(max[k], b.max[k]) }
     if (b.min[1] < bodyMinY) bodyMinY = b.min[1]
+    // the percentile cloud, sampled from the SAME bbox corners the min/max
+    // are folding — one pass, one matrix per node, no second opinion anywhere
+    for (const prim of node.getMesh().listPrimitives()) {
+      const pos = prim.getAttribute('POSITION')
+      if (!pos) continue
+      const { min: a, max: bx } = attrMinMax(pos)
+      for (let ix = 0; ix < 8; ix++)
+        bodyPts.push(xformPoint(mat, [ix & 1 ? bx[0] : a[0], ix & 2 ? bx[1] : a[1], ix & 4 ? bx[2] : a[2]]))
+    }
   }
   if (!Number.isFinite(min[2])) fail(`${id}: body bbox empty after outlier rejection — review node layout`)
-  const scale = TARGET_LEN / (max[2] - min[2])
+  const bodyLen = percentile(bodyPts, 2, 0.99) - percentile(bodyPts, 2, 0.01)
+  const scale = TARGET_LEN / bodyLen
   const rootScene = doc.getRoot().listScenes()[0]
   // SIT ON THE WHEELS: the tyre contact patch at y=0 is the one pose physics
   // promises. A splitter hanging below the contact patch (s15, Centenario —
@@ -628,18 +674,52 @@ async function processCar(id) {
   // cm: the industry-standard trade, invisible from the chase camera, unlike
   // floating wheels which read instantly.
   const sitRef = wheelBottom
+  // THE pose transform, defined exactly once: world(p) = TO(p − mid)·scale
+  // with mid = [source wheel-centre x, contact-patch y, source body-centre z]
+  // and TO mirroring x/z for cars authored nose-+z (they ride inside the
+  // grouper's π-about-y rotation; the body-centre origin makes the mirror
+  // symmetric, so wheelMid's z never leaks into the pose). Every rig number
+  // below — wheels, lamps, badge, nitro, report worldBox — is emitted through
+  // toWorld, so measurement can never re-derive (or mis-derive) the nose
+  // again. (PR #21 r3: an x sign, an end swap and a label ternary each
+  // re-read the same nose fact independently; a dropped x mirror only the
+  // table-vs-convention unit test could see, and that test reads the table,
+  // not the transform.)
+  const sgn = nosePlusZ ? 1 : -1
+  const bodyMidZ = (percentile(bodyPts, 2, 0.01) + percentile(bodyPts, 2, 0.99)) / 2
+  const toWorld = (p) => [
+    -sgn * (p[0] - wheelMid[0]) * scale,
+    (p[1] - sitRef) * scale,
+    -sgn * (p[2] - bodyMidZ) * scale,
+  ]
   const grouper = doc.createNode('vr-rig').setScale([scale, scale, scale])
   if (nosePlusZ) grouper.setRotation([0, 1, 0, 0])
-  const sgn = nosePlusZ ? 1 : -1
-  grouper.setTranslation([sgn * wheelMid[0] * scale, -sitRef * scale, sgn * wheelMid[2] * scale])
+  grouper.setTranslation([sgn * wheelMid[0] * scale, -sitRef * scale, sgn * bodyMidZ * scale])
   for (const n of [...rootScene.listChildren()]) grouper.addChild(n)
   rootScene.addChild(grouper)
   const groundClearance = (bodyMinY - sitRef) * scale
-  // body end-faces in world z (same signed mapping as wheelPos; the +z-nose
-  // cars swap which source end is which, so both ends go through min/max).
-  const endA = -sgn * (min[2] - wheelMid[2]) * scale
-  const endB = -sgn * (max[2] - wheelMid[2]) * scale
-  const lampF = Math.min(endA, endB), lampR = Math.max(endA, endB)
+  // Body end-faces in WORLD z: the TRUE bbox extrema of the outlier-rejected
+  // body, through the SAME toWorld the rig emits — tail is +z by the nose
+  // convention for every car. The percentile surfaces (what the scale was
+  // normalised to) sit at exactly ±TARGET_LEN/2 by construction — p99−p1 IS
+  // bodyLen and scale IS TARGET_LEN/bodyLen — so they serve as the SPIKE
+  // GUARD, not as the measurement: an extremum reaching more than SPIKE_TOL
+  // beyond the percentile surface is the very outlier the percentile scale
+  // chose to ignore, and must not drag the lamp/badge/nitro anchors with it;
+  // such a side falls back to the percentile surface and says so. (PR #21 r3
+  // measured percentile-vs-percentile and read a constant ±2.275 for all six
+  // cars: that was the identity, not the body.)
+  const endPairs = [toWorld([0, 0, min[2]])[2], toWorld([0, 0, max[2]])[2]]
+  const band = Math.abs(toWorld([0, 0, percentile(bodyPts, 2, 0.99)])[2])
+  const SPIKE_TOL = 0.25
+  const endFace = (v, side) => {
+    if (Math.abs(v) <= band + SPIKE_TOL) return v
+    console.warn(`[cars] ${id}: \${side} extremum ${v.toFixed(3)} exceeds the percentile body by >\${SPIKE_TOL} m — spire? using the percentile surface`)
+    return Math.sign(v) * band
+  }
+  const bodyNearZ = endFace(Math.min(...endPairs), 'nose')
+  const bodyFarZ = endFace(Math.max(...endPairs), 'tail')
+  const bodyTopY = (max[1] - sitRef) * scale
 
   // 7. write + budgets + report
   const out = join(OUT, `${id}.glb`)
@@ -647,14 +727,9 @@ async function processCar(id) {
   const bytes = readFileSync(out).byteLength
   const rig = {
     wheelRadius: CORNERS.map((c) => +(wheelReport[c].radius * scale).toFixed(3)),
-    // WORLD space after the grouper (nose convention: front wheels at −z).
-    // world(p) = scale·(R·p) + t with t = sgn·wheelMid·scale ⇒ world =
-    // −sgn·(p − wheelMid)·scale on x/z. Using +sgn here once put the front
-    // wheels at +z and the car drove backwards.
-    wheelPos: CORNERS.map((c) => {
-      const p = wheelReport[c].center
-      return [-sgn * (p[0] - wheelMid[0]) * scale, (p[1] - sitRef) * scale, -sgn * (p[2] - wheelMid[2]) * scale].map((v) => +v.toFixed(3))
-    }),
+    // WORLD space, emitted through the ONE pose transform above (nose
+    // convention: front wheels at −z for every car, left hubs at −x).
+    wheelPos: CORNERS.map((c) => toWorld(wheelReport[c].center).map((v) => +v.toFixed(3))),
     groundClearance: +groundClearance.toFixed(3),
     bakedPaint,
     // All six shipped models carry BAKED head-/tail-light textures (verified
@@ -667,20 +742,55 @@ async function processCar(id) {
     // world-z of the lamp faces, MEASURED off the body bbox (same transform as
     // wheelPos), pushed 12 mm outboard so the glow planes sit in front of the
     // shell instead of buried ~11 cm inside it at the old fixed ±2.16.
-    lampZ: [+(lampF - 0.012).toFixed(3), +(lampR + 0.012).toFixed(3)],
+    lampZ: [+(bodyNearZ - 0.012).toFixed(3), +(bodyFarZ + 0.012).toFixed(3)],
     // rear badge decal on the TAIL (+z), measured off the body bbox: the old
     // fixed −(L/2−0.15) planted it at the NOSE while the mesh is named
     // logo-rear and the spec calls for a tail wordmark.
-    logoAnchor: [0, +(groundClearance + 0.35).toFixed(3), +(lampR + 0.02).toFixed(3)],
-    nitroAnchor: [[-0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(TARGET_LEN / 2 - 0.05).toFixed(3)], [0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(TARGET_LEN / 2 - 0.05).toFixed(3)]],
+    // rear badge decal on the TAIL (+z): z AND y measured off the body shell
+    // (the old fixed groundClearance+0.35 planted it at spoiler height on
+    // low-deck tails), pushed 20 mm outboard of the measured tail face.
+    logoAnchor: [0, +(Math.min(groundClearance + 0.35, bodyTopY - 0.05)).toFixed(3), +(bodyFarZ + 0.02).toFixed(3)],
+    // nitro nozzles MEASURED at the tail face, 150 mm inboard so the 1.1 m
+    // cone (which grows toward +z from its origin) spits its plume out of the
+    // bumper: the old TARGET_LEN/2 − 0.05 constant put the 930's flame origin
+    // at 2.345 against a shell ending at 2.384 — over half the plume inside
+    // the body. The runtime attaches AT this point; no further nudge.
+    nitroAnchor: [[-0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(bodyFarZ - 0.15).toFixed(3)], [0.18, +(groundClearance * 0.6 + 0.12).toFixed(3), +(bodyFarZ - 0.15).toFixed(3)]],
   }
-  const report = { id, bytes, tris, wheels: wheelReport, scale: +scale.toFixed(4), bakedPaint, rig }
+  const report = {
+    id, bytes, tris, wheels: wheelReport, scale: +scale.toFixed(4), bakedPaint, rig,
+    // sha256 ties the report to THE EXACT GLB it measured. Reports are
+    // committed under rigs/reports/ and CI re-hashes public/models against
+    // them, then regenerates CarRigs.ts byte-for-byte — a hand-edited table
+    // or an out-of-sync GLB both fail the unit suite (PR #21 r3: reports
+    // lived only in disposable build/, so the table was unregeneratable in CI).
+    glbSha256: createHash('sha256').update(readFileSync(out)).digest('hex'),
+    // orientation-agnostic world box (percentile body box, scaled) — the
+    // evidence the runtime wheel/anchor checks compare against.
+    worldBox: { nearZ: +bodyNearZ.toFixed(3), farZ: +bodyFarZ.toFixed(3), topY: +bodyTopY.toFixed(3) },
+  }
   writeFileSync(join(REPORTS, `${id}.report.json`), JSON.stringify(report, null, 2))
+  // committed evidence copy: CI ties public/models/<id>.glb to glbSha256 and
+  // regenerates CarRigs.ts from these files (build/ is disposable).
+  mkdirSync(join(root, 'rigs', 'reports'), { recursive: true })
+  writeFileSync(join(root, 'rigs', 'reports', `${id}.report.json`), JSON.stringify(report, null, 2))
   console.log(`[cars] ${id}: ${(bytes / 1e6).toFixed(1)} MB, ${tris} tris, bakedPaint=${bakedPaint}, rig:`)
   console.log(`  ${id}: ${JSON.stringify(rig)},`)
   if (tris > 60000) fail(`${id}: tri budget exceeded`)
   if (bytes > 4 * 1024 * 1024) fail(`${id}: ${(bytes / 1e6).toFixed(1)} MB > 4 MB per-car budget — drop texture size or tri budget`)
   return report
+}
+
+/** exact quantile of a coordinate column (linear interpolation between ranks).
+ * The rig measurements (body ends, pose scale) must survive a single stray
+ * spire in the source mesh, so they read percentiles, never a raw bbox. */
+function percentile(pts, axis, q) {
+  const v = pts.map((p) => p[axis]).sort((a, b) => a - b)
+  if (!v.length) return 0
+  const i = (v.length - 1) * q
+  const lo = Math.floor(i)
+  const hi = Math.ceil(i)
+  return v[lo] + (v[hi] - v[lo]) * (i - lo)
 }
 
 /* synthesized meshes (no three.js in node: hand-built accessors) */
