@@ -450,3 +450,34 @@ The review round closed 15 findings. Deltas against the plan text above:
   everything and demands review (what the header always documented).
 - README publishes the six-car catalog with ASSETS.md as the licence door;
   the four fictional-era `car_model_*` frames are retired.
+
+Review round 3 (pipeline determinism + one transform) closed 14 further
+findings. Second delta against the plan text:
+
+- The pipeline reports are DURABLE: committed under `rigs/reports/` (they
+  lived in disposable `build/`, so the emitted table was unregeneratable in
+  CI). Each report carries `glbSha256`; `emit-rigs` re-hashes
+  `public/models/<id>.glb` and refuses an out-of-sync GLB, then regenerates
+  `src/assets/CarRigs.ts` byte-for-byte from the FIELDS table — one table
+  drives validation, emitted order and the `CarRig` interface, so the
+  generated file cannot drift from its validator.
+- ONE pose transform (`toWorld`) is defined once; wheels, lamps, badge,
+  nitro and the reported `worldBox` all flow through it. The nose sign can
+  no longer be re-derived (or mis-derived) per measurement — round 3 found
+  an x-sign, an end-swap and a label ternary each reading the same fact.
+- Body scale is a 1st/99th-percentile of a corner cloud sampled from
+  authored LEAF nodes under their own world matrices (weld/dedup merge the
+  Sketchfab subtree into the first leaf; sampling group nodes re-baked
+  world vertices and collapsed the pose scale 10x). Lamp/badge/nitro
+  end-faces are the TRUE bbox extrema through `toWorld`, spike-guarded
+  against the percentile surface — percentile-vs-percentile measured
+  ±TARGET_LEN/2 for all six cars, which was the normalisation identity,
+  not the body.
+- Wheels ride their MEASURED hubs: `WheelHandle.hubY` from the rig, with
+  `WHEEL_SINK` exported once from config (the literal lived in four sites).
+  `caliperColor` left the rig table; the runtime nitro `+0.12` z-nudge left
+  too — the pipeline bakes the anchor where the plume exits.
+- The determinism claim is now double-run byte-identity of GLBs + reports
+  (verified after every pipeline change), not per-car identity against the
+  pre-feature baseline: the percentile scale legitimately moves all six
+  models.
