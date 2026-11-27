@@ -3,8 +3,12 @@
 The six player/AI cars are real production models authored on Sketchfab,
 optimized offline (`scripts/optimize-cars.mjs`: decimation, WebP textures,
 rig canonicalization) and committed to `public/models/`. The optimized GLBs
-are derivative works and stay under each source license below. Credit is also
-surfaced in-game behind the `REAL_BRANDING` garage panel where applicable.
+are derivative works and stay under each source license below. Attribution is
+surfaced in-game too: every garage card renders the model's `identity.license`
+line ("CC-BY 4.0 — model by <author> (Sketchfab)") unconditionally — CC
+attribution is a licence condition, not a branding-gated surface — so the
+shipped bundle carries the credit without the repo files. ASSETS.md stays the
+canonical source table.
 
 | File | Car | Author | License | Source |
 | --- | --- | --- | --- | --- |

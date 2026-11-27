@@ -478,7 +478,13 @@ findings. Second delta against the plan text:
   `WHEEL_SINK` exported once from config (the literal lived in four sites).
   `caliperColor` left the rig table; the runtime nitro `+0.12` z-nudge left
   too — the pipeline bakes the anchor where the plume exits.
-- The determinism claim is now double-run byte-identity of GLBs + reports
-  (verified after every pipeline change), not per-car identity against the
-  pre-feature baseline: the percentile scale legitimately moves all six
-  models.
+- The determinism claim, stated honestly (PR #21 r4): double-run
+  byte-identity of GLBs + reports was verified LOCALLY (the driver runs each
+  car once; the CI checkout has no `assets-src/`, so nothing double-runs the
+  bake there) — and not per-car identity against the pre-feature baseline:
+  the percentile scale legitimately moves all six models. What CI DOES
+  guarantee on every push is the re-derivation step —
+  `npm run emit-rigs && git diff --exit-code src/assets/CarRigs.ts` rewrites
+  the table from the committed reports (re-hashing every GLB against its
+  report first) and fails on any drift. Full re-bake determinism stays a
+  local discipline, checked by hand after pipeline changes.

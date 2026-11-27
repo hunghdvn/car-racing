@@ -39,6 +39,12 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: No-leak audit
         run: npm run noleak
+      - name: Rig table re-derives from the committed reports
+        # the table stops being hand-maintained trust (PR #21 r4): emit-rigs
+        # re-hashes every public/models GLB against its committed report
+        # (refuses an out-of-sync asset) and rewrites CarRigs.ts from the
+        # FIELDS table — any drift, hand-edit or re-bake reddens Quality.
+        run: npm run emit-rigs && git diff --exit-code src/assets/CarRigs.ts
 
   functional:
     name: Functional
