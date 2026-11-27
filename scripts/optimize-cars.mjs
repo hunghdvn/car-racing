@@ -823,7 +823,7 @@ async function processCar(id) {
     glbSha256: createHash('sha256').update(readFileSync(out)).digest('hex'),
     // orientation-agnostic world box (percentile body box, scaled) — the
     // evidence the runtime wheel/anchor checks compare against.
-    worldBox: { nearZ: +bodyNearZ.toFixed(3), farZ: +bodyFarZ.toFixed(3), topY: +bodyTopY.toFixed(3) },
+    worldBox: { nearZ: +bodyNearZ.toFixed(3), farZ: +bodyFarZ.toFixed(3), topY: +bodyTopY.toFixed(3), tailTopY: +tailTopY.toFixed(3) },
     // which end-face sides exceeded the percentile ceiling (null/false today;
     // durable evidence the anchors were measured, not clamped guesses)
     spikeClamped,

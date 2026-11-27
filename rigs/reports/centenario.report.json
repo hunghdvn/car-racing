@@ -108,7 +108,8 @@
   "worldBox": {
     "nearZ": -2.275,
     "farZ": 2.379,
-    "topY": 1.023
+    "topY": 1.023,
+    "tailTopY": 0.93
   },
   "spikeClamped": {
     "nose": true,

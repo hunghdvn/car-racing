@@ -182,7 +182,7 @@ test('carassets/reports: the committed reports tie the GLBs to the generated tab
     assert(existsSync(p), `${p} must be committed`)
     const rep = JSON.parse(readFileSync(p, 'utf8')) as {
       id: string; tris: number; glbSha256: string; rig: Record<string, unknown>
-      worldBox: { nearZ: number; farZ: number; topY: number }
+      worldBox: { nearZ: number; farZ: number; topY: number; tailTopY: number }
       spikeClamped: { nose: boolean; tail: boolean }
     }
     assert(rep.id === key, `${p}: report id ${rep.id} is not the rig key ${key}`)
@@ -210,5 +210,16 @@ test('carassets/reports: the committed reports tie the GLBs to the generated tab
     assert(Math.abs(lz[0] - (wb.nearZ - 0.012)) <= 1e-3 && Math.abs(lz[1] - (wb.farZ + 0.012)) <= 1e-3,
       `${key}: lamp planes must bracket the reported body ends ± 12 mm`)
     assert(la[1] <= wb.topY + 1e-3, `${key}: the badge cannot float above the reported roof`)
+    // badge height is MEASURED, not a constant (PR #21 r4 n02): y =
+    // max(gc+0.08, min(gc+0.35, tailTopY−0.05)) with tailTopY the p99 roof
+    // of the 35 cm tail cluster, now durable evidence in the report. For a
+    // tall-deck car this lands on gc+0.35 legitimately; a low-deck car with
+    // a rear wing must sit under the deck — pinning the formula here means
+    // reverting y to a bare gc+0.35 constant (or to full-body topY, which
+    // let the 930 spire ride the badge) fails the node suite.
+    const gc = rep.rig.groundClearance as unknown as number
+    const wantY = Math.max(gc + 0.08, Math.min(gc + 0.35, wb.tailTopY - 0.05))
+    assert(Math.abs(la[1] - wantY) <= 2e-3,
+      `${key}: logoAnchor y ${la[1]} is not the reported tail-roof formula (gc=${gc}, tailTopY=${wb.tailTopY})`)
   }
 })
