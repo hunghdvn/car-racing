@@ -48,6 +48,12 @@ export const QUALITY = {
   low: { pixelRatio: 1.15, shadowMap: 1024, bloom: 0.18, particles: 0.55 },
 } as const
 
+/** Visual wheel sink: a hub sits this far above its contact patch, i.e. the
+ *  procedural hub height is radius − WHEEL_SINK. Single source for Vehicle
+ *  and CarModel (PR #21 round 3: the literal lived in four call sites).
+ *  Real-GLB rigs override per-corner with the measured WheelHandle.hubY. */
+export const WHEEL_SINK = 0.012
+
 /** Vehicle physics — arcade (spec §14). All m/s, m/s², rad unless noted. */
 export const VEHICLE = {
   length: 4.55, width: 1.94, height: 1.16,
@@ -281,7 +287,11 @@ export const PAINTS: PaintDef[] = [
  *  deterministic AI grid model assignment (slot order, AI.count entries). */
 export const CAR = {
   statClamp: 0.4,
-  aiModels: ['grip', 'hyper', 'drift', 'hero', 'grip'] as const,
+  /** REAL_BRANDING (real-car-models spec): false publishes the fictional-name
+   *  catalog with zero code change; ?proc=1 / forceProcedural is the sibling
+   *  kill switch for the GLB layer. Attribution: ASSETS.md. */
+  realBranding: true,
+  aiModels: ['930', 'centenario', 's15', 'r34', '930'] as const,
 }
 
 /** Determinism: master seed for all seeded placement (spec §22). */

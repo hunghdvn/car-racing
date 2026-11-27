@@ -1,7 +1,8 @@
 # Velocity Rush
 
-A 3D arcade racing browser game: one track, four selectable cars, a six-car
-field. Pick a model and paint in the garage, then race the AI field to the top
+A 3D arcade racing browser game: one track, six selectable production cars
+(GLB models on wheels), a six-car field. Pick a model and paint in the garage,
+then race the AI field to the top
 of the standings. It targets 60 FPS with keyboard and gamepad input,
 deterministic visual evidence, and an open-source contribution policy that
 ties new code to Qwen3.8-flash-next.
@@ -29,26 +30,37 @@ On the title screen, navigate the garage with clicks or `Tab` + `Enter`.
 
 ## Cars & garage
 
-Three authored silhouettes plus kit gating (wings, splitters, scoop, wide
-track) produce four models, each with its own wheel style, signature finish,
-and a clamped stat tuning (±40% over the shipped vehicle base):
+The garage ships six real production cars as optimised GLB models
+(`public/models/`, built by `npm run optimize-cars` from the sources and
+licences listed in [ASSETS.md](ASSETS.md)); every number the runtime needs —
+per-corner wheel radius/hub, lamp and badge anchors — is measured by that
+pipeline and emitted by `npm run emit-rigs`. If a model is missing or fails
+validation, that car silently falls back to the procedural builder (the same
+one `?proc=1` forces for every car — the offline/dev kill switch):
 
 | Model | Class | Character |
 |---|---|---|
-| Velocity GT | Balanced | The all-rounder baseline |
-| Solaris Hyper | Top speed | Fastest straight line, more to manage in corners |
-| Apex Grip | Corner grip | Hooks up mid-corner, trades terminal speed |
-| Slide King | Drift | Loose and playful on the handbrake |
+| Nissan Skyline GT-R R34 | Balanced | The all-rounder baseline |
+| Lamborghini Centenario LP 770-4 | Top speed | Fastest straight line, more to manage in corners |
+| Porsche 911 Turbo | Corner grip | Hooks up mid-corner, trades terminal speed |
+| Nissan Silvia S15 | Drift | Loose and playful on the handbrake |
+| Lamborghini Terzo Millennio | Hyper | Concept-car wedge, highest ceiling |
+| Porsche 911 Carrera 4S | All-road | Wide-body grip with usable top end |
 
-Each model ships a realistic finish: clearcoat paint with metallic flake and
-per-model micro-roughness breakup, environment reflections, smoked tinted
-glass, procedural carbon trim, brake discs and calipers, tire sidewalls, and
-LED daytime-running/tail lamps.
+Real names and maker badges sit behind the `CAR.realBranding` flag
+(`src/config.ts`); with it off the garage and standings show the fictional
+catalog names (Velocity GT, Solaris Hyper, …) and no wordmark decal is
+attached. The procedural path keeps a realistic finish: clearcoat paint with
+metallic flake and per-model micro-roughness breakup, environment
+reflections, smoked tinted glass, carbon trim, brake discs and calipers, tire
+sidewalls, and LED daytime-running/tail lamps.
 
-![Velocity GT](shots/car_model_hero.png)
-![Solaris Hyper](shots/car_model_hyper.png)
-![Apex Grip](shots/car_model_grip.png)
-![Slide King](shots/car_model_drift.png)
+![Nissan Skyline GT-R R34](shots/car_model_r34.png)
+![Porsche 911 Turbo](shots/car_model_930.png)
+![Nissan Silvia S15](shots/car_model_s15.png)
+![Lamborghini Centenario](shots/car_model_centenario.png)
+![Lamborghini Terzo Millennio](shots/car_model_terzo.png)
+![Porsche 911 Carrera 4S](shots/car_model_carrera.png)
 
 Garage behaviour:
 

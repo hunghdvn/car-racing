@@ -1,0 +1,119 @@
+{
+  "id": "centenario",
+  "bytes": 1430380,
+  "tris": 37014,
+  "wheels": {
+    "fl": {
+      "prims": 4,
+      "tris": 50291,
+      "center": [
+        0.854,
+        0.381,
+        1.211
+      ],
+      "radius": 0.357,
+      "bottom": 0.042
+    },
+    "fr": {
+      "prims": 4,
+      "tris": 50291,
+      "center": [
+        -0.861,
+        0.381,
+        1.184
+      ],
+      "radius": 0.357,
+      "bottom": 0.042
+    },
+    "rl": {
+      "prims": 4,
+      "tris": 50291,
+      "center": [
+        0.849,
+        0.396,
+        -1.494
+      ],
+      "radius": 0.378,
+      "bottom": 0.018
+    },
+    "rr": {
+      "prims": 4,
+      "tris": 50291,
+      "center": [
+        -0.849,
+        0.396,
+        -1.494
+      ],
+      "radius": 0.378,
+      "bottom": 0.018
+    }
+  },
+  "scale": 1.0042,
+  "bakedPaint": false,
+  "rig": {
+    "wheelRadius": [
+      0.359,
+      0.359,
+      0.38,
+      0.38
+    ],
+    "wheelPos": [
+      [
+        -0.859,
+        0.365,
+        -1.367
+      ],
+      [
+        0.863,
+        0.365,
+        -1.339
+      ],
+      [
+        -0.854,
+        0.38,
+        1.35
+      ],
+      [
+        0.851,
+        0.38,
+        1.35
+      ]
+    ],
+    "groundClearance": -0.046,
+    "bakedPaint": false,
+    "lampGlow": false,
+    "lampZ": [
+      -2.287,
+      2.391
+    ],
+    "logoAnchor": [
+      0,
+      0.304,
+      2.399
+    ],
+    "nitroAnchor": [
+      [
+        -0.18,
+        0.092,
+        2.229
+      ],
+      [
+        0.18,
+        0.092,
+        2.229
+      ]
+    ]
+  },
+  "glbSha256": "1dd527dc770ca07671f9e87d528a06e95d932c804e97187b013a6cd704ce0e14",
+  "worldBox": {
+    "nearZ": -2.275,
+    "farZ": 2.379,
+    "topY": 1.023,
+    "tailTopY": 0.93
+  },
+  "spikeClamped": {
+    "nose": true,
+    "tail": false
+  },
+  "tangentSanitized": 0
+}

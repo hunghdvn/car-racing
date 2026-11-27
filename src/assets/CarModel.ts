@@ -1,10 +1,14 @@
 import * as THREE from 'three'
-import { VEHICLE } from '../config'
+import { VEHICLE, WHEEL_SINK } from '../config'
 import { clamp01 } from '../util'
 import { mergeStaticMeshes } from '../world/StaticBatch'
 import { alloyRoughness, carPaintMaps, carbonWeaveMaps, paintMicroRoughness, roundedPlateGeo, tireTreadNormal } from './Textures'
-import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams } from './MaterialSpecs'
+import { carbonMaterialParams, carMaterialParamsFor, glassMaterialParams, type PaintParams } from './MaterialSpecs'
+import { isGLBMaterialShared, isSharedCarGeometry } from './CarShared'
+
+export { markCarGeometryShared } from './CarShared'
 import { HERO_SPEC, resolvePaint, spokeCountForStyle, type CarFinish, type CarKit, type CarSpec, type CarShape } from '../vehicles/CarSpecs'
+import { cloneRealCar, forceProcedural } from './CarLibrary'
 
 /* ------------------------------------------------------------------------- *
  * Velocity Rush hero-car kit (spec rev.3 §4.1 / §6).
@@ -25,6 +29,11 @@ export interface WheelHandle {
   spin: THREE.Group
   radius: number
   front: boolean
+  /** measured hub centre height (real-GLB rigs). radius is max(dy,dz)/2, so
+   *  a tread-dominant staggered corner (s15 rear: R 0.248, hub 0.272) must
+   *  NOT ride on R − WHEEL_SINK — the hub does. Procedural cars leave it
+   *  undefined and keep the uniform-radius formula bit-identical. */
+  hubY?: number
 }
 
 export interface CarModel {
@@ -35,6 +44,8 @@ export interface CarModel {
   setHeadlights(on: boolean): void
   setPaint(hex: number): void
   paintMats: THREE.MeshPhysicalMaterial[]
+  /** nitro flame meshes (scale/opacity driven by setNitro); GLB clones + procedural */
+  nitroTips?: THREE.Object3D[]
 }
 
 interface Station {
@@ -302,21 +313,23 @@ function memoDetailMat<T extends THREE.Material>(key: string, make: () => T): T 
   return m
 }
 
-/** True for the memoised car materials every mounted car shares. */
+/** True for the memoised car materials every mounted car shares, plus the
+ *  GLB-authored materials the preload cache owns (Task 5 clones share them). */
 export function isSharedCarMaterial(m: unknown): boolean {
-  return m != null && sharedCarMats.has(m as THREE.Material)
+  return m != null && (sharedCarMats.has(m as THREE.Material) || isGLBMaterialShared(m))
 }
 
 /**
- * Dispose a retired car tree: geometry always (every buildCar mints fresh),
- * materials only when they are NOT field-wide singletons (per-car paint,
- * headlight, brake and flame materials). Mirrors util.disposeTree's shape.
+ * Dispose a retired car tree: geometry only when NOT preload-owned (GLB clones
+ * share buffers with the cache), materials only when they are NOT field-wide
+ * singletons (per-car paint, headlight, brake and flame materials).
+ * Mirrors util.disposeTree's shape.
  */
 export function disposeCarTree(root: THREE.Object3D, isShared: (m: unknown) => boolean = isSharedCarMaterial): void {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
-    mesh.geometry?.dispose()
+    if (mesh.geometry && !isSharedCarGeometry(mesh.geometry)) mesh.geometry.dispose()
     const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
     for (const m of mats) if (!isShared(m)) m.dispose()
   })
@@ -329,6 +342,32 @@ const mixHex = (a: number, b: number, w: number): number =>
 /* paintMaterialParams' micro-roughness for the HERO finish (roughness 0.28,
  * flake 0.5) — the calibration anchor of the mkPaint normalScale mapping. */
 const HERO_MICRO = 0.293
+
+/** The paint recipe, shared by the procedural loft and the GLB clone path
+ *  (CarLibrary imports this instead of duplicating the construction — PR #21
+ *  review: the copies had already drifted in comments and HERO_MICRO was
+ *  kept literal in two places). The micro-roughness breakup drives the
+ *  normal strength: calibrated so the hero's own breakup reproduces the
+ *  shipped fixed 0.5. DIRECTION (R3-7, corrected from the earlier reversed
+ *  claim): microRoughness is clamp01(roughness·0.6 + flake·0.25), so the
+ *  DENSE-FLAKE models read MORE breakup than hero, not less — grip 0.3925
+ *  (satin: rough 0.55 carries it), drift 0.3025 and hyper 0.2955 (gloss,
+ *  but flake 0.85/0.75 lifts them) against HERO_MICRO 0.293. Only the
+ *  normal map's micro-roughness is raised; the clearcoat layer keeps gloss
+ *  models visibly glossier. */
+export function makeCarPaintMaterial(color: number, pp: PaintParams): THREE.MeshPhysicalMaterial {
+  const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
+  const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
+  return new THREE.MeshPhysicalMaterial({
+    color, metalness: pp.metalness, roughness: pp.roughness,
+    roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
+    normalScale: new THREE.Vector2(ns, ns),
+    clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
+    clearcoatNormalMap: paintMicroRoughness(),
+    sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
+    envMapIntensity: pp.envMapIntensity,
+  })
+}
 
 /* PR review F14b: every fixed-colour hardware material goes through the same
  * detailMats memo so the AI field (5 cars × 4 wheels) reuses one instance per
@@ -682,30 +721,24 @@ function diffuserFinXs(count: number): number[] {
  * (null → the spec's signature finish), so poses/dev callers can pass one and
  * spec-only callers get the model's signature without hardcoding a colour. */
 export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec = HERO_SPEC): CarModel {
+  // real-model fast path (spec §5): a cached, rig-validated GLB clone wins;
+  // any miss (cold cache, ?proc=1, rig violation) falls through to the
+  // untouched procedural builder below. Gated PER-ID on purpose (PR #21
+  // review): one failed GLB must not demote the other five, so the check is
+  // cloneRealCar's cache hit, not libraryReady()'s all-or-nothing. There is
+  // deliberately no rebuild-on-late-arrival machinery: a GLB that fails at
+  // boot keeps THAT car procedural for the session (documented in
+  // ASSETS.md), and libraryReady() is diagnostics only (preload warn + dev
+  // harness) — no consumer rebuilds on it (PR #21 r3 comment audit).
+  if (!forceProcedural()) {
+    const real = cloneRealCar(spec.id, paintHex ?? resolvePaint(null, spec), spec)
+    if (real) return real
+  }
   const bodyHex = paintHex ?? resolvePaint(null, spec)
   const group = new THREE.Group()
   const paintMats: THREE.MeshPhysicalMaterial[] = []
   const mkPaint = (): THREE.MeshPhysicalMaterial => {
-    const pp = carMaterialParamsFor(spec).paint
-    const maps = carPaintMaps(7, pp.flakeSpeckle, pp.flakeRepeat)
-    // the micro-roughness breakup drives the normal strength: calibrated so
-    // the hero's own breakup reproduces the shipped fixed 0.5. DIRECTION (R3-7,
-    // corrected from the earlier reversed claim): microRoughness is
-    // clamp01(roughness·0.6 + flake·0.25), so the DENSE-FLAKE models read MORE
-    // breakup than hero, not less — grip 0.3925 (satin: rough 0.55 carries it),
-    // drift 0.3025 and hyper 0.2955 (gloss, but flake 0.85/0.75 lifts them)
-    // against HERO_MICRO 0.293. Only the normal map's micro-roughness is
-    // raised; the clearcoat layer keeps gloss models visibly glossier.
-    const ns = clamp01(0.5 + (pp.microRoughness - HERO_MICRO))
-    const m = new THREE.MeshPhysicalMaterial({
-      color: bodyHex, metalness: pp.metalness, roughness: pp.roughness,
-      roughnessMap: maps.roughnessMap, normalMap: maps.normalMap,
-      normalScale: new THREE.Vector2(ns, ns),
-      clearcoat: pp.clearcoat, clearcoatRoughness: pp.clearcoatRoughness,
-      clearcoatNormalMap: paintMicroRoughness(),
-      sheen: pp.sheen, sheenRoughness: pp.sheenRoughness,
-      envMapIntensity: pp.envMapIntensity,
-    })
+    const m = makeCarPaintMaterial(bodyHex, carMaterialParamsFor(spec).paint)
     paintMats.push(m)
     return m
   }
@@ -725,7 +758,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
   for (const front of [true, false]) {
     const wz = VEHICLE.wheelbase / 2
     const z = front ? -wz : wz
-    const wy = wr - 0.012
+    const wy = wr - WHEEL_SINK
     const archR = wr + 0.042 + spec.kit.archExtension
     const linerR = wr + 0.014 + spec.kit.archExtension
     for (const side of [-1, 1]) {
@@ -1050,10 +1083,10 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
         steer = new THREE.Group()
         steer.add(root)
         group.add(named(steer, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        steer.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
+        steer.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - WHEEL_SINK, z)
       } else {
         group.add(named(root, `wheel-${front ? 'f' : 'r'}-${side < 0 ? 'l' : 'r'}`))
-        root.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - 0.012, z)
+        root.position.set(side * ((VEHICLE.trackWidth / 2) * spec.kit.trackMul), wr - WHEEL_SINK, z)
       }
       wheels.push({ steer, spin, radius: wr, front })
     }
@@ -1102,6 +1135,7 @@ export function buildCar(paintHex: number | undefined = undefined, spec: CarSpec
     group,
     wheels,
     paintMats,
+    nitroTips: flames,
     setBrake(v: number) {
       if (brakeVal === v) return
       brakeVal = v

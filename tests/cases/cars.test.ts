@@ -2,7 +2,7 @@ import { assert, assertNear, test } from '../harness'
 import { VEHICLE, CAR, PAINTS, AI } from '../../src/config'
 import { AIVehicle } from '../../src/vehicles/AIVehicle'
 import { BASE_TUNING, resolveTuning, type CarStat } from '../../src/vehicles/CarTuning'
-import { CAR_SPECS, HERO_SPEC, getSpec, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
+import { CAR_SPECS, HERO_SPEC, brandingOn, carDisplayName, getSpec, identityFor, REAL, spokeCountForStyle, readModelSelection, readPaintSelection, reconcileAiColours, resolvePaint, resolvePaintWithExplicit, type CarKit } from '../../src/vehicles/CarSpecs'
 import { validateCarShape } from '../../src/assets/CarModel'
 import { VehiclePhysics } from '../../src/vehicles/VehiclePhysics'
 import { FlatProbe, rig } from '../rig'
@@ -80,20 +80,70 @@ test('physics: same seed + same tuning replays bit-identical', () => {
   assert(run() === run(), 'trajectory identity')
 })
 
-test('catalog: the four models exist in order', () => {
-  assert(CAR_SPECS.map((s) => s.id).join(',') === 'hero,hyper,grip,drift', 'catalog order')
+test('catalog: the six real models exist in order', () => {
+  assert(CAR_SPECS.map((s) => s.id).join(',') === 'r34,930,s15,centenario,terzo,carrera', 'catalog order')
+  assert(CAR_SPECS.length === 6, 'six models')
   assert(CAR_SPECS.every((s) => s.name.length > 0 && s.class.length > 0), 'every model is named and classed')
 })
 
 test('catalog: hero is today\'s car — stations verbatim and stats resolved base', () => {
+  assert(HERO_SPEC.id === 'r34', 'the balanced blueprint car leads the catalog')
   const t = resolveTuning(HERO_SPEC.stat)
   for (const k of Object.keys(VEHICLE) as (keyof typeof VEHICLE)[]) assert(t[k] === BASE_TUNING[k], String(k))
   assert(HERO_SPEC.kit.spoiler === 'low' && HERO_SPEC.kit.splitter === 'std', 'hero kit matches the shipped look')
   assert(HERO_SPEC.kit.wheelRadiusMul === 1 && HERO_SPEC.kit.trackMul === 1, 'hero geometry is base')
 })
 
+test('identity: every spec carries real-world branding metadata', () => {
+  for (const s of CAR_SPECS) {
+    assert((s.identity?.name.length ?? 0) > 0 && (s.identity?.maker.length ?? 0) > 0 && (s.identity?.license.length ?? 0) > 0, `identity ${s.id}`)
+    assert(s.identity?.realBranding === true, `realBranding flag ${s.id}`)
+    assert(s.name.length > 0 && s.name !== s.identity?.name, `fictional catalog name on ${s.id} (the real name lives ONLY in identity)`)
+  }
+})
+
+test('identity: REAL_BRANDING swaps the display name AT RENDER TIME (PR #21: runtime flag flips take effect)', () => {
+  assert(CAR.realBranding === true, 'branding ships on (partner decision; ASSETS.md records the licences)')
+  assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'branded name (flag on)')
+  assert(getSpec('r34').name === 'Velocity GT', 'the catalog field is the FICTIONAL name; the real one is identity-only (default-safe data model)')
+  const was = CAR.realBranding
+  try {
+    CAR.realBranding = false
+    for (const s of CAR_SPECS) assert(carDisplayName(s) === s.name, `flag-off shows the fictional catalog name (${s.id})`)
+  } finally { CAR.realBranding = was }
+  assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'flag restored')
+})
+
+test('identity: per-car realBranding override drops one car name (CC-BY-NC escape hatch)', () => {
+  const s = getSpec('terzo')
+  const was = s.identity!.realBranding
+  try {
+    s.identity!.realBranding = false
+    assert(carDisplayName(s) === s.name, 'the per-car override wins over the global flag')
+    assert(carDisplayName(getSpec('r34')) === 'Nissan Skyline GT-R R34', 'other cars keep their real name')
+  } finally { s.identity!.realBranding = was }
+  // the PINNED door, not just the mutated field: identityFor is where a
+  // REAL[id].realBranding = false entry takes effect, so the test must go
+  // through it (mutating s.identity directly let a broken spread order pass
+  // this test blind, PR #21 r3)
+  // the PINNED door, seeded BEFORE identityFor builds the object: mutating
+  // the RETURNED copy proved nothing — a regression swallowing the pin
+  // (the REAL[id] spread losing realBranding:false) still passed, PR #21 r4.
+  // REAL rows are module state: seed, assert through the gate, restore.
+  const REAL_R34 = REAL['r34']
+  const pinWas = REAL_R34.realBranding
+  try {
+    REAL_R34.realBranding = false
+    assert(identityFor('r34').realBranding === false, 'identityFor propagates a REAL-row pin (the pin beats the true default)')
+    assert(brandingOn({ identity: identityFor('r34') }) === false, 'the ONE gate honours the pin — no real-name decal for a pinned car')
+    assert(carDisplayName({ name: getSpec('r34').name, identity: identityFor('r34') }) === getSpec('r34').name, 'a pinned car shows its fictional name')
+  } finally { REAL_R34.realBranding = pinWas }
+  assert(brandingOn({ identity: undefined }) === false, 'no identity = no branding (both gates agree, the safe direction)')
+  assert(typeof REAL.terzo.license === 'string' && REAL.terzo.license.includes('NC'), 'terzo carries the CC-BY-NC licence the per-car pin exists for')
+})
+
 test('catalog: getSpec falls back to hero for unknown ids', () => {
-  assert(getSpec('nope') === HERO_SPEC && getSpec('drift').id === 'drift', 'lookup + guard')
+  assert(getSpec('nope') === HERO_SPEC && getSpec('s15').id === 's15', 'lookup + guard')
 })
 
 test('catalog: every shape lofts cleanly (browser-free geometry gate)', () => {
@@ -106,7 +156,7 @@ test('catalog: wheel spoke counts per style', () => {
 })
 
 test('catalog: headless localStorage guard returns hero', () => {
-  assert(readModelSelection() === 'hero', 'no storage in node — fallback, no throw')
+  assert(readModelSelection() === 'r34', 'no storage in node — fallback, no throw')
 })
 
 /* ------------------------------------------------------- per-model finishes */
@@ -130,7 +180,7 @@ test('finishes: hero paint is byte-pinned to the shipped default PAINTS[1].color
     `hero paint ${HERO_SPEC.finish.paint.toString(16)} !== ${PAINTS[1].color.toString(16)} (never-touch path)`)
 })
 
-test('finishes: the four signature paints are pairwise distinct', () => {
+test('finishes: the six signature paints are pairwise distinct', () => {
   const sigs = CAR_SPECS.map((s) => s.finish.paint)
   assert(new Set(sigs).size === CAR_SPECS.length,
     `signatures must differ — got ${sigs.map((v) => v.toString(16)).join(', ')}`)
@@ -149,15 +199,15 @@ test('paint flow: an absent pick resolves to the model signature', () => {
 
 test('paint flow: a stored swatch beats the signature across a model switch', () => {
   const stored = PAINTS[3].color
-  const grip = getSpec('grip')
-  const hyper = getSpec('hyper')
-  assert(resolvePaint(stored, grip) === stored, 'stored survives the grip rebuild')
-  assert(resolvePaint(stored, hyper) === stored, 'stored survives switching to hyper')
-  assert(resolvePaint(stored, grip) !== grip.finish.paint, 'and demonstrably overrides the signature')
+  const p930 = getSpec('930')
+  const cen = getSpec('centenario')
+  assert(resolvePaint(stored, p930) === stored, 'stored survives the 930 rebuild')
+  assert(resolvePaint(stored, cen) === stored, 'stored survives switching to the Centenario')
+  assert(resolvePaint(stored, p930) !== p930.finish.paint, 'and demonstrably overrides the signature')
 })
 
 test('paint flow: resolvePaint is pure — deterministic, storage-free, side-effect-free', () => {
-  const spec = getSpec('drift')
+  const spec = getSpec('s15')
   assert(resolvePaint(null, spec) === resolvePaint(null, spec), 'same inputs, same output')
   assert(resolvePaint(0x123456, spec) === 0x123456, 'echoes the stored hex untouched')
   assert(resolvePaint(null, spec) === spec.finish.paint, 'never mutates the spec')
@@ -174,17 +224,17 @@ const stationFingerprint = (s: (typeof CS)[number]): string => {
   return `${b[0].z.toFixed(3)}|${b[b.length - 1].z.toFixed(3)}|${Math.max(...b.map((v) => v.hw)).toFixed(3)}|${Math.min(...b.map((v) => v.ty)).toFixed(3)}`
 }
 
-test('shapes: all four silhouettes are distinct', () => {
-  assert(new Set(CS.map(stationFingerprint)).size === 4, 'each model lofts a different body')
+test('shapes: the six fallback silhouettes reuse the four procedural bodies', () => {
+  assert(new Set(CS.map(stationFingerprint)).size === 4, 'six cars, four distinct fallback bodies')
 })
 
-test('shapes: hyper is longer+lower, grip more compact, drift wider', () => {
+test('shapes: the Centenario is longer+lower, the 930 more compact, the S15 wider', () => {
   const L = (id: string) => { const s = CS.find((c) => c.id === id)!; const b = s.shape.bodyStations; return { len: b[b.length - 1].z - b[0].z, maxHw: Math.max(...b.map((v) => v.hw)), minTy: Math.min(...b.map((v) => v.ty)) } }
-  const hero = L('hero')
-  assert(L('hyper').len > hero.len + 0.1, 'hyper is longer')
-  assert(L('hyper').minTy < hero.minTy, 'hyper is lower')
-  assert(L('grip').len < hero.len - 0.05, 'grip is more compact')
-  assert(L('drift').maxHw > hero.maxHw + 0.02, 'drift is wider')
+  const r34 = L('r34')
+  assert(L('centenario').len > r34.len + 0.1, 'the Centenario body is longer')
+  assert(L('centenario').minTy < r34.minTy, 'the Centenario body is lower')
+  assert(L('930').len < r34.len - 0.05, 'the 930 body is more compact')
+  assert(L('s15').maxHw > r34.maxHw + 0.02, 'the S15 body is wider')
 })
 
 test('builder: buildCar exposes the optional-paint signature resolved via the spec', async () => {
@@ -216,7 +266,7 @@ test('ai: slot model assignment follows the config table', () => {
 
 test('ai: the brain pace-caps against its own car\'s top speed (driven targetSpeed)', () => {
   const r = rig()
-  const hyper = new AIVehicle(1, r.spline, r.probe) // 'hyper' per the table
+  const hyper = new AIVehicle(1, r.spline, r.probe) // 'centenario' (1.12×) per the table
   assertNear(hyper.tuning.topSpeed, VEHICLE.topSpeed * 1.12, 1e-6, 'hyper tuning wired to the car')
   assert(hyper.phys.tuning === hyper.tuning, 'the physics runs the AI car\'s record')
   // R2-7: the REAL brain update() drives the rig spline with the rubber-band
@@ -257,8 +307,10 @@ test('garage: stat bars normalize across the catalog to [0,1] on every axis', ()
 test('garage: the spread reads — extremes take the rails on their axis', () => {
   const top = CAR_SPECS.map((s) => statBarsFor(s, CAR_SPECS)[0])
   assert(Math.max(...top) - Math.min(...top) > 0.8, 'top-speed axis spans near the full bar')
+  const fastest = CAR_SPECS[top.indexOf(Math.max(...top))]
   const slowest = CAR_SPECS[top.indexOf(Math.min(...top))]
-  assert(slowest.id === 'grip', 'grip is the slowest — the bias is real')
+  assert(slowest.id === '930', 'the 930 is the slowest — the bias is real')
+  assert(fastest.id === 'terzo', 'the Terzo takes the top-speed rail')
 })
 
 test('garage: bars are index-aligned with the labels — DRIFT is the drift mean, BRAKE is brake', () => {
@@ -266,10 +318,10 @@ test('garage: bars are index-aligned with the labels — DRIFT is the drift mean
   const brake = STAT_AXIS_LABELS.indexOf('BRAKE')
   const bars = (id: string) => statBarsFor(getSpec(id), CAR_SPECS)
   // the drift-biased spec owns the DRIFT axis; the brake-biased spec owns BRAKE
-  assert(bars('drift')[drift] > bars('grip')[drift], 'slide king out-slides the corner-gripper on the drift bar')
+  assert(bars('s15')[drift] > bars('930')[drift], 'the S15 out-slides the 930 on the drift bar')
   const brakeAxis = CAR_SPECS.map((s) => statBarsFor(s, CAR_SPECS)[brake])
-  assert(bars('grip')[brake] === Math.max(...brakeAxis), 'apex grip takes the brake rail')
-  assert(bars('drift')[brake] < bars('grip')[brake], 'the drift bar is not the brake bar wearing its label')
+  assert(bars('930')[brake] === Math.max(...brakeAxis), 'the 930 takes the brake rail')
+  assert(bars('s15')[brake] < bars('930')[brake], 'the drift bar is not the brake bar wearing its label')
 })
 
 /* PR review F2a — MAIN MENU abandons the race: the director must return
@@ -291,14 +343,17 @@ test('director: abandon() returns a live race to idle (MAIN MENU garage unlock)'
 /* F6 — the spec §7 approved stat table, pinned as literals. yawResponse for
  * hyper was never written into the catalog, so this fails until it lands. */
 const APPROVED_STATS: Record<string, Record<string, number>> = {
-  hero: { topSpeed: 1.0, nitroTopSpeed: 1.0, engineAccel: 1.0, gripMax: 1.0, gripDrift: 1.0, driftYawBoost: 1.0, yawResponse: 1.0, brakeForce: 1.0, drag: 1.0 },
-  hyper: { topSpeed: 1.12, nitroTopSpeed: 1.1, engineAccel: 1.02, gripMax: 0.9, gripDrift: 1.05, driftYawBoost: 1.0, yawResponse: 0.95, brakeForce: 1.0, drag: 0.92 },
-  grip: { topSpeed: 0.9, nitroTopSpeed: 0.9, engineAccel: 1.0, gripMax: 1.12, gripDrift: 1.1, driftYawBoost: 1.0, yawResponse: 1.08, brakeForce: 1.08, drag: 1.0 },
-  drift: { topSpeed: 0.96, nitroTopSpeed: 0.96, engineAccel: 1.0, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.3, yawResponse: 1.2, brakeForce: 1.0, drag: 1.0 },
+  r34: { topSpeed: 1.0, nitroTopSpeed: 1.0, engineAccel: 1.0, gripMax: 1.0, gripDrift: 1.0, driftYawBoost: 1.0, yawResponse: 1.0, brakeForce: 1.0, drag: 1.0 },
+  centenario: { topSpeed: 1.12, nitroTopSpeed: 1.1, engineAccel: 1.02, gripMax: 0.9, gripDrift: 1.05, driftYawBoost: 1.0, yawResponse: 0.95, brakeForce: 1.0, drag: 0.92 },
+  '930': { topSpeed: 0.9, nitroTopSpeed: 0.9, engineAccel: 1.0, gripMax: 1.12, gripDrift: 1.1, driftYawBoost: 1.0, yawResponse: 1.08, brakeForce: 1.08, drag: 1.0 },
+  s15: { topSpeed: 0.96, nitroTopSpeed: 0.96, engineAccel: 1.0, gripMax: 0.94, gripDrift: 0.88, driftYawBoost: 1.3, yawResponse: 1.2, brakeForce: 1.0, drag: 1.0 },
+  terzo: { topSpeed: 1.2, nitroTopSpeed: 1.14, engineAccel: 1.12, gripMax: 1.05, gripDrift: 1.05, driftYawBoost: 0.9, yawResponse: 1.0, brakeForce: 1.0, drag: 0.88 },
+  carrera: { topSpeed: 1.02, nitroTopSpeed: 1.03, engineAccel: 1.06, gripMax: 1.04, gripDrift: 0.98, driftYawBoost: 1.0, yawResponse: 1.02, brakeForce: 1.04, drag: 1.0 },
 }
 
-test('catalog: the approved §7 stat table lands literally on all four models', () => {
+test('catalog: the approved §7 stat table lands literally on all six models', () => {
   for (const [id, table] of Object.entries(APPROVED_STATS)) {
+    assert(Object.keys(APPROVED_STATS).length === CAR_SPECS.length, 'the table covers the whole catalog')
     const t = resolveTuning(getSpec(id).stat)
     for (const [field, mul] of Object.entries(table)) {
       const base = VEHICLE[field as keyof typeof VEHICLE]
@@ -320,7 +375,7 @@ test('lamps: frontLampAnchors derives the cluster from the model front station',
   assertNear(hero.lensZ, -2.268, 1e-9, 'hero lens keeps the shipped z')
   assertNear(hero.lampY, 0.66, 1e-9, 'hero lamp height stays 0.66')
   assertNear(hero.intakeCenterZ, -2.29, 1e-9, 'the centre intake keeps the shipped z')
-  for (const id of ['hyper', 'grip'] as const) {
+  for (const id of ['centenario', '930'] as const) {
     const st = getSpec(id).shape.bodyStations[0]
     const a = anchors!(st)
     assert(Math.abs(a.lensZ - st.z) < 0.04, `${id} lens sits flush at its own nose (${a.lensZ.toFixed(3)} vs station ${st.z})`)
@@ -356,9 +411,9 @@ test('paint storage: readPaintSelection accepts only palette hexes', () => {
 test('garage: readModelSelection falls back to hero for an unknown stored id', () => {
   try {
     fakeStore({ 'vr.model': 'not-a-car' })
-    assert(carSpecs.readModelSelection() === 'hero', 'unknown stored ids fall back, never throw')
-    fakeStore({ 'vr.model': 'grip' })
-    assert(carSpecs.readModelSelection() === 'grip', 'known ids round-trip')
+    assert(carSpecs.readModelSelection() === 'r34', 'unknown stored ids fall back, never throw')
+    fakeStore({ 'vr.model': '930' })
+    assert(carSpecs.readModelSelection() === '930', 'known ids round-trip')
   } finally { dropStore() }
 })
 
@@ -366,7 +421,7 @@ test('garage: readModelSelection falls back to hero for an unknown stored id', (
  * nothing stored an explicit in-memory pick survives; with neither the
  * signature owns the car. */
 test('paint flow: resolvePaintWithExplicit keeps an in-memory pick through a storage loss', () => {
-  const spec = getSpec('hyper')
+  const spec = getSpec('centenario')
   const pick = carSpecs.resolvePaintWithExplicit as unknown as
     ((stored: number | null, explicit: boolean, inMemory: number, s: typeof spec) => number) | undefined
   assert(typeof pick === 'function', 'resolvePaintWithExplicit is exported')
@@ -447,7 +502,7 @@ test('ai colours: boot-pool invariant — AI.count stays below the palette size'
  * stored value (the Safari-private-mode scenario F8 targeted); storage stays
  * the boot seed when nothing was picked this session. */
 test('paint flow: an explicit in-session pick outranks a stale stored value', () => {
-  const spec = getSpec('grip')
+  const spec = getSpec('930')
   const stale = PAINTS[0].color
   const gold = PAINTS[5].color
   assert(resolvePaintWithExplicit(stale, true, gold, spec) === gold,

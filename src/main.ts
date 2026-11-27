@@ -1,4 +1,5 @@
 import { getSpec, readModelSelection, readPaintSelection, resolvePaint } from './vehicles/CarSpecs'
+import { preloadCars } from './assets/CarLibrary'
 import { setStaticMergeEnabled } from './world/StaticMerge'
 import { Game } from './game/Game'
 
@@ -31,7 +32,7 @@ window.addEventListener('unhandledrejection', (ev) => fatal(ev.reason))
  * Playwright drivers build the harness variant (`npm run build:harness`,
  * `VR_HARNESS=1`) and drive it through `window.__vr` / `window.__dbg`.
  * ------------------------------------------------------------------------- */
-function boot(): void {
+async function boot(): Promise<void> {
   const canvas = document.getElementById('scene') as HTMLCanvasElement
   const bootStep = (t: string, pct: number): void => {
     const el = $('loading-step'), fill = $('loading-fill')
@@ -44,6 +45,11 @@ function boot(): void {
      It must be applied before the world builds; gated out of the shipped
      bundle with the rest of the dev harness. */
   if (__VR_HARNESS__ && new URLSearchParams(location.search).has('nomerge')) setStaticMergeEnabled(false)
+  /* real-car models are part of boot (Task 6): the loading screen covers the
+     GLB fetch so the FIRST frame shows real cars; a failed load simply leaves
+     the cache cold and buildCar goes procedural (offline-dev fallback). */
+  bootStep('Loading car models', 0.2)
+  await preloadCars()
   const t0 = performance.now()
   const modelId = readModelSelection()
   const game = new Game(canvas, resolvePaint(readPaintSelection(), getSpec(modelId)), modelId)
@@ -82,4 +88,4 @@ function boot(): void {
   })
 }
 
-try { boot() } catch (e) { fatal(e) }
+try { void boot().catch(fatal) } catch (e) { fatal(e) }

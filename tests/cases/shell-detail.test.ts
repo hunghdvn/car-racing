@@ -16,24 +16,24 @@ test('shell detail: the hero rides plain — single round tips, bare hood', () =
   assert(!p.hoodDome, 'hero gets no power dome')
 })
 
-test('shell detail: the corner-carver vents — grip gets hood slats, still single tips', () => {
-  const p = detailPlanFor(kitOf('grip'))
+test('shell detail: the corner-carver vents — the 930 gets hood slats, still single tips', () => {
+  const p = detailPlanFor(kitOf('930'))
   assert(p.hoodSlats >= 2 && p.hoodSlats <= 3, `grip must get 2-3 hood slats, got ${p.hoodSlats}`)
   assert(p.exhaust === 'single', `grip exhaust stays single, got ${p.exhaust}`)
   assert(!p.hoodDome, 'grip gets no dome')
 })
 
 test('shell detail: Slide King swagger — twin stacked tips and hood slats', () => {
-  const p = detailPlanFor(kitOf('drift'))
-  assert(p.exhaust === 'twin', `drift must twin its tips, got ${p.exhaust}`)
-  assert(p.hoodSlats >= 2 && p.hoodSlats <= 3, `drift must get 2-3 hood slats, got ${p.hoodSlats}`)
-  assert(!p.hoodDome, 'drift gets no dome')
+  const p = detailPlanFor(kitOf('s15'))
+  assert(p.exhaust === 'twin', `the S15 must twin its tips, got ${p.exhaust}`)
+  assert(p.hoodSlats >= 2 && p.hoodSlats <= 3, `the S15 must get 2-3 hood slats, got ${p.hoodSlats}`)
+  assert(!p.hoodDome, 'the S15 gets no dome')
 })
 
-test('shell detail: hyper gets the centre quad block and the power dome, never slats', () => {
-  const p = detailPlanFor(kitOf('hyper'))
-  assert(p.exhaust === 'quad', `hyper must run the centre quad, got ${p.exhaust}`)
-  assert(p.hoodDome, 'hyper gets the single power-dome ridge')
+test('shell detail: the Centenario gets the centre quad block and the power dome, never slats', () => {
+  const p = detailPlanFor(kitOf('centenario'))
+  assert(p.exhaust === 'quad', `the Centenario must run the centre quad, got ${p.exhaust}`)
+  assert(p.hoodDome, 'the Centenario gets the single power-dome ridge')
   assert(p.hoodSlats === 0, `dome and slats are exclusive, got slats=${p.hoodSlats}`)
 })
 
@@ -62,7 +62,7 @@ test('shell detail: the raised trim stays inside the mesh budget', () => {
 })
 
 test('shell detail: detailPlanFor is pure — same kit, same plan, kit untouched', () => {
-  const kit = { ...kitOf('drift') }
+  const kit = { ...kitOf('s15') }
   const snap = JSON.stringify(kit)
   const a = detailPlanFor(kit)
   const b = detailPlanFor(kit)

@@ -22,3 +22,10 @@ shots/*
 *.log
 .DS_Store
 .vite/
+
+# original Sketchfab downloads (raw, unoptimised)
+assets-src/
+assets-src
+
+# atomic-write husks left by killed pipeline runs (emit-rigs)
+*.tmp

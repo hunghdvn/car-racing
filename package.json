@@ -28,16 +28,22 @@
     "noleak": "node scripts/noleak.mjs",
     "functional": "node scripts/functional.mjs",
     "perf": "node scripts/perf.mjs",
-    "audit": "node scripts/audit-shots.mjs"
+    "audit": "node scripts/audit-shots.mjs",
+    "optimize-cars": "node scripts/optimize-cars.mjs",
+    "emit-rigs": "node scripts/emit-rigs.mjs"
   },
   "dependencies": {
     "three": "^0.168.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "@types/node": "^22.20.5",
     "@types/three": "^0.168.0",
     "esbuild": "^0.21.5",
     "playwright": "1.63",
+    "sharp": "^0.35.5",
     "typescript": "^5.5.4",
     "vite": "^5.4.8"
   }

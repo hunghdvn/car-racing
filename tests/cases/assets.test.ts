@@ -191,3 +191,52 @@ test('static batching: the dev audit log stays bounded across repeated builds (R
   const last = a[a.length - 1] as { root?: string }
   assert(last.root === 'ring-root-39', 'the ring keeps the MOST RECENT folds (harness still reads the live tail)')
 })
+
+/* ---------------------------------------------------------------- car library */
+
+test('car library: module contract is safe to import in node (no window/fetch at module scope)', async () => {
+  const lib = await import('../../src/assets/CarLibrary')
+  assert(typeof lib.preloadCars === 'function' && typeof lib.cloneRealCar === 'function'
+    && typeof lib.libraryReady === 'function' && typeof lib.disposeLibrary === 'function', 'library API surface')
+  assert(lib.libraryReady() === false, 'the cache is cold at import time (boot fires preloadCars itself)')
+})
+
+test('car library: disposeCarTree spares GLB-shared geometry (clones share buffers)', async () => {
+  const mod = await import('../../src/assets/CarModel').catch(() => null)
+  const disposeCarTree = mod?.disposeCarTree as unknown as ((root: Group) => void) | undefined
+  const markCarGeometryShared = mod?.markCarGeometryShared as unknown as ((g: unknown) => void) | undefined
+  assert(typeof disposeCarTree === 'function' && typeof markCarGeometryShared === 'function',
+    'disposeCarTree + markCarGeometryShared are exported from CarModel')
+  const seen = { shared: false, own: false }
+  const shared = new BoxGeometry()
+  shared.addEventListener('dispose', () => { seen.shared = true })
+  markCarGeometryShared!(shared)
+  const own = new BoxGeometry()
+  own.addEventListener('dispose', () => { seen.own = true })
+  const root = new Group()
+  root.add(new Mesh(shared, new MeshStandardMaterial()))
+  root.add(new Mesh(own, new MeshStandardMaterial()))
+  disposeCarTree!(root)
+  assert(seen.shared === false, 'a GLB-shared geometry must survive car disposal — the preload cache still references it')
+  assert(seen.own === true, 'per-instance geometry (glow planes, flames) still disposes normally')
+})
+
+test('car library: disposeCarTree spares GLB-authored + detail singleton MATERIALS (PR #21 review #8)', async () => {
+  const mod = await import('../../src/assets/CarModel')
+  const { markGLBMaterialShared } = await import('../../src/assets/CarShared')
+  const seen = { glb: 0, own: 0, detail: 0 }
+  const glbMat = new MeshStandardMaterial() // stands in for a template brake-disc/glass material
+  markGLBMaterialShared(glbMat)
+  glbMat.addEventListener('dispose', () => { seen.glb++ })
+  const ownMat = new MeshStandardMaterial() // stands in for the per-clone paint mat
+  ownMat.addEventListener('dispose', () => { seen.own++ })
+  const detail = mod.shared.chrome() // field-wide memoised singleton
+  detail.addEventListener('dispose', () => { seen.detail++ })
+  const root = new Group()
+  root.add(new Mesh(new BoxGeometry(), [glbMat, ownMat]))
+  root.add(new Mesh(new BoxGeometry(), detail))
+  mod.disposeCarTree(root)
+  assert(seen.glb === 0, 'a markGLBMaterialShared material survives — every sibling clone still renders with it')
+  assert(seen.own === 1, 'the per-instance material is disposed exactly once')
+  assert(seen.detail === 0, 'field-wide detail singletons (shared.chrome()) are spared by the DEFAULT predicate, no stub')
+})

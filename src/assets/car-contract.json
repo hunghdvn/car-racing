@@ -1,0 +1,21 @@
+{
+  "rigBands": {
+    "radius": [
+      0.2,
+      0.44
+    ],
+    "clearance": [
+      -0.06,
+      0.25
+    ]
+  },
+  "materials": {
+    "brakeDisc": "brake-disc",
+    "caliperPaint": "caliper-paint"
+  },
+  "nodePrefixes": {
+    "wheel": "wheel",
+    "brake": "brake",
+    "caliper": "caliper"
+  }
+}

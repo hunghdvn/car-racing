@@ -1,7 +1,7 @@
 import { AUDIO, NITRO, PAINTS, UI, VEHICLE } from '../config'
 import type { PaintDef } from '../config'
 import { fmtTime, hexToCss } from '../util'
-import { CAR_SPECS, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { CAR_SPECS, carDisplayName, getSpec, readModelSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { resolveTuning } from '../vehicles/CarTuning'
 
 /* ------------------------------------------------------------------------- *
@@ -432,6 +432,7 @@ export class UIManager {
    *  ACCEPTED path (setModelActive/renderModelStats), so a rejected switch
    *  (same-id / phase guard) can never leave the UI ahead of the car. */
   private buildModelCards(selectedId: CarId): void {
+    this.lastModelId = selectedId
     const host = this.$('model-cards')
     if (!host) return
     host.textContent = ''
@@ -440,7 +441,12 @@ export class UIManager {
       const b = this.doc.createElement('button')
       b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
       b.dataset.model = s.id
-      b.innerHTML = `<b>${s.name.toUpperCase()}</b><i>${s.class}</i>`
+      // attribution line (PR #21 r4): CC-BY/SA make author credit a licence
+      // condition, not a marketing surface — identity.license ("CC-BY 4.0 —
+      // model by <author> (Sketchfab)") renders unconditionally, so a shipped
+      // bundle carries the credit without the repo files. NOT branding-gated:
+      // turning names off cannot switch attribution off.
+      b.innerHTML = `<b>${carDisplayName(s).toUpperCase()}</b><i>${s.class}</i>${s.identity ? `<em>${s.identity.license}</em>` : ''}`
       b.addEventListener('click', () => {
         b.blur() // R2-3: a clicked card must not keep focus — drive keys aim there
         this.host.onModel(s.id)
@@ -453,9 +459,19 @@ export class UIManager {
 
   /** moves the active marker to the accepted model (Game calls it on accept) */
   setModelActive(id: CarId): void {
+    this.lastModelId = id
     for (const c of this.modelCardEls) {
       c.classList.toggle('selected', c.dataset.model === id)
     }
+  }
+
+  private lastModelId?: CarId
+
+  /** rebuild the card row labels — Game.refreshBranding calls this when
+   *  CAR.realBranding flips on a running page (names render at build time,
+   *  so without this the garage kept stale labels until reload, PR #21 r3) */
+  refreshModelCards(): void {
+    this.buildModelCards(this.lastModelId ?? readModelSelection())
   }
 
   /** five normalised stat bars for the selected model (spec §8 garage) */
