@@ -1,11 +1,11 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clamp01 } from '../util'
-import { brandingOn } from '../vehicles/CarSpecs'
+import { brandingOn, rigKeyOf } from '../vehicles/CarSpecs'
 import type { CarId, CarSpec } from '../vehicles/CarSpecs'
 import { CAR_RIGS } from './CarRigs'
 import { carMaterialParamsFor } from './MaterialSpecs'
-import { markCarGeometryShared, markGLBMaterialShared, RIG_BANDS } from './CarShared'
+import { CAR_BRAKE_PART_RE, CAR_CONTRACT, markCarGeometryShared, markGLBMaterialShared, RIG_BANDS } from './CarShared'
 import { makeCarPaintMaterial, shared, type CarModel, type WheelHandle } from './CarModel'
 
 /* ------------------------------------------------------------------------- *
@@ -60,7 +60,7 @@ export function preloadCars(): Promise<void> {
             // and two caliper faces wind inward — three culls them and the
             // hub reads hollow through the spokes (PR #21 review). DoubleSide
             // on the template once: every clone inherits it.
-            if (/^(brake|caliper)/.test(m.name ?? '')) m.side = THREE.DoubleSide
+            if (CAR_BRAKE_PART_RE.test(m.name ?? '')) m.side = THREE.DoubleSide
             markGLBMaterialShared(m)
           }
         })
@@ -131,8 +131,12 @@ function logoTexture(id: CarId, maker: string, accent: number): THREE.CanvasText
  * buildCar keeps the car on the procedural path — a wrong rig must never ship.
  */
 export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarModel | null {
-  const rig = CAR_RIGS[spec.rigId ?? spec.id] // rigId override is the lookup door (PR #21: was a dead field)
-  const src = cache.get(spec.rigId ?? id) // …and the template door: an aliased spec must load ITS geometry, not its own id (r3)
+  // ONE key formula for rig AND template (PR #21 r4): the old template door
+  // trusted the free-form `id` parameter, so rig and geometry could be read
+  // from two spellings of the same fact. The rigId alias is authoritative.
+  const key = rigKeyOf(spec)
+  const rig = CAR_RIGS[key]
+  const src = cache.get(key)
   if (!src) return null
 
   // validate the pipeline contract BEFORE mutating anything
@@ -163,13 +167,17 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
     if (!mesh.isMesh) return
     const one = (m: THREE.Material): THREE.Material =>
       /^paint/.test(m.name ?? '') ? paintMat
-        : /caliper/.test(m.name ?? '') ? caliperMat
+        : (m.name ?? '').includes(CAR_CONTRACT.nodePrefixes.caliper) ? caliperMat
           : /^glass/.test(m.name ?? '') ? glassMat : m
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(one) : one(mesh.material)
-    // procedural parity (CarModel's finalize, PR #21 review): opaque meshes
-    // cast, glass/flames (transparent) don't, nothing receives — the old
-    // paint-only cast+receive left GLB bodies shadowless next to procedural
-    // ones and made paint meshes self-shadow differently.
+    // Shadow rule (PR #21 r4, honest scope): opaque meshes cast, transparent
+    // (glass/flames) don't, nothing receives. This is NOT full parity with
+    // CarModel.finalize — the procedural builder carves small detail meshes
+    // (SHADOWLESS_DETAIL: lamps, handles) out of the pass, while GLB partners
+    // ship anonymous Object_* node names with no channel to mirror the
+    // carve-out, so baked lamps/handles DO cast here. Accepted delta; if a
+    // partner ever ships named detail nodes, extend the pipeline to rename
+    // them and add the carve-out here.
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     mesh.castShadow = !mats.some((m) => m.transparent)
     mesh.receiveShadow = false
@@ -235,13 +243,17 @@ export function cloneRealCar(id: CarId, paintHex: number, spec: CarSpec): CarMod
     }
   }
 
-  // rear badge decal (wordmark over the tail) — REAL_BRANDING gated: the flag
-  // is the trademark escape hatch, so a flag-off build must carry NO maker
-  // badge on track, matching the fictional names the UI already swaps to.
-  // ONE gate with the display names (brandingOn): the old `?? true` here
-  // defaulted the OPPOSITE way from carDisplayName — a spec without an
-  // identity raced badge-less in the standings but still wore a decal with
-  // a made-up maker on track (PR #21 r3).
+  // rear badge decal (wordmark over the tail) — gated by brandingOn(spec) at
+  // CLONE time, which decides whether the real-name decal TEXTURE is built
+  // and uploaded at all (a cost decision, not a leak: an invisible mesh
+  // reaches nobody but the console). The LIVE half of the escape hatch is
+  // Game.refreshBranding → syncFieldBadges, which flips logo-rear visibility
+  // on the running field, so a flag flip strips cars actually on track and
+  // not just the garage cards (PR #21 r4: this comment promised the on-track
+  // effect the clone gate alone could not deliver). ONE gate with the display
+  // names: the old `?? true` here defaulted the OPPOSITE way from
+  // carDisplayName — badge-printed a made-up maker while the name said
+  // fictional (PR #21 r3).
   const logo = brandingOn(spec)
     ? logoTexture(id, spec.identity!.maker, spec.finish.accent)
     : null

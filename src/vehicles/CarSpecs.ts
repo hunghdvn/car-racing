@@ -164,6 +164,16 @@ export const brandingOn = (spec: Pick<CarSpec, 'identity'>): boolean =>
 export const carDisplayName = (spec: Pick<CarSpec, 'name' | 'identity'>): string =>
   brandingOn(spec) ? spec.identity!.name : spec.name
 
+/**
+ * THE rig/GLB key a spec loads under (PR #21 r4: "which model is this car"
+ * had four hand-written spellings — the rig lookup, the template door, the
+ * functional battery rows and the carassets report path each picked
+ * `spec.id` or `spec.rigId ?? spec.id`; only one expression may combine
+ * them). All CAR_SPECS ship real models, so every spec has a rig.
+ */
+export const rigKeyOf = (spec: Pick<CarSpec, 'id' | 'rigId'>): CarId =>
+  spec.rigId ?? spec.id
+
 export const HERO_SPEC: CarSpec = {
   id: 'r34', name: 'Velocity GT',
   class: 'BALANCED', stat: {}, identity: identityFor('r34'),

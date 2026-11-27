@@ -16,7 +16,7 @@ import { isShortcutLane, RoadSurfaceProbe } from '../vehicles/TrackProbe'
 import { VehicleVisual, bindAIFieldVisuals } from '../vehicles/Vehicle'
 import { PlayerVehicle } from '../vehicles/PlayerVehicle'
 import { BASE_TUNING, resolveTuning } from '../vehicles/CarTuning'
-import { carDisplayName, getSpec, readPaintSelection, reconcileAiColours, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
+import { brandingOn, carDisplayName, getSpec, readPaintSelection, reconcileAiColours, resolvePaintWithExplicit, writeModelSelection, writePaintSelection, type CarId, type CarSpec } from '../vehicles/CarSpecs'
 import { AIVehicle, stepAIField, type AIContext, type RivalView } from '../vehicles/AIVehicle'
 import { RaceDirector, gridSlot, type Competitor, type RacePhase } from './RaceDirector'
 import type { Obstacle } from '../vehicles/VehiclePhysics'
@@ -165,9 +165,7 @@ export class Game {
       onPaint: (hex) => this.onPaint(hex),
       onModel: (id) => this.selectModel(id),
     })
-    // carDisplayName (not spec.name): the REAL_BRANDING toggle flips at render
-    // time, so a flag-off build must show fictional names in the standings too.
-    this.ui.setStandingNames(['YOU', ...this.ai.map((a) => carDisplayName(a.spec).toUpperCase())])
+    this.applyStandingNames()
     this.ui.bindTrack(this.slice.spline)
     // the boot-resolved paint (stored pick or model signature) owns the swatch row
     this.ui.setPaintActive(this.paintHex)
@@ -320,9 +318,33 @@ export class Game {
   private beginStamp: { phaseAfter: RacePhase; frame: number } | null = null
 
   /** the REAL_BRANDING flag flipped on a running page (dev harness): card
-   *  labels bake names at build time, so re-render them (PR #21 r3). */
+   *  labels bake names at build time, so re-render them; standings labels
+   *  and the field's badge visibility follow the same flip (PR #21 r4). */
   refreshBranding(): void {
     this.ui.refreshModelCards()
+    this.applyStandingNames()
+    this.syncFieldBadges()
+  }
+
+  /** standings labels are built from this list once at boot — a live
+   *  branding flip must rebuild them too (r4: cards refreshed while the
+   *  results screen kept real names beside badge-less cars) */
+  private applyStandingNames(): void {
+    // carDisplayName (not spec.name): the REAL_BRANDING toggle flips at render
+    // time, so a flag-off build must show fictional names in the standings too.
+    this.ui.setStandingNames(['YOU', ...this.ai.map((a) => carDisplayName(a.spec).toUpperCase())])
+  }
+
+  /** The clone-time gate bakes decal TEXTURES; visibility is the LIVE half of
+   *  the escape hatch — flipping the flag on a running page must strip the
+   *  field's badges too, not just the garage labels (PR #21 r4: the old
+   *  comment claimed on-track coverage refreshBranding never gave the cars) */
+  private syncFieldBadges(): void {
+    const field: Array<[CarModel, CarSpec]> = [[this.car, this.selectedSpec], ...this.ai.map((a, i): [CarModel, CarSpec] => [this.aiCars[i], a.spec])]
+    for (const [car, spec] of field) {
+      const on = brandingOn(spec)
+      car.group.traverse((o) => { if (o.name === 'logo-rear') o.visible = on })
+    }
   }
 
   beginRace(): void {

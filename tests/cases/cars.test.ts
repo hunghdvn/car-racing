@@ -126,9 +126,18 @@ test('identity: per-car realBranding override drops one car name (CC-BY-NC escap
   // REAL[id].realBranding = false entry takes effect, so the test must go
   // through it (mutating s.identity directly let a broken spread order pass
   // this test blind, PR #21 r3)
-  const pinned = identityFor('r34')
-  pinned.realBranding = false
-  assert(carDisplayName({ name: getSpec('r34').name, identity: pinned }) === getSpec('r34').name, 'identityFor honours a per-car pin')
+  // the PINNED door, seeded BEFORE identityFor builds the object: mutating
+  // the RETURNED copy proved nothing — a regression swallowing the pin
+  // (the REAL[id] spread losing realBranding:false) still passed, PR #21 r4.
+  // REAL rows are module state: seed, assert through the gate, restore.
+  const REAL_R34 = REAL['r34']
+  const pinWas = REAL_R34.realBranding
+  try {
+    REAL_R34.realBranding = false
+    assert(identityFor('r34').realBranding === false, 'identityFor propagates a REAL-row pin (the pin beats the true default)')
+    assert(brandingOn({ identity: identityFor('r34') }) === false, 'the ONE gate honours the pin — no real-name decal for a pinned car')
+    assert(carDisplayName({ name: getSpec('r34').name, identity: identityFor('r34') }) === getSpec('r34').name, 'a pinned car shows its fictional name')
+  } finally { REAL_R34.realBranding = pinWas }
   assert(brandingOn({ identity: undefined }) === false, 'no identity = no branding (both gates agree, the safe direction)')
   assert(typeof REAL.terzo.license === 'string' && REAL.terzo.license.includes('NC'), 'terzo carries the CC-BY-NC licence the per-car pin exists for')
 })

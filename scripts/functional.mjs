@@ -137,9 +137,24 @@ try {
   if (gpuBacked) {
     rec('results-order', allClassified && positionsSane, `standings ranked 1..n, ${fin.length}/${st.length} classified finished (gate: ${GRID}/${GRID} expected)`)
     rec('results-times', allClassified && monotonic, `finish times monotonic with position: ${JSON.stringify(times)}`)
+    // r4 (t13/n08): the standings rec read the PRIVATE store only — the DOM
+    // the player actually sees had no reader, so buildResultRows ignoring
+    // `names` stayed green. Expectations are rebuilt from the CATALOG through
+    // carDisplayName (branding-aware), keyed by each standing's competitor id.
+    const domNames = await page.evaluate(() => {
+      const d = window.__dbg
+      const got = Array.from(document.querySelectorAll('#results-standings .stand-name')).map((e) => e.textContent ?? '')
+      const st = window.__raceState().standings ?? []
+      const want = st.map((r) => (r.id === 0 ? 'YOU' : d.carDisplayName(d.game.ai[r.id - 1].spec).toUpperCase()))
+      return { got, want }
+    }).catch(() => null)
+    rec('results-names-dom', !!domNames && domNames.got.length === 6 && domNames.got.join() === domNames.want.join(),
+      domNames ? `#results-standings .stand-name = ${JSON.stringify(domNames.got)} vs catalog carDisplayName (branding-aware) = ${JSON.stringify(domNames.want)} — DOM read, not the store (PR #21 r4)`
+        : 'evaluate threw — results DOM unverified')
   } else {
     skip('results-order', 'full-grid classification depends on the GPU-backed race completing')
     skip('results-times', 'finish times depend on the GPU-backed race completing')
+    skip('results-names-dom', 'the results screen only shows after a completed race — GPU-gated like results-order')
   }
 
   // a clean restart from the finished state
@@ -605,7 +620,7 @@ try {
       for (const spec of d.CAR_SPECS) {
         const car = d.buildCar(0xf27a1e, spec)
         const byName = (n) => { let f = null; car.group.traverse((o) => { if (!f && o.name === n) f = o }); return f }
-        const rig = d.CarRigs[spec.id]
+        const rig = d.CarRigs[d.rigKeyOf(spec)] // ONE key formula (r4: this row used bare spec.id while its siblings used rigId ?? id)
         const corners = ['fl', 'fr', 'rl', 'rr']
         const wheels = corners.map((c) => byName(`wheel-${c}-lr`))
         const spinOk = !!byName('wheel-spin')
@@ -655,12 +670,16 @@ try {
           if (!o.isMesh) return
           if (o.name === 'glow-front' || o.name === 'glow-rear') glowN++
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-            // brake-disc fan AND the cloned caliper: the r3 audit matched
-            // only /brake/, so dropping DoubleSide from caliperMat (two
-            // caliper box faces wind inward → culled, caliper reads hollow)
-            // passed every suite. Name-match both doors now.
-            if (!m || !/^(brake|caliper)/.test(m.name ?? '')) continue
-            if (/^brake/.test(m.name)) discSeen = true
+            // two channels, both read from the SHARED contract (r4): the disc
+            // by its MATERIAL name, the caliper by its NODE name — the second
+            // naming channel used to be spelled three ways across files, so a
+            // pipeline material rename silently un-audited the DoubleSide fix.
+            if (!m) continue
+            const C = d.CAR_CONTRACT
+            const isBrake = (m.name ?? '').startsWith(C.materials.brakeDisc)
+            const isCaliper = (o.name ?? '').startsWith(C.nodePrefixes.caliper)
+            if (!isBrake && !isCaliper) continue
+            if (isBrake) discSeen = true
             else caliperSeen = true
             if (m.side !== d.THREE.DoubleSide) discOk = false
           }
@@ -672,14 +691,14 @@ try {
         let decalFacedBack = true
         if (decal) {
           const q = new d.THREE.Quaternion(); decal.getWorldQuaternion(q)
-          decalFacedBack = new d.THREE.Vector3(0, 0, 1).applyQuaternion(q).z > 0.9
+          decalFacedBack = new d.THREE.Vector3(0, 0, 1).applyQuaternion(q).z > 0.99 // ≤8° tilt (r3 nit: 0.9 let ~25° pass)
         }
         // the flag-OFF direction of the glow check is degenerate for all
         // six shipped rows (lampGlow false ⇒ glowN === 0 even with the
         // branch broken). Flip the TABLE row — the proven tamper door —
         // and demand the four planes really materialise on a fresh clone.
         let glowOnN = 0
-        const row = d.CarRigs[spec.rigId ?? spec.id]
+        const row = d.CarRigs[d.rigKeyOf(spec)]
         const glowWas = row.lampGlow
         row.lampGlow = true
         try {
@@ -693,9 +712,13 @@ try {
           spin: spinOk, brakeParented,
           grounded: box.min.y >= Math.min(0, rig.groundClearance) - 0.06 && box.min.y <= 0.12,
           radius: car.wheels.every((w) => w.radius >= d.RIG_BANDS.radius[0] && w.radius <= d.RIG_BANDS.radius[1]),
+          // hubY contract (r4): the handle must ride the MEASURED hub, not
+          // the R − WHEEL_SINK fallback — deleting the hubY push used to
+          // slide back into the old rear-sink regression unnoticed
+          hubY: car.wheels.every((w, i) => Math.abs((w.hubY ?? -999) - rig.wheelPos[i][1]) < 1e-9),
           frontMinusZ,
           paint: painted > 0 || rig.bakedPaint,
-          logo: !d.getRealBranding() || !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2,
+          logo: !d.brandingOn(spec) || !!byName('logo-rear'), nitro: (car.nitroTips ?? []).length === 2, // per-car gate (r4: global flag ignored REAL[id].realBranding = false pins — a CC-BY-NC pin reddened CI forever)
           sharesTpl,
           glowCoherent: glowN === (rig.lampGlow ? 4 : 0),
           glowOn: glowOnN === 4,
@@ -732,7 +755,7 @@ try {
     const ids = Object.keys(rigsOut)
     const bad = ids.filter((id) => !Object.values(rigsOut[id]).every(Boolean))
     rec('glb-rigs-integrity', ids.length === 6 && bad.length === 0,
-      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, geometry front-at-−z, paint bound to meshes, logo on, logo GONE flag-off, nitro, clone shares template geometry, glow planes match the lampGlow flag BOTH ways, brake disc + caliper DoubleSide, badge faces +z, cache-survives-dispose)`
+      bad.length === 0 ? `all six GLB clones pass the rig contract (pivots, spin reparenting, brake-under-wheel, grounded, radii, hubY rides the measured hub, geometry front-at-−z, paint bound to meshes, logo on, logo GONE flag-off, nitro, clone shares template geometry, glow planes match the lampGlow flag BOTH ways, brake disc + caliper DoubleSide, badge faces +z, cache-survives-dispose)`
         : `failed flags: ${bad.map((id) => `${id}: ${Object.entries(rigsOut[id]).filter(([, v]) => !v).map(([k]) => k).join(',')}`).join(' | ')}`)
   }
 
@@ -741,7 +764,7 @@ try {
   // material-side caliper gate below stays too — clones still carry the hex.
   const rigData = await pKeys.evaluate(() => Object.fromEntries(
     window.__dbg.CAR_SPECS.map((s) => {
-      const r = window.__dbg.CarRigs[s.id]
+      const r = window.__dbg.CarRigs[window.__dbg.rigKeyOf(s)]
       return [s.id, {
         radii: r.wheelRadius.length === 4 && r.wheelRadius.every((v) => v >= window.__dbg.RIG_BANDS.radius[0] && v <= window.__dbg.RIG_BANDS.radius[1]),
         clearance: r.groundClearance >= window.__dbg.RIG_BANDS.clearance[0] && r.groundClearance <= window.__dbg.RIG_BANDS.clearance[1],
@@ -760,7 +783,7 @@ try {
     rec('glb-rig-data', Object.keys(rigData).length === 6 && bad.length === 0,
       bad.length === 0 ? 'CAR_RIGS rows are sane for all six (radii band, clearance band, finite anchors, L/R x-sign rule, lampZ brackets the body, badge on +z tail)'
         : `bad rig rows: ${bad.map(([id, v]) => `${id}:${Object.entries(v).filter(([, ok]) => !ok).map(([k]) => k).join(',')}`).join(' ')}`)
-  }
+  } else rec('glb-rig-data', false, 'evaluate threw — rig table unverified (f07 third report: a silent catch(() => null) here let a dropped __dbg export — e.g. RIG_BANDS this very round — retire the rec unnoticed while the battery stayed green)')
 
   // R2-8: the caliper colour must arrive through the carMaterialParamsFor
   // door (which buildCar now calls — no side-read of spec.kit.caliper), so
@@ -834,12 +857,24 @@ try {
     const car = d.buildCar(0xf27a1e, spec)
     let cloned = false; car.group.traverse((o) => { if (o.name === 'wheel-fl-lr') cloned = true })
     const r0 = car.wheels[0]?.radius ?? -1
+    // REAL geometry identity (r4): Object3D.clone shares geometry refs, so
+    // the aliased clone's front wheel mesh must BE the 930 template's object.
+    // Table numbers cannot catch a template door regressed to cache.get(id):
+    // the clone would wear the s15 shell while every radius read still said
+    // 930 — and both wheel templates carry wheel-fl-lr, so mesh presence
+    // proves nothing either.
+    // wheel-fl-lr is the pivot GROUP — geometry sits on its mesh descendants;
+    // compare their uuid sets (clone shares the refs, distinct GLBs never do)
+    const geoSet = (root) => { let n = null; root.traverse((o) => { if (!n && o.name === 'wheel-fl-lr') n = o }); if (!n) return null; const u = []; n.traverse((o) => { if (o.isMesh && o.geometry) u.push(o.geometry.uuid) }); return u.sort().join() }
+    const gClone = geoSet(car.group)
+    const g930 = geoSet(d.getTemplate('930')), gS15 = geoSet(d.getTemplate('s15'))
     d.disposeCarTree(car.group)
-    return { cloned, matches930: Math.abs(r0 - d.CarRigs['930'].wheelRadius[0]) < 1e-9, notS15: Math.abs(r0 - d.CarRigs.s15.wheelRadius[0]) > 1e-3 }
+    return { cloned, geoIs930: !!gClone && gClone === g930, geoNotS15: !!gClone && !!gS15 && gClone !== gS15,
+      matches930: Math.abs(r0 - d.CarRigs['930'].wheelRadius[0]) < 1e-9, notS15: Math.abs(r0 - d.CarRigs.s15.wheelRadius[0]) > 1e-3 }
   }).catch(() => null)
   if (alias) {
-    rec('carlib-rigid-alias-template', alias.cloned && alias.matches930 && alias.notS15,
-      `spec s15 + rigId 930 → GLB clone = ${alias.cloned}, front radius is the 930 rig's = ${alias.matches930} and not the s15 one = ${alias.notS15} (template door follows spec.rigId ?? id, same as the rig lookup)`)
+    rec('carlib-rigid-alias-template', alias.cloned && alias.geoIs930 && alias.geoNotS15 && alias.matches930 && alias.notS15,
+      `spec s15 + rigId 930 → GLB clone = ${alias.cloned}, front-wheel GEOMETRY IS the 930 template's object = ${alias.geoIs930} and not the s15 template's = ${alias.geoNotS15} (clone shares refs — the only check that catches a template door regressed to cache.get(spec.id)), front radius matches the 930 table = ${alias.matches930}, not the s15's = ${alias.notS15}`)
   } else rec('carlib-rigid-alias-template', false, 'evaluate threw — alias path unverified')
 
   // Per-id load drop (PR #21 review): one dead GLB must degrade ONLY its own
@@ -1046,15 +1081,44 @@ try {
       d.setRealBranding(false); res.off = texts()
       d.setRealBranding(true); res.on = texts()
     } finally { d.setRealBranding(on0) }
-    return { ...res, wantOn: want(true), wantOff: want(false) }
+    const lic = () => Array.from(document.querySelectorAll('#model-cards .model-card em')).map((e) => e.textContent)
+    return { ...res, on0, bootLic: lic(), wantLic: d.CAR_SPECS.map((s) => s.identity?.license ?? ''), wantOn: want(true), wantOff: want(false) }
   }).catch(() => null)
   if (cardText) {
-    const ok = cardText.boot.join() === cardText.wantOn.join()
+    const ok = cardText.boot.join() === (cardText.on0 ? cardText.wantOn : cardText.wantOff).join() // r4: boot was hard-coded ON — the documented REAL_BRANDING=false build failed a correct-state rec
       && cardText.off.join() === cardText.wantOff.join()
       && cardText.on.join() === cardText.wantOn.join()
     rec('branding-text-cards-both-ways', ok,
       `card <b> labels follow the flag live (six cards): boot first = ${JSON.stringify(cardText.boot[0])}, flag-off = ${JSON.stringify(cardText.off[0])}, flag-back = ${JSON.stringify(cardText.on[0])} — setRealBranding must fire refreshModelCards`)
+    rec('attribution-license-on-cards',
+      cardText.bootLic.length === 6 && cardText.bootLic.join() === cardText.wantLic.join() && cardText.wantLic.every((t) => typeof t === 'string' && t.length > 0),
+      `every garage card renders its identity.license attribution line unconditionally (CC attribution is a licence condition, not a branding surface): ${JSON.stringify(cardText.bootLic.slice(0, 2))}… (PR #21 r4: ASSETS.md claimed in-game credit while no code rendered it)`)
   } else rec('branding-text-cards-both-ways', false, 'evaluate threw — card text unverified')
+
+  // live-field branding (r4): cards re-render on a flag flip, but the RACE
+  // field used to keep its badges — the escape hatch must cover the cars
+  // actually on track. Counts visible logo-rear per live car group BOTH ways,
+  // expectations derived per car from brandingOn (a pinned car expects 0).
+  const liveBadge = await pKeys.evaluate(() => {
+    const d = window.__dbg
+    const groups = () => [d.game.car, ...d.game.aiCars]
+    const visibleBadges = (car) => { let n = 0; car.group.traverse((o) => { if (o.name === 'logo-rear' && o.visible) n++ }); return n }
+    const snapshot = () => groups().map((c) => visibleBadges(c))
+    const specs = () => [d.game.selectedSpec, ...d.game.ai.map((a) => a.spec)]
+    const on0 = d.getRealBranding()
+    const want = specs().map((s) => (d.brandingOn(s) ? 1 : 0))
+    let off = null, back = null
+    try {
+      d.setRealBranding(false); off = snapshot()
+      d.setRealBranding(true); back = snapshot()
+    } finally { d.setRealBranding(on0) }
+    return { off, back, want }
+  }).catch(() => null)
+  if (liveBadge) {
+    rec('branding-live-field-badges',
+      liveBadge.off.every((n) => n === 0) && liveBadge.back.join() === liveBadge.want.join(),
+      `live field (player + 5 AI) visible badge count flag-off = ${JSON.stringify(liveBadge.off)} (all 0 — refreshBranding must sync logo-rear visibility on the field), flag-back = ${JSON.stringify(liveBadge.back)} vs per-car brandingOn = ${JSON.stringify(liveBadge.want)} (PR #21 r4)`)
+  } else rec('branding-live-field-badges', false, 'evaluate threw — live field badge state unverified')
   // ---- PR review R3-2: reconcileAiColours WIRING coverage (core-only pins
   // stayed green under the reviewer's mutations). pKeys is back on the idle
   // title board (toMenu above): swatches + cards take real trusted clicks and

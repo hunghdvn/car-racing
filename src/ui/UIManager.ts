@@ -441,7 +441,12 @@ export class UIManager {
       const b = this.doc.createElement('button')
       b.className = 'model-card' + (s.id === selectedId ? ' selected' : '')
       b.dataset.model = s.id
-      b.innerHTML = `<b>${carDisplayName(s).toUpperCase()}</b><i>${s.class}</i>`
+      // attribution line (PR #21 r4): CC-BY/SA make author credit a licence
+      // condition, not a marketing surface — identity.license ("CC-BY 4.0 —
+      // model by <author> (Sketchfab)") renders unconditionally, so a shipped
+      // bundle carries the credit without the repo files. NOT branding-gated:
+      // turning names off cannot switch attribution off.
+      b.innerHTML = `<b>${carDisplayName(s).toUpperCase()}</b><i>${s.class}</i>${s.identity ? `<em>${s.identity.license}</em>` : ''}`
       b.addEventListener('click', () => {
         b.blur() // R2-3: a clicked card must not keep focus — drive keys aim there
         this.host.onModel(s.id)

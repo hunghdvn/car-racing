@@ -1,4 +1,5 @@
 import type * as THREE from 'three'
+import contract from './car-contract.json'
 
 /* ------------------------------------------------------------------------- *
  * Shared-resource registry for the real-car GLB clones (spec §5).
@@ -34,16 +35,27 @@ export function isGLBMaterialShared(m: unknown): boolean {
   return m != null && sharedGLBMats.has(m as THREE.Material)
 }
 
-/** Rig sanity bands — the ONE contract module the runtime clone gate
- *  (CarLibrary), the unit suite (carassets.test) and the functional battery
- *  (through the dev harness) all read: nudging the band for one big-tire
- *  car moves all three readers at once. PR #21 r3: [0.2, 0.44] was
- *  photocopied into four files, and narrowing one copy silently demoted
- *  cars to procedural while the other gates stayed green. */
+/** The shared load-bearing contract (PR #21 r4): sanity bands + synthesized
+ *  part names live in ONE JSON read by the runtime (here), the unit suite,
+ *  the functional battery (via the dev harness) AND both pipeline scripts
+ *  through fs — the emitter that validates a report and the runtime that
+ *  gates a clone can no longer hold contradictory numbers (emit-rigs shipped
+ *  its own [0.24, 0.44]/[-0.08, 0.24] beside this module's values for a
+ *  whole round, so a legal re-bake hit a CI wall no rerun could clear). */
+export const CAR_CONTRACT = contract
+
+/** Rig sanity bands — nudging a band moves the runtime clone gate, the unit
+ *  suite and the functional battery at once (PR #21 r3: four photocopies,
+ *  narrowing one silently demoted cars to procedural). */
 export const RIG_BANDS = {
   /** per-corner tyre radius, metres */
-  radius: [0.2, 0.44] as const,
+  radius: contract.rigBands.radius as unknown as readonly [number, number],
   /** body lowest point relative to the contact patch, metres (negative =
    *  splitter clipping the road — the accepted trade, see optimize-cars) */
-  clearance: [-0.06, 0.25] as const,
+  clearance: contract.rigBands.clearance as unknown as readonly [number, number],
 }
+
+/** brake-disc / caliper material + node prefix test, contract-fed: the
+ *  DoubleSide fan fix and the caliper re-tint both hang off these names */
+export const CAR_BRAKE_PART_RE = new RegExp(
+  `^(${contract.nodePrefixes.brake}|${contract.nodePrefixes.caliper})`)

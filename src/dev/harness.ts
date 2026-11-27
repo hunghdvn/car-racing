@@ -15,8 +15,8 @@ import { gridSlot } from '../game/RaceDirector'
 import { buildCar, disposeCarTree, isSharedCarMaterial, validateCarShape } from '../assets/CarModel'
 import { CAR_RIGS } from '../assets/CarRigs'
 import { disposeLibrary, getTemplate, libraryReady, preloadCars, setForceProcedural } from '../assets/CarLibrary'
-import { CAR_SPECS, carDisplayName, type CarId } from '../vehicles/CarSpecs'
-import { RIG_BANDS } from '../assets/CarShared'
+import { CAR_SPECS, brandingOn, carDisplayName, rigKeyOf, type CarId } from '../vehicles/CarSpecs'
+import { CAR_CONTRACT, RIG_BANDS } from '../assets/CarShared'
 import type { Game } from '../game/Game'
 
 /* ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ export function installDevHarness(game: Game, canvas: HTMLCanvasElement, buildMs
     // rig table through these, and forces the procedural fallback for its
     // proc-rec page context. __dbg additions ONLY (no new top-level globals).
     CarRigs: CAR_RIGS, preloadCars, libraryReady, forceProcedural: setForceProcedural,
-    getTemplate, disposeLibrary, RIG_BANDS, carDisplayName,
+    getTemplate, disposeLibrary, RIG_BANDS, CAR_CONTRACT, carDisplayName, brandingOn, rigKeyOf,
     getRealBranding: (): boolean => CAR.realBranding,
     setRealBranding: (on: boolean): void => {
       CAR.realBranding = on
