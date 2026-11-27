@@ -19,15 +19,18 @@
  *   · glass candidates renamed glass-<n>
  *   · webp textures (sharp), unit-normalised to the 4.55 m footprint, wheels
  *     touching y=0 (ground-sit)
+ *   · degenerate TANGENT vertices (∥ NORMAL) repaired before write — a NaN
+ *     bitangent in the normalMap shader made SwiftShader drop the whole
+ *     car_model_carrera frame behind the rear tire (see sanitizeTangents)
  *   · budget gate: ≤60k tris and ≤4 MB per car, ≤12 MB across all six
  *
- * build/cars/<id>.report.json records the measurements; scripts/emit-rigs.mjs
+ * rigs/reports/<id>.report.json records the measurements (committed); scripts/emit-rigs.mjs
  * consumes those reports and REGENERATES src/assets/CarRigs.ts — the rig
  * table is never hand-pasted (PR #21: copy-paste is how stale caliperColors
  * and mislabelled L/R hubs shipped). `npm run optimize-cars && npm run
  * emit-rigs` is the full asset rebuild. Tuning knobs live in CARS below.
  * ----------------------------------------------------------------------- */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,12 +38,18 @@ import { NodeIO, Accessor } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
 import { dedup, prune, simplify, simplifyPrimitive, textureCompress, weld } from '@gltf-transform/functions'
 import { MeshoptSimplifier } from 'meshoptimizer'
+
+// THE shared contract (sanity bands + synthesized part names), read from the
+// same JSON the runtime and tests import (PR #21 r4: pipeline, emitter and
+// runtime each kept their own copies and drifted).
+const CONTRACT = JSON.parse(readFileSync(new URL('../src/assets/car-contract.json', import.meta.url), 'utf8'))
+const MAT_BRAKE_DISC = CONTRACT.materials.brakeDisc
+const MAT_CALIPER_PAINT = CONTRACT.materials.caliperPaint
 import sharp from 'sharp'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = join(root, 'assets-src')
 const OUT = join(root, 'public', 'models')
-const REPORTS = join(root, 'build', 'cars')
 
 /* Per-car tuning table — the single source of pipeline knobs. wheelMatch /
  * drop / glass are regex strings matched against node AND material names.
@@ -233,7 +242,6 @@ async function processCar(id) {
   const src = join(SRC, cfg.file)
   if (!existsSync(src)) fail(`${id}: missing ${cfg.file} — download it from ${cfg.page} (glTF format) into assets-src/`)
   mkdirSync(OUT, { recursive: true })
-  mkdirSync(REPORTS, { recursive: true })
   console.log(`[cars] ${id}: reading ${cfg.file}`)
   const doc = await io.read(src)
   const scene = doc.getRoot().listScenes()[0]
@@ -446,26 +454,20 @@ async function processCar(id) {
   // collapses edges, it never deletes a component). A component with ≤64
   // tris and a sub-12 cm bbox is garnish: drop it, then let simplify breathe.
   //
-  // ORIENTED BODY CLOUD: sampled here, BEFORE the strip — the strip rewrites
-  // primitive index buffers (local indexing), and measuring after it let a
-  // merged wheel mesh read with the first wheel's node matrix drop a bogus
-  // 5 m lever-arm cloud into every rig measurement (PR #21 r3 CI finding:
-  // scale collapsed 10x, anchors buried inside the shell). Outlier rejection
-  // below needs the node world matrix, so we sample bbox corners exactly
-  // like meshBBox — the same sampling the bbox min/max use.
-  const bodySample = [] // every non-wheel LEAF node with a mesh, pre-strip
+  // ORIENTED BODY CLOUD: every mesh-owning non-wheel node, snapshotted
+  // BEFORE the strip (which rewrites primitive index buffers and left a
+  // merged wheel mesh reading with the first wheel's node matrix once —
+  // PR #21 r3). Group nodes that OWN a mesh are legitimate (flatten cannot
+  // merge a group that carries a transform+mesh, PR #21 r4): the node
+  // check is getMesh(), never leaf-ness — weld()'d group SHELLS fall out
+  // because they ended up meshless, not because they have children. Each
+  // node contributes its own mesh under its own matrix, exactly what
+  // meshBBox does; the absolute sanity bands below fail the run if the
+  // resulting measurement is not the car.
+  const bodySample = [] // { node, mat } per mesh-owning non-wheel node, pre-strip
   for (const { node, mat } of sceneNodes(doc)) {
     if (!node.getMesh() || node.getMesh().listPrimitives().length === 0) continue
     if (/^(wheel-|brake-|caliper-)/.test(node.getName() ?? '')) continue
-    // LEAVES ONLY: weld()+dedup() merge the authored Sketchfab subtree into
-    // its first leaf (Object_2 carries the whole 18k-tri body under its own
-    // matrix; the group nodes end up meshless shells). Sampling group nodes
-    // re-baked already-world vertices with a mid-subtree matrix — a 3x-depth
-    // skew that pushed the percentile tail to 46 m, collapsed the pose scale
-    // 10x and buried every lamp/badge/nitro anchor inside the shell (the
-    // PR #21 r3 CI finding). Leaves read each vertex under exactly one
-    // matrix, the same one meshBBox uses.
-    if (node.listChildren().length) continue
     bodySample.push({ node, mat })
   }
   const MICRO_TRIS = 64, MICRO_DIAG = 0.12
@@ -473,7 +475,7 @@ async function processCar(id) {
   for (const mesh of [...doc.getRoot().listMeshes()]) {
     for (const p of mesh.listPrimitives()) {
       const matName = p.getMaterial()?.getName() ?? ''
-      if (matName === 'brake-disc' || matName === 'caliper-paint') continue
+      if (matName === MAT_BRAKE_DISC || matName === MAT_CALIPER_PAINT) continue
       const pos = p.getAttribute('POSITION')
       const idxAcc = p.getIndices()
       if (!pos?.getArray() || !idxAcc?.getArray()) continue
@@ -532,7 +534,7 @@ async function processCar(id) {
     const wheelPrims = []
     for (const node of doc.getRoot().listNodes()) {
       if (!/^wheel-/.test(node.getName() ?? '') || !node.getMesh()) continue
-      for (const p of node.getMesh().listPrimitives()) if (p.getMaterial()?.getName() !== 'brake-disc' && p.getMaterial()?.getName() !== 'caliper-paint') wheelPrims.push(p)
+      for (const p of node.getMesh().listPrimitives()) if (p.getMaterial()?.getName() !== MAT_BRAKE_DISC && p.getMaterial()?.getName() !== MAT_CALIPER_PAINT) wheelPrims.push(p)
     }
     const wheelTris = wheelPrims.reduce((a, p) => a + primTris(p), 0)
     const budget = cfg.wheelTris ?? 14000
@@ -654,19 +656,38 @@ async function processCar(id) {
     if (ex > maxSpan || ez > maxSpan) continue
     for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], b.min[k]); max[k] = Math.max(max[k], b.max[k]) }
     if (b.min[1] < bodyMinY) bodyMinY = b.min[1]
-    // the percentile cloud, sampled from the SAME bbox corners the min/max
-    // are folding — one pass, one matrix per node, no second opinion anywhere
+    // the percentile cloud: REAL vertices under the node's own matrix,
+    // deterministically strided (≤ ~512 samples per primitive keeps the
+    // sort cheap on 18k-tri bodies and is byte-reproducible). The r3
+    // 8-corner-per-primitive cloud failed its own purpose (PR #21 r4): a
+    // lone spire primitive put 8 of a few dozen cloud points AT the spire,
+    // so the 1% tail could not cut it — p99 == raw max and "outlier
+    // rejection" degraded to raw bbox. Real vertex mass makes the
+    // percentile mean what it says. Vertices are within their primitive's
+    // attrMinMax, so this cannot poison past what the bbox fold already
+    // reads with the SAME matrix.
     for (const prim of node.getMesh().listPrimitives()) {
       const pos = prim.getAttribute('POSITION')
       if (!pos) continue
-      const { min: a, max: bx } = attrMinMax(pos)
-      for (let ix = 0; ix < 8; ix++)
-        bodyPts.push(xformPoint(mat, [ix & 1 ? bx[0] : a[0], ix & 2 ? bx[1] : a[1], ix & 4 ? bx[2] : a[2]]))
+      const arr = pos.getArray()
+      const n = pos.getCount()
+      const stride = Math.max(1, Math.floor(n / 512))
+      for (let i = 0; i < n; i += stride)
+        bodyPts.push(xformPoint(mat, [arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]]))
     }
   }
   if (!Number.isFinite(min[2])) fail(`${id}: body bbox empty after outlier rejection — review node layout`)
   const bodyLen = percentile(bodyPts, 2, 0.99) - percentile(bodyPts, 2, 0.01)
   const scale = TARGET_LEN / bodyLen
+  // absolute sanity bands (PR #21 r4): percentile + spike-guard can be
+  // made to measure ANYTHING by a node layout they mis-handle, and a
+  // silently wrong scale ships wheels outside physics' expectations with
+  // every relative gate still green. These bounds define "the measurement
+  // measured the car" — outside them the pipeline FAILS, it does not guess.
+  if (!(scale >= 0.5 && scale <= 2.5))
+    fail(`${id}: pose scale ${scale.toFixed(3)} outside [0.5, 2.5] — bodyLen ${bodyLen.toFixed(2)} m from ${bodyPts.length} cloud points; review node layout / sampling`)
+  if (!(bodyLen >= 3.0 && bodyLen <= 6.5))
+    fail(`${id}: bodyLen ${bodyLen.toFixed(2)} m outside [3.0, 6.5] — the percentile cloud is not the car body`)
   const rootScene = doc.getRoot().listScenes()[0]
   // SIT ON THE WHEELS: the tyre contact patch at y=0 is the one pose physics
   // promises. A splitter hanging below the contact patch (s15, Centenario —
@@ -697,6 +718,19 @@ async function processCar(id) {
   grouper.setTranslation([sgn * wheelMid[0] * scale, -sitRef * scale, sgn * bodyMidZ * scale])
   for (const n of [...rootScene.listChildren()]) grouper.addChild(n)
   rootScene.addChild(grouper)
+  // the grouper TRS and toWorld are TWO ENCODINGS OF ONE POSE — the GLB
+  // bakes vertices through the TRS, every table number comes from toWorld.
+  // They must agree to the micrometre or wheels float while every
+  // table-reading gate stays green (PR #21 r4: the last delta had to edit
+  // both in lockstep by hand; this makes drift impossible to ship).
+  for (const c of CORNERS) {
+    const p = wheelReport[c].center
+    const q = nosePlusZ ? [-p[0], p[1], -p[2]] : p
+    const g = [q[0] * scale + sgn * wheelMid[0] * scale, q[1] * scale - sitRef * scale, q[2] * scale + sgn * bodyMidZ * scale]
+    const w = toWorld(p)
+    if (g.some((v, i) => Math.abs(v - w[i]) > 1e-6))
+      fail(`${id}: grouper TRS drifted from toWorld at ${c} — baked ${g.map((x) => x.toFixed(4))} vs table ${w.map((x) => x.toFixed(4))}`)
+  }
   const groundClearance = (bodyMinY - sitRef) * scale
   // Body end-faces in WORLD z: the TRUE bbox extrema of the outlier-rejected
   // body, through the SAME toWorld the rig emits — tail is +z by the nose
@@ -710,18 +744,38 @@ async function processCar(id) {
   // measured percentile-vs-percentile and read a constant ±2.275 for all six
   // cars: that was the identity, not the body.)
   const endPairs = [toWorld([0, 0, min[2]])[2], toWorld([0, 0, max[2]])[2]]
-  const band = Math.abs(toWorld([0, 0, percentile(bodyPts, 2, 0.99)])[2])
+  const band = TARGET_LEN / 2 // == |toWorld(p99)| exactly: (p99−mid)·scale with
+  // scale = TARGET_LEN/(p99−p1) is the normalisation identity, see the
+  // comment above. It is the spike CEILING, never a measurement.
   const SPIKE_TOL = 0.25
+  const spikeClamped = { nose: false, tail: false }
   const endFace = (v, side) => {
     if (Math.abs(v) <= band + SPIKE_TOL) return v
-    console.warn(`[cars] ${id}: \${side} extremum ${v.toFixed(3)} exceeds the percentile body by >\${SPIKE_TOL} m — spire? using the percentile surface`)
+    spikeClamped[side] = true // durable evidence says which side, if any, clamped
+    console.warn(`[cars] ${id}: ${side} extremum ${v.toFixed(3)} m sits more than ${SPIKE_TOL} m beyond the percentile body end — treated as a spire, using the percentile surface`)
     return Math.sign(v) * band
   }
   const bodyNearZ = endFace(Math.min(...endPairs), 'nose')
   const bodyFarZ = endFace(Math.max(...endPairs), 'tail')
-  const bodyTopY = (max[1] - sitRef) * scale
+  // roof height off the percentile too (PR #21 r4): the raw max[Y] let an
+  // antenna survive pruning and report the 930's topY as 2.049 against
+  // 0.96–1.33 for the other five — anchors capped by "roof" rode the spire.
+  const bodyTopY = (percentile(bodyPts, 1, 0.99) - sitRef) * scale
+  // tail-cluster roof for the badge height (needs bodyFarZ, so after endFace)
+  const tailPts = bodyPts.filter((p) => toWorld(p)[2] >= bodyFarZ - 0.35)
+  const tailTopY = ((tailPts.length ? percentile(tailPts, 1, 0.99) : max[1]) - sitRef) * scale
 
   // 7. write + budgets + report
+  // TANGENT guard (PR #21 r4 audit): Sketchfab wheel bakes export sidewall
+  // vertices whose tangent is ±normal (carrera rear tires: 27 of 204). The
+  // shader's bitangent = normalize(cross(n,t)) then NaNs; the fragment is
+  // discarded while SwiftShader's tiler still corrupts the surrounding
+  // draws' depth — the entire car_model_carrera pose frame rendered black
+  // left of x≈960 while the mesh's own data looked spotless. Fix once, in
+  // the durable artifact: Gram-Schmidt every TANGENT against its NORMAL
+  // (stable perpendicular for fully-parallel pairs).
+  const tangentFixed = sanitizeTangents(doc)
+  if (tangentFixed) console.log(`[cars] ${id}: sanitized ${tangentFixed} degenerate tangent vertex/vertices`)
   const out = join(OUT, `${id}.glb`)
   await io.write(out, doc)
   const bytes = readFileSync(out).byteLength
@@ -743,13 +797,15 @@ async function processCar(id) {
     // wheelPos), pushed 12 mm outboard so the glow planes sit in front of the
     // shell instead of buried ~11 cm inside it at the old fixed ±2.16.
     lampZ: [+(bodyNearZ - 0.012).toFixed(3), +(bodyFarZ + 0.012).toFixed(3)],
-    // rear badge decal on the TAIL (+z), measured off the body bbox: the old
-    // fixed −(L/2−0.15) planted it at the NOSE while the mesh is named
-    // logo-rear and the spec calls for a tail wordmark.
-    // rear badge decal on the TAIL (+z): z AND y measured off the body shell
-    // (the old fixed groundClearance+0.35 planted it at spoiler height on
-    // low-deck tails), pushed 20 mm outboard of the measured tail face.
-    logoAnchor: [0, +(Math.min(groundClearance + 0.35, bodyTopY - 0.05)).toFixed(3), +(bodyFarZ + 0.02).toFixed(3)],
+    // rear badge decal on the TAIL (+z): z is the measured tail face + 20 mm;
+    // y is measured off the TAIL cluster's p99 height (vertices whose world
+    // z sits within 350 mm of the tail face), NOT the whole-car roof — the
+    // old min(groundClearance + 0.35, bodyTopY − 0.05) never fired its
+    // second term on a real car (roof ≫ tail), so all six shipped the
+    // constant and the badge floated at spoiler height over low decks
+    // (PR #21 r4: every committed report had logoY === gc + 0.35). Floored
+    // at gc + 0.08 so a measurement near the road cannot bury the decal.
+    logoAnchor: [0, +Math.max(groundClearance + 0.08, Math.min(groundClearance + 0.35, tailTopY - 0.05)).toFixed(3), +(bodyFarZ + 0.02).toFixed(3)],
     // nitro nozzles MEASURED at the tail face, 150 mm inboard so the 1.1 m
     // cone (which grows toward +z from its origin) spits its plume out of the
     // bumper: the old TARGET_LEN/2 − 0.05 constant put the 930's flame origin
@@ -768,22 +824,68 @@ async function processCar(id) {
     // orientation-agnostic world box (percentile body box, scaled) — the
     // evidence the runtime wheel/anchor checks compare against.
     worldBox: { nearZ: +bodyNearZ.toFixed(3), farZ: +bodyFarZ.toFixed(3), topY: +bodyTopY.toFixed(3) },
+    // which end-face sides exceeded the percentile ceiling (null/false today;
+    // durable evidence the anchors were measured, not clamped guesses)
+    spikeClamped,
+    // degenerate-tangent vertices repaired by the write-time guard above
+    // (evidence the guard ran; 0 = source was already clean)
+    tangentSanitized: tangentFixed,
   }
-  writeFileSync(join(REPORTS, `${id}.report.json`), JSON.stringify(report, null, 2))
-  // committed evidence copy: CI ties public/models/<id>.glb to glbSha256 and
-  // regenerates CarRigs.ts from these files (build/ is disposable).
-  mkdirSync(join(root, 'rigs', 'reports'), { recursive: true })
+  // committed evidence — the ONE report location (PR #21 r4: the old
+  // build/cars twin was gitignored and header :24 led maintainers there).
+  // CI ties public/models/<id>.glb to glbSha256 and re-derives CarRigs.ts.
+  // Budget gates run FIRST: a failing run must not leave a self-consistent
+  // GLB+report pair (hash included) in the tracked tree.
+  if (tris > 60000) { rmSync(out, { force: true }); fail(`${id}: tri budget exceeded (${tris} > 60000)`) }
+  if (bytes > 4 * 1024 * 1024) { rmSync(out, { force: true }); fail(`${id}: ${(bytes / 1e6).toFixed(1)} MB > 4 MB per-car budget — drop texture size or tri budget`) }
   writeFileSync(join(root, 'rigs', 'reports', `${id}.report.json`), JSON.stringify(report, null, 2))
   console.log(`[cars] ${id}: ${(bytes / 1e6).toFixed(1)} MB, ${tris} tris, bakedPaint=${bakedPaint}, rig:`)
   console.log(`  ${id}: ${JSON.stringify(rig)},`)
-  if (tris > 60000) fail(`${id}: tri budget exceeded`)
-  if (bytes > 4 * 1024 * 1024) fail(`${id}: ${(bytes / 1e6).toFixed(1)} MB > 4 MB per-car budget — drop texture size or tri budget`)
   return report
 }
 
 /** exact quantile of a coordinate column (linear interpolation between ranks).
  * The rig measurements (body ends, pose scale) must survive a single stray
  * spire in the source mesh, so they read percentiles, never a raw bbox. */
+/**
+ * Repair degenerate TANGENTs across the document (see call site). A tangent
+ * parallel to the normal (|dot|≈1) makes the normalMap shader's bitangent
+ * NaN. Gram-Schmidt restores it; a fully parallel pair (tangent ∥ ±normal,
+ * where Gram-Schmidt collapses to zero) gets a stable perpendicular built
+ * from the least-axis-aligned vector. Returns the number of vertices fixed.
+ */
+function sanitizeTangents(doc) {
+  let fixed = 0
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const T = prim.getAttribute('TANGENT')
+      const N = prim.getAttribute('NORMAL')
+      if (!T || !N || T.getCount() !== N.getCount()) continue
+      const tCount = T.getCount()
+      for (let i = 0; i < tCount; i++) {
+        const n = N.getElement(i, [0, 0, 0])
+        const t0 = T.getElement(i, [0, 0, 0, 1])
+        let t = [t0[0], t0[1], t0[2]]
+        const dot = n[0] * t[0] + n[1] * t[1] + n[2] * t[2]
+        const cx = n[1] * t[2] - n[2] * t[1]
+        const cy = n[2] * t[0] - n[0] * t[2]
+        const cz = n[0] * t[1] - n[1] * t[0]
+        if (Math.abs(dot) < 0.99 && Math.hypot(cx, cy, cz) > 0.1) continue
+        t = [t[0] - dot * n[0], t[1] - dot * n[1], t[2] - dot * n[2]]
+        let len = Math.hypot(t[0], t[1], t[2])
+        if (len < 1e-5) {
+          const ax = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]
+          t = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]]
+          len = Math.hypot(t[0], t[1], t[2]) || 1
+        }
+        T.setElement(i, [t[0] / len, t[1] / len, t[2] / len, t0[3]])
+        fixed++
+      }
+    }
+  }
+  return fixed
+}
+
 function percentile(pts, axis, q) {
   const v = pts.map((p) => p[axis]).sort((a, b) => a - b)
   if (!v.length) return 0
@@ -860,7 +962,7 @@ function buildDiscMesh(doc, name, radius, cx, cy, cz) {
   for (let i = 1; i <= SEGS; i++) idx.push(0, i, i + 1)
   const p = doc.createAccessor().setType(Accessor.Type.VEC3).setArray(new Float32Array(pos))
   const inx = doc.createAccessor().setType(Accessor.Type.SCALAR).setArray(new Uint16Array(idx))
-  const mat = doc.createMaterial('brake-disc').setBaseColorFactor([0.25, 0.25, 0.27, 1]).setRoughnessFactor(0.5).setMetallicFactor(0.6)
+  const mat = doc.createMaterial(MAT_BRAKE_DISC).setBaseColorFactor([0.25, 0.25, 0.27, 1]).setRoughnessFactor(0.5).setMetallicFactor(0.6)
   const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setAttribute('NORMAL', flatNormalAttr(doc, pos, idx)).setIndices(inx).setMaterial(mat))
   return doc.createNode(name).setMesh(mesh)
 }
@@ -881,7 +983,7 @@ function buildCaliperMesh(doc, name, wheelR, cx, cy, cz, sideSign = 1) {
   }
   const p = doc.createAccessor().setType(Accessor.Type.VEC3).setArray(new Float32Array(pos))
   const inx = doc.createAccessor().setType(Accessor.Type.SCALAR).setArray(new Uint16Array(idx))
-  const mat = doc.createMaterial('caliper-paint').setBaseColorFactor([0.76, 0.23, 0.16, 1]).setRoughnessFactor(0.4)
+  const mat = doc.createMaterial(MAT_CALIPER_PAINT).setBaseColorFactor([0.76, 0.23, 0.16, 1]).setRoughnessFactor(0.4)
   const mesh = doc.createMesh(name).addPrimitive(doc.createPrimitive().setAttribute('POSITION', p).setAttribute('NORMAL', flatNormalAttr(doc, pos, idx)).setIndices(inx).setMaterial(mat))
   return doc.createNode(name).setMesh(mesh)
 }

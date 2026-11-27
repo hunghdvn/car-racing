@@ -20,6 +20,10 @@ import { join } from 'node:path'
 
 const ROOT = new URL('..', import.meta.url).pathname
 const REPORTS = join(ROOT, 'rigs', 'reports')
+// THE same bands the runtime gate and the unit suite read (PR #21 r4: this
+// emitter shipped its own contradictory pair — a legal re-bake hit a CI wall
+// no rerun could clear)
+const BANDS = JSON.parse(readFileSync(join(ROOT, 'src', 'assets', 'car-contract.json'), 'utf8')).rigBands
 const OUT = join(ROOT, 'src/assets/CarRigs.ts')
 const ORDER = ['r34', '930', 's15', 'centenario', 'terzo', 'carrera']
 
@@ -40,8 +44,8 @@ const num = (v) => {
 const FIELDS = [
   { name: 'wheelRadius', ts: '[number, number, number, number]',
     doc: ['/** [fl, fr, rl, rr] metres — per-corner visual/spin radius (tyres may differ per corner) */'],
-    check: (v) => Array.isArray(v) && v.length === 4 && v.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0.24 && n <= 0.44),
-    want: '4 finite numbers in [0.24, 0.44] (staggered rears reach 0.24)' },
+    check: (v) => Array.isArray(v) && v.length === 4 && v.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= BANDS.radius[0] && n <= BANDS.radius[1]),
+    want: `4 finite numbers in [${BANDS.radius[0]}, ${BANDS.radius[1]}] (staggered rears reach the low edge)` },
   { name: 'wheelPos', ts: '[[number, number, number], [number, number, number], [number, number, number], [number, number, number]]',
     doc: ['/** [fl, fr, rl, rr] hub centres in MODEL space (nose convention: −z forward,',
           ' *  world −x = the car\'s left); [x, hubY, z] — hubY is the measured hub height',
@@ -50,8 +54,8 @@ const FIELDS = [
     want: '4 finite xyz triples' },
   { name: 'groundClearance', ts: 'number',
     doc: ['/** body min-Y when parked on the wheels (m); negative = splitter dips below road */'],
-    check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= -0.08 && v <= 0.24,
-    want: 'a finite number in [-0.08, 0.24]' },
+    check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= BANDS.clearance[0] && v <= BANDS.clearance[1],
+    want: `a finite number in [${BANDS.clearance[0]}, ${BANDS.clearance[1]}]` },
   { name: 'bakedPaint', ts: 'boolean',
     doc: ['/** true → no paint-* materials in the GLB, garage swatches keep author colours */'],
     check: (v) => typeof v === 'boolean', want: 'a JSON boolean (not 0/1 — runtime flag branches need true/false)' },
